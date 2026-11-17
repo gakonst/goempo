@@ -116,10 +116,9 @@ func (x *Executor) applyCall(e *env, spec callSpec) (callRun, error) {
 	if req.Nonce != nil {
 		nonce = *req.Nonce
 	}
-	maxFee := priceOf(req).maxFee
 	tx := buildTx(req, txShape{chainID: uint64(x.ChainID), gas: spec.gas, nonce: nonce})
 	session := tracing.NewSession(st, []evm.Address{from}, spec.steps)
-	sim := executor.Simulation{Sender: from, SkipNonceCheck: req.Nonce == nil, SkipBalanceCheck: maxFee.IsZero()}
+	sim := executor.Simulation{Sender: from, SkipNonceCheck: req.Nonce == nil, SkipBalanceCheck: true, SkipGasCap: true, SkipFeeCharge: true}
 	out, err := x.Blocks.ApplyCall(session, e.header, &tx, sim)
 	if err != nil {
 		return callRun{}, err

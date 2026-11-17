@@ -107,3 +107,14 @@ Agents must not do any of this; it changes a shared network.
 Before step 4, goempo should have passed R6e on the devnet (an hour with 2 of
 4 goempo validators, no forks or stalls) and followed moderato for at least
 one full epoch boundary (about 3.2 h) with every block's state root matching.
+
+## R6e run log
+
+- 2026-11-17 18:45 UTC, goempo d1a3576 in slot 3, Rust c8b89f9b6d in slots
+  0 to 2, fresh chain: goempo exited before importing block 1 with "node: block
+  state root differs from execution". Block 1 from the Rust proposer is empty
+  (0 transactions, gas 0) yet changes the state root (0xf299ab91...e536 to
+  0xa34d5e74...2c13); the visible change is the EIP-2935 history contract
+  (0x0000F90827F1C53a10cb7A02335B175320002935) slot 0 set to the genesis hash,
+  the Prague pre-block system call. Rust slots kept finalizing without it.
+  Sent to the validator agent with the raw blocks.

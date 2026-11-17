@@ -106,8 +106,19 @@ func (r *replayer) checkpoint(number uint64) error {
 	return nil
 }
 
+func (r *replayer) stateIsWrong() bool {
+	if r.failed == nil {
+		return false
+	}
+	return r.failed.field == "stateRoot" || r.failed.field == "commit"
+}
+
 func (r *replayer) closeStore() error {
 	if r.store.datadir == "" {
+		return nil
+	}
+	if r.stateIsWrong() {
+		fmt.Fprintln(os.Stderr, "replay: not flushing: the last block's state is wrong; the datadir stays at its last checkpoint")
 		return nil
 	}
 	if err := r.saveHealed(); err != nil {

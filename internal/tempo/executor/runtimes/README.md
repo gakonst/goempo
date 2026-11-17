@@ -1,1 +1,2 @@
 Zone runtimes the block executor installs at fork boundaries, read with eth_getCode from a mainnet node (chain 4217): t10_* at block 35816049 (the first T10 block), t13_* at block 47250841 (the first T13 block), at 0x5ad1… (portal implementation), 0x5a56… (verifier) and 0x5a4d… (messenger).
+Re-read 2026-11-17 after the committed files were found corrupted (wrong bytes, same sizes; mainnet 35,816,049 state root mismatch). TestZoneRuntimesMatchMainnetCodeHashes pins each file to the mainnet code hash (eth_getProof codeHash = keccak of the bytes above).

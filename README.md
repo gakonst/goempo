@@ -18,3 +18,13 @@ go build ./...
 scripts/verify.sh        # gofmt, vet, tests, tiger check
 go run ./cmd/goempo-dev score   # measure the frontier
 ```
+
+## Run the node
+
+```
+go build -o goempo ./cmd/goempo
+# start from genesis, or from a replay datadir (scripts/node-snapshot.sh copies a live one)
+./goempo -datadir ~/goempo-data -upstream https://rpc.tempo.xyz -http 127.0.0.1:8545
+```
+
+goempo executes every block from its state's head to the mainnet tip (from the chunk archive in ~/cache/mainnet, then the upstream's debug_getRawBlock), verifies each finalization certificate from consensus_getFinalization (available from block 25,165,748), checks gas used, receipts root, bloom and state root, and serves JSON-RPC over the live state while it follows the chain. It stops at the first block that does not match. -to N stops after block N (-hold keeps serving), -certify=false skips certificates, -summary writes a JSON report.

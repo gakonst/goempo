@@ -248,6 +248,7 @@
   - ./internal/types
   - ./internal/u256
 "./internal/validator":
+  - ./internal/consensus/wire
   - ./internal/consensus
   - ./internal/types
   - net

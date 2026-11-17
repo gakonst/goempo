@@ -159,7 +159,7 @@ type Intrinsic struct {
 }
 
 func IntrinsicGas(tx *types.Transaction, rules chain.Rules) (Intrinsic, error) {
-	v, err := viewOf(tx, nil)
+	v, err := viewOf(tx, nil, nil)
 	if err != nil {
 		return Intrinsic{}, err
 	}

@@ -38,7 +38,7 @@ func feeAmount(gas uint64, price u256.Int) u256.Int {
 }
 
 func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
-	v, err := viewOf(env.Tx, env.Sim)
+	v, err := viewOf(env.Tx, env.Sim, env.Sender)
 	if err != nil {
 		return TxOutcome{}, err
 	}

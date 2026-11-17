@@ -24,7 +24,7 @@ func (r *replayer) step(blk *types.Block) bool {
 	if h.Number == 1 {
 		r.hashes.setHash(0, h.ParentHash)
 	}
-	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHash})
+	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHash, Senders: r.senders})
 	if err != nil {
 		r.failed = &mismatch{number: h.Number, field: "execution", got: err.Error(), want: "ok"}
 		return false

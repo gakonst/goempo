@@ -61,11 +61,27 @@ func (v *txView) isCreate() bool {
 	return len(v.calls) > 0 && v.calls[0].to == nil
 }
 
-func viewOf(tx *types.Transaction, sim *Simulation) (txView, error) {
+type Sender struct {
+	Address Address
+	Err     error
+}
+
+func RecoverSender(tx *types.Transaction) Sender {
+	addr, err := tx.Sender()
+	return Sender{Address: addr, Err: err}
+}
+
+func viewOf(tx *types.Transaction, sim *Simulation, known *Sender) (txView, error) {
 	var sender Address
-	if sim != nil {
+	switch {
+	case sim != nil:
 		sender = sim.Sender
-	} else {
+	case known != nil:
+		if known.Err != nil {
+			return txView{}, known.Err
+		}
+		sender = known.Address
+	default:
 		recovered, err := tx.Sender()
 		if err != nil {
 			return txView{}, err

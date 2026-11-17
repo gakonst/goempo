@@ -12,8 +12,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
+	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
 )
 
@@ -204,8 +206,9 @@ type chunkRead struct {
 }
 
 type decodedBlock struct {
-	blk types.Block
-	err error
+	blk     types.Block
+	senders []executor.Sender
+	err     error
 }
 
 type chunkPrefetch struct {
@@ -239,12 +242,40 @@ func (p *chunkPrefetch) Wait() {
 	p.wg.Wait()
 }
 
+const decodeWorkersMax = 64
+
+const _ = uint(chunkBlocks - decodeWorkersMax)
+
 func decodeChunk(raws [][]byte) []decodedBlock {
 	out := make([]decodedBlock, len(raws))
-	for i := range raws {
-		out[i].blk, out[i].err = types.DecodeBlock(raws[i])
+	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
+	per := (len(raws) + workers - 1) / workers
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		part := out[min(w*per, len(out)):min((w+1)*per, len(out))]
+		in := raws[min(w*per, len(raws)):min((w+1)*per, len(raws))]
+		wg.Go(func() {
+			for i := range in {
+				part[i] = decodeBlock(in[i])
+			}
+		})
 	}
+	wg.Wait()
 	return out
+}
+
+func decodeBlock(raw []byte) decodedBlock {
+	blk, err := types.DecodeBlock(raw)
+	if err != nil {
+		return decodedBlock{err: err}
+	}
+	senders := make([]executor.Sender, len(blk.Transactions))
+	for i := range blk.Transactions {
+		if !executor.IsSystemTx(&blk.Transactions[i]) {
+			senders[i] = executor.RecoverSender(&blk.Transactions[i])
+		}
+	}
+	return decodedBlock{blk: blk, senders: senders}
 }
 
 func readChunk(dir string, start uint64) ([][]byte, error) {

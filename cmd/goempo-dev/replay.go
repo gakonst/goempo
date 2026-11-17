@@ -72,6 +72,7 @@ type replayer struct {
 	healedHead uint64
 	stopped    bool
 	counters   benchCounters
+	senders    []executor.Sender
 }
 
 func defaultResultPath() string {
@@ -274,7 +275,10 @@ func (r *replayer) runChunk(blocks []decodedBlock, span chunkSpan) (bool, error)
 		if err := blocks[j].err; err != nil {
 			return false, fmt.Errorf("block %d: %w", number, err)
 		}
-		if !r.stepOrHeal(&blocks[j].blk) {
+		r.senders = blocks[j].senders
+		ok := r.stepOrHeal(&blocks[j].blk)
+		r.senders = nil
+		if !ok {
 			return true, nil
 		}
 		if err := r.checkpoint(number); err != nil {

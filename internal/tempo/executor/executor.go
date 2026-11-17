@@ -49,6 +49,7 @@ type Executor struct {
 type Input struct {
 	Block   *types.Block
 	GetHash func(number uint64) Hash
+	Senders []Sender
 }
 
 type Result struct {
@@ -72,6 +73,7 @@ type TxEnv struct {
 	Tx     *types.Transaction
 	Index  int
 	Sim    *Simulation
+	Sender *Sender
 }
 
 func (x *Executor) SystemSteps(st State, in Input) error {
@@ -101,6 +103,9 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	var cumulative uint64
 	for i := 0; i < len(txs); i++ {
 		env := &TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i}
+		if len(in.Senders) == len(txs) {
+			env.Sender = &in.Senders[i]
+		}
 		out, err := apply(env, set, len(txs))
 		if err != nil {
 			return Result{}, fmt.Errorf("tx %d: %w", i, err)

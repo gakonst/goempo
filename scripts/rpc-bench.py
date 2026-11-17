@@ -18,9 +18,9 @@ PATHUSD = "0x20c0000000000000000000000000000000000000"
 FEE_MANAGER = "0xfeec000000000000000000000000000000000000"
 
 
-def methods(head, lo, hi, busy):
+def methods(state, lo, hi, busy):
     def pick():
-        return hex(random.choice(busy)) if busy else hex(random.randint(lo, min(hi, head)))
+        return hex(random.choice(busy)) if busy else hex(random.randint(lo, hi))
 
     holder = "0x" + "00" * 19 + "01"
     balance_of = "0x70a08231" + "00" * 12 + holder[2:]
@@ -28,9 +28,9 @@ def methods(head, lo, hi, busy):
         "eth_blockNumber": lambda: [],
         "eth_getBlockByNumber_full": lambda: [pick(), True],
         "eth_getBlockReceipts": lambda: [pick()],
-        "eth_call_balanceOf": lambda: [{"to": PATHUSD, "data": balance_of}, "latest"],
-        "eth_getBalance": lambda: [FEE_MANAGER, "latest"],
-        "eth_getProof": lambda: [PATHUSD, ["0x" + "00" * 31 + "%02x" % random.randint(0, 15)], "latest"],
+        "eth_call_balanceOf": lambda: [{"to": PATHUSD, "data": balance_of}, state],
+        "eth_getBalance": lambda: [FEE_MANAGER, state],
+        "eth_getProof": lambda: [PATHUSD, ["0x" + "00" * 31 + "%02x" % random.randint(0, 15)], state],
         "debug_traceBlockByNumber_callTracer": lambda: [pick(), {"tracer": "callTracer"}],
     }
 
@@ -42,7 +42,7 @@ def call(conn, path, method, params, rid):
     resp = conn.getresponse()
     data = resp.read()
     dt = time.perf_counter() - t0
-    ok = resp.status == 200 and b'"error"' not in data[:200]
+    ok = resp.status == 200 and "error" not in json.loads(data)
     return dt, ok, len(data)
 
 
@@ -59,6 +59,7 @@ def main():
     ap.add_argument("-busy", default="", help="file of block numbers (one per line) to sample instead of the range")
     ap.add_argument("-only", default="", help="comma-separated method names")
     ap.add_argument("-seed", type=int, default=1)
+    ap.add_argument("-state", default="latest", help="block tag for state methods (eth_call, eth_getBalance, eth_getProof)")
     ap.add_argument("-label", default="")
     a = ap.parse_args()
     random.seed(a.seed)
@@ -68,9 +69,8 @@ def main():
     conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=120)
     path = u.path or "/"
     _, _, _ = call(conn, path, "eth_blockNumber", [], 0)
-    head = hi
     only = set(a.only.split(",")) if a.only else None
-    for name, params in methods(head, lo, hi, busy).items():
+    for name, params in methods(a.state, lo, hi, busy).items():
         if only and name not in only:
             continue
         method = name.split("_full")[0].split("_callTracer")[0].split("_balanceOf")[0]

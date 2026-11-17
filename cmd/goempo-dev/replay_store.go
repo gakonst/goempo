@@ -99,6 +99,9 @@ func (r *replayer) checkpoint(number uint64) error {
 	if r.store.datadir == "" || r.store.checkpoint == 0 || number%r.store.checkpoint != 0 {
 		return nil
 	}
+	if !r.settle() {
+		return errors.New(r.failed.String())
+	}
 	if err := r.db.Flush(); err != nil {
 		return err
 	}

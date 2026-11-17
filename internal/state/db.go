@@ -92,6 +92,8 @@ type DB struct {
 	enc          *rlp.Encoder
 	hasher       *keccak.Hasher
 	err          error
+	// pending is the pipelined commit in flight (State.CommitAsync).
+	pending *pendingCommit
 }
 
 func Open(fs goio.FS, opts Options) (*DB, error) {
@@ -126,15 +128,38 @@ func Open(fs goio.FS, opts Options) (*DB, error) {
 	return db, nil
 }
 
-func (db *DB) Head() Head { return db.head }
+// Head is the last block whose commit was applied; a pipelined commit in
+// flight is applied first.
+func (db *DB) Head() Head {
+	if db.pending != nil {
+		if err := db.settlePending(); err != nil {
+			db.err = err
+		}
+	}
+	return db.head
+}
 
 func (db *DB) State() *State { return db.state }
 
 func (db *DB) Store() *storage.DB { return db.store }
 
-func (db *DB) Flush() error { return db.store.Flush() }
+// settlePending applies the pipelined commit in flight, if any.
+func (db *DB) settlePending() error {
+	if db.pending == nil {
+		return nil
+	}
+	_, err := db.state.WaitCommit()
+	return err
+}
 
-func (db *DB) Close() error { return db.store.Close() }
+func (db *DB) Flush() error {
+	if err := db.settlePending(); err != nil {
+		return err
+	}
+	return db.store.Flush()
+}
+
+func (db *DB) Close() error { return errors.Join(db.settlePending(), db.store.Close()) }
 
 func (db *DB) LoadGenesis(g *genesis.Genesis) (Hash, error) {
 	if db.head.Loaded {

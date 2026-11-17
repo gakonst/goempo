@@ -28,6 +28,9 @@ type AccountProof struct {
 
 func (db *DB) Proof(addr Address, keys []Hash) (AccountProof, error) {
 	out := AccountProof{Address: addr}
+	if err := db.settlePending(); err != nil {
+		return AccountProof{}, err
+	}
 	hashed := keccak.Sum256(addr[:])
 	proof, err := db.accounts.Prove(hashed[:])
 	if err != nil {

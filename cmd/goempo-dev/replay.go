@@ -73,6 +73,18 @@ type replayer struct {
 	stopped    bool
 	counters   benchCounters
 	senders    []executor.Sender
+
+	// pipeline: commit block N on another goroutine while N+1 executes, and
+	// check N's state root when N+1 commits (or at a checkpoint or the end).
+	pipeline  bool
+	rootEvery uint64
+	target    uint64
+	pending   *pendingRootCheck
+}
+
+type pendingRootCheck struct {
+	number uint64
+	root   state.Hash
 }
 
 func defaultResultPath() string {
@@ -95,6 +107,8 @@ func runReplay(args []string) int {
 	every := fs.Uint64("checkpoint", checkpointDefault, "with -datadir, flush the state to disk every this many blocks (0: only at exit)")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the run here")
 	memProfile := fs.String("memprofile", "", "write an allocation profile at the end of the run here")
+	pipeline := fs.Bool("pipeline", false, "compute each block's state root while the next block executes (off with -heal)")
+	rootEvery := fs.Uint64("root-every", 1, "update the trie and check the state root every this many blocks, against the last block's header (gas, receipts and bloom are checked every block); 1 checks every block")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -109,6 +123,12 @@ func runReplay(args []string) int {
 	if r.head > 0 {
 		fmt.Fprintf(os.Stderr, "replay: resuming from block %d in %s\n", r.head, *datadir)
 	}
+	r.pipeline = *pipeline && *heals == 0
+	r.rootEvery = max(*rootEvery, 1)
+	if *heals > 0 {
+		r.rootEvery = 1
+	}
+	r.target = *to
 	if *heals > 0 {
 		r.heal = &healer{client: newRPCClient(*rpcURL), remaining: min(*heals, healsMax), verbose: *diagnose == "on"}
 	}
@@ -219,6 +239,7 @@ func (r *replayer) run(to uint64) error {
 	}
 	next := prefetchChunk(r.ctx, r.dir, first*chunkBlocks)
 	defer func() { next.Wait() }()
+	defer r.settle()
 	for i := first; i < chunks; i++ {
 		start := i * chunkBlocks
 		got := next.take(r.ctx)

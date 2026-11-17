@@ -2,6 +2,8 @@ package state
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 	"sync"
@@ -9,81 +11,182 @@ import (
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/rlp"
-
 	"github.com/gakonst/goempo/internal/storage"
 	"github.com/gakonst/goempo/internal/trie"
+	"github.com/gakonst/goempo/internal/u256"
 	"github.com/kapetan-io/tiger/assert"
 )
 
+// Commit seals the block's changes, computes its state root and writes it.
 func (s *State) Commit(number uint64) (Hash, error) {
+	if err := s.CommitAsync(number); err != nil {
+		return Hash{}, err
+	}
+	done, err := s.WaitCommit()
+	if err != nil {
+		return Hash{}, err
+	}
+	return done.Root, nil
+}
+
+// Committed is a block whose state root a pipelined commit computed.
+type Committed struct {
+	Number uint64
+	Root   Hash
+}
+
+// ErrCommitPending reports a read of state that a pipelined commit has not
+// settled yet.
+var ErrCommitPending = errors.New("state: commit still pending")
+
+// pendingRoot marks a storage root that a pipelined commit is computing. It is
+// never empty, so reads fall through to stored slots (and the slots the
+// block changed are in the account's cache).
+var pendingRoot = Hash{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
+type slotValue struct {
+	key Hash
+	v   u256.Int
+}
+
+// objectSnap is one account as a block left it, taken when the block is
+// sealed, so the next block can change the live object while the root is
+// computed.
+type objectSnap struct {
+	o          *object
+	addr       Address
+	exists     bool
+	baseExists bool
+	baseRoot   Hash
+	wiped      bool
+	codeDirty  bool
+	nonce      uint64
+	balance    u256.Int
+	codeHash   Hash
+	code       []byte
+	slots      []slotValue
+}
+
+type pendingCommit struct {
+	number uint64
+	snaps  []objectSnap
+	roots  []Hash
+	head   Head
+	batch  storage.Batch
+	err    error
+	done   chan struct{}
+}
+
+// CommitAsync seals the block's changes and starts computing its state root
+// on another goroutine, after applying the previous pipelined commit. The
+// next block can execute on this State meanwhile: the accounts it changed stay
+// cached until WaitCommit or the next CommitAsync applies the result. At most
+// one commit is in flight, and store writes happen only on the caller's
+// goroutine while none is.
+func (s *State) CommitAsync(number uint64) error {
 	s.FinalizeTx()
 	db := s.db
+	if _, err := s.WaitCommit(); err != nil && !errors.Is(err, errNothingPending) {
+		return err
+	}
 	if db.err != nil {
-		return Hash{}, db.err
+		return db.err
 	}
 	if db.head.Loaded && number <= db.head.Number {
-		return Hash{}, ErrBlockOrder
+		return ErrBlockOrder
 	}
 	if s.err != nil {
 		db.err = s.err
-		return Hash{}, s.err
+		return s.err
 	}
+	p := &pendingCommit{number: number, done: make(chan struct{})}
 	addrs := sortedAddresses(s.blockDirty)
-	b := &db.batch
-	b.Reset()
-	roots := make([]Hash, len(addrs))
-	jobs, err := db.prepareStorage(s, addrs, b)
-	if err != nil {
-		db.err = err
-		return Hash{}, err
-	}
-	if err := runStorageJobs(jobs, db.opts.StorageNodes); err != nil {
-		db.err = err
-		return Hash{}, err
-	}
+	p.snaps = make([]objectSnap, len(addrs))
 	for i, addr := range addrs {
-		root, err := db.finishObject(s.accounts[addr], jobs[i], b)
-		if err != nil {
-			db.err = err
-			return Hash{}, err
-		}
-		roots[i] = root
-	}
-	root := db.accounts.Commit(nodeWriter{batch: b, prefix: []byte{prefixAccountNode}})
-	head := Head{Number: number, Root: root, Loaded: true}
-	b.Put(headKey, encodeHead(head))
-	if err := db.store.Write(b); err != nil {
-		db.err = err
-		return Hash{}, err
-	}
-	b.Reset()
-	db.head = head
-	for i, addr := range addrs {
-		s.settle(s.accounts[addr], roots[i])
+		o := s.accounts[addr]
+		assert.Ok(o != nil, "state commits an account it never loaded")
+		p.snaps[i] = s.seal(o)
 	}
 	clear(s.blockDirty)
-	s.trimCaches()
-	return root, nil
+	db.pending = p
+	go db.runCommit(p)
+	return nil
 }
 
-func (s *State) settle(o *object, root Hash) {
+var errNothingPending = errors.New("state: no commit pending")
+
+// WaitCommit waits for the pipelined commit in flight, writes it and settles
+// its storage roots into the cached accounts.
+func (s *State) WaitCommit() (Committed, error) {
+	db := s.db
+	p := db.pending
+	if p == nil {
+		return Committed{}, errNothingPending
+	}
+	<-p.done
+	db.pending = nil
+	if p.err != nil {
+		db.err = p.err
+		return Committed{}, p.err
+	}
+	if err := db.store.Write(&p.batch); err != nil {
+		db.err = err
+		return Committed{}, err
+	}
+	db.head = p.head
+	for i := range p.snaps {
+		sn := &p.snaps[i]
+		settleRoot(sn.o, p.roots[i])
+		if cur := s.accounts[sn.addr]; cur != nil && cur != sn.o && cur.base.storageRoot == pendingRoot {
+			settleRoot(cur, p.roots[i])
+		}
+	}
+	s.trimCaches()
+	return Committed{Number: p.number, Root: p.head.Root}, nil
+}
+
+func settleRoot(o *object, root Hash) {
+	if o.base.storageRoot == pendingRoot {
+		o.base.storageRoot = root
+	}
+	o.pendingWipe = false
+}
+
+// seal snapshots o for the commit and settles the live object provisionally.
+func (s *State) seal(o *object) objectSnap {
+	sn := objectSnap{
+		o: o, addr: o.addr, exists: o.exists, baseExists: o.base.exists, baseRoot: o.base.storageRoot,
+		wiped: o.wiped, codeDirty: o.codeDirty, nonce: o.nonce, balance: o.balance, codeHash: o.codeHash, code: o.code,
+	}
+	assert.Ok(sn.baseRoot != pendingRoot, "sealed account has an unsettled storage root")
+	if len(o.changed) > 0 && o.exists {
+		sn.slots = make([]slotValue, 0, len(o.changed))
+		for _, k := range sortedHashes(o.changed) {
+			sn.slots = append(sn.slots, slotValue{key: k, v: o.committed[k]})
+		}
+	}
+	if o.codeDirty && o.codeHash != emptyCodeHash {
+		s.db.cacheCode(o.codeHash, o.code)
+	}
+	root := emptyRoot
+	switch {
+	case !o.exists:
+	case len(sn.slots) > 0:
+		root = pendingRoot
+	case !o.wiped:
+		root = o.base.storageRoot
+	}
+	o.pendingWipe = o.wiped && root == pendingRoot
 	o.base = base{exists: o.exists, storageRoot: root}
 	o.wiped = false
 	o.codeDirty = false
 	clear(o.changed)
+	return sn
 }
 
 func (s *State) trimCaches() {
 	db := s.db
-	if db.accounts.Nodes() > db.opts.AccountNodes {
-		db.accounts.Evict(db.opts.TrieKeepDepth)
-	}
-	if len(db.storageTries) > db.opts.StorageTries {
-		db.dropStorageTries()
-	}
-	if db.storageNodes > db.opts.StorageNodesTotal {
-		db.shrinkStorageTries()
-	}
 	if len(s.accounts) > db.opts.CacheAccounts {
 		clear(s.accounts)
 		s.cachedSlots = 0
@@ -94,49 +197,82 @@ func (s *State) trimCaches() {
 	}
 }
 
+// runCommit computes a sealed block's storage roots, account trie root and
+// write batch. It reads the store and owns the tries; it writes nothing.
+func (db *DB) runCommit(p *pendingCommit) {
+	defer close(p.done)
+	defer func() {
+		if r := recover(); r != nil {
+			p.err = fmt.Errorf("state commit %d: %v", p.number, r)
+		}
+	}()
+	b := &p.batch
+	jobs := make([]*storageJob, len(p.snaps))
+	for i := range p.snaps {
+		sn := &p.snaps[i]
+		if sn.wiped {
+			db.forgetStorageTrie(sn.addr)
+			if err := db.wipeSlots(sn, b); err != nil {
+				p.err = err
+				return
+			}
+		}
+		if !sn.exists || len(sn.slots) == 0 {
+			continue
+		}
+		t := db.storageTrie(sn.addr, snapBase(sn))
+		jobs[i] = &storageJob{sn: sn, t: t, before: t.Nodes()}
+	}
+	if err := runStorageJobs(jobs, db.opts.StorageNodes); err != nil {
+		p.err = err
+		return
+	}
+	p.roots = make([]Hash, len(p.snaps))
+	for i := range p.snaps {
+		root, err := db.finishSnap(&p.snaps[i], jobs[i], b)
+		if err != nil {
+			p.err = err
+			return
+		}
+		p.roots[i] = root
+	}
+	root := db.accounts.Commit(nodeWriter{batch: b, prefix: []byte{prefixAccountNode}})
+	p.head = Head{Number: p.number, Root: root, Loaded: true}
+	b.Put(headKey, encodeHead(p.head))
+	db.trimTries()
+}
+
+func (db *DB) trimTries() {
+	if db.accounts.Nodes() > db.opts.AccountNodes {
+		db.accounts.Evict(db.opts.TrieKeepDepth)
+	}
+	if len(db.storageTries) > db.opts.StorageTries {
+		db.dropStorageTries()
+	}
+	if db.storageNodes > db.opts.StorageNodesTotal {
+		db.shrinkStorageTries()
+	}
+}
+
+func snapBase(sn *objectSnap) Hash {
+	if sn.wiped {
+		return emptyRoot
+	}
+	return sn.baseRoot
+}
+
 // storageJob is one account's storage trie update, run on a worker.
 type storageJob struct {
-	o      *object
+	sn     *objectSnap
 	t      *trie.Trie
 	before int
-	slots  int
 	root   Hash
 	batch  storage.Batch
 	err    error
 }
 
-// prepareStorage wipes destructed accounts' storage and opens the storage
-// trie of every account with changed slots, in address order. It returns one
-// job per address, nil where the storage root does not change.
-func (db *DB) prepareStorage(s *State, addrs []Address, b *storage.Batch) ([]*storageJob, error) {
-	jobs := make([]*storageJob, len(addrs))
-	for i, addr := range addrs {
-		o := s.accounts[addr]
-		assert.Ok(o != nil, "state commits an account it never loaded")
-		if o.wiped {
-			db.forgetStorageTrie(o.addr)
-			if err := db.wipeSlots(o, b); err != nil {
-				return nil, err
-			}
-		}
-		if !o.exists || len(o.changed) == 0 {
-			continue
-		}
-		t := db.storageTrie(o, storageBase(o))
-		jobs[i] = &storageJob{o: o, t: t, before: t.Nodes(), slots: len(o.changed)}
-	}
-	return jobs, nil
-}
-
-func storageBase(o *object) Hash {
-	if o.wiped {
-		return emptyRoot
-	}
-	return o.base.storageRoot
-}
-
 // parallelSlotsMin is the number of changed slots in a block below which
-// storage tries are updated on the calling goroutine.
+// storage tries are updated on one goroutine.
 const parallelSlotsMin = 64
 
 // runStorageJobs updates every job's storage trie and computes its root.
@@ -148,7 +284,7 @@ func runStorageJobs(all []*storageJob, nodesMax int) error {
 	for _, j := range all {
 		if j != nil {
 			jobs = append(jobs, j)
-			slots += j.slots
+			slots += len(j.sn.slots)
 		}
 	}
 	workers := min(runtime.GOMAXPROCS(0), len(jobs))
@@ -162,7 +298,7 @@ func runStorageJobs(all []*storageJob, nodesMax int) error {
 		}
 		return nil
 	}
-	slices.SortFunc(jobs, func(a, b *storageJob) int { return b.slots - a.slots })
+	slices.SortFunc(jobs, func(a, b *storageJob) int { return len(b.sn.slots) - len(a.sn.slots) })
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	for range workers {
@@ -196,19 +332,18 @@ func newStorageWorker() storageWorker {
 }
 
 func (w storageWorker) run(j *storageJob, nodesMax int) {
-	o := j.o
-	for _, k := range sortedHashes(o.changed) {
-		v := o.committed[k]
-		hk := w.hasher.Hash(k[:])
-		sk := slotKeyBytes(o.addr, k)
-		if v.IsZero() {
+	sn := j.sn
+	for _, sv := range sn.slots {
+		hk := w.hasher.Hash(sv.key[:])
+		sk := slotKeyBytes(sn.addr, sv.key)
+		if sv.v.IsZero() {
 			j.batch.Delete(sk)
 			if j.err = j.t.Unset(hk[:]); j.err != nil {
 				return
 			}
 			continue
 		}
-		enc := encodeSlot(v)
+		enc := encodeSlot(sv.v)
 		j.batch.Put(sk, enc)
 		w.enc.Reset()
 		w.enc.WriteBytes(enc)
@@ -216,43 +351,35 @@ func (w storageWorker) run(j *storageJob, nodesMax int) {
 			return
 		}
 	}
-	j.root = j.t.Commit(nodeWriter{batch: &j.batch, prefix: storageNodePrefix(o.addr)})
+	j.root = j.t.Commit(nodeWriter{batch: &j.batch, prefix: storageNodePrefix(sn.addr)})
 	if j.t.Nodes() > nodesMax {
 		j.t.Evict(storageKeepDepthDefault)
 	}
 }
 
-// finishObject writes one account after its storage job ran: its storage
+// finishSnap writes one account after its storage job ran: its storage
 // writes, code, flat entry and account trie leaf, in address order.
-func (db *DB) finishObject(o *object, j *storageJob, b *storage.Batch) (Hash, error) {
-	hashed := db.hasher.Hash(o.addr[:])
-	if !o.exists {
-		if !o.base.exists {
+func (db *DB) finishSnap(sn *objectSnap, j *storageJob, b *storage.Batch) (Hash, error) {
+	hashed := db.hasher.Hash(sn.addr[:])
+	if !sn.exists {
+		if !sn.baseExists {
 			return emptyRoot, nil
 		}
-		b.Delete(accountKey(o.addr))
+		b.Delete(accountKey(sn.addr))
 		return emptyRoot, db.accounts.Unset(hashed[:])
 	}
-	root := storageBase(o)
+	root := snapBase(sn)
 	if j != nil {
 		b.Append(&j.batch)
 		db.storageNodes += j.t.Nodes() - j.before
 		root = j.root
 	}
-	if o.codeDirty {
-		db.putCode(o, b)
+	if sn.codeDirty && sn.codeHash != emptyCodeHash {
+		b.Put(codeKey(sn.codeHash), sn.code)
 	}
-	fa := flatAccount{nonce: o.nonce, balance: o.balance, codeHash: o.codeHash, storageRoot: root}
-	b.Put(accountKey(o.addr), fa.encode())
+	fa := flatAccount{nonce: sn.nonce, balance: sn.balance, codeHash: sn.codeHash, storageRoot: root}
+	b.Put(accountKey(sn.addr), fa.encode())
 	return root, db.accounts.Set(hashed[:], db.encodeAccount(&fa))
-}
-
-func (db *DB) putCode(o *object, b *storage.Batch) {
-	if o.codeHash == emptyCodeHash {
-		return
-	}
-	b.Put(codeKey(o.codeHash), o.code)
-	db.cacheCode(o.codeHash, o.code)
 }
 
 func (db *DB) encodeAccount(fa *flatAccount) []byte {
@@ -267,21 +394,18 @@ func (db *DB) encodeAccount(fa *flatAccount) []byte {
 	return db.enc.Encoded()
 }
 
-func (db *DB) wipeSlots(o *object, b *storage.Batch) error {
-	if !o.base.exists {
-		return nil
-	}
-	if o.base.storageRoot == emptyRoot {
+func (db *DB) wipeSlots(sn *objectSnap, b *storage.Batch) error {
+	if !sn.baseExists || sn.baseRoot == emptyRoot {
 		return nil
 	}
 	del := func(e storage.Entry) error {
 		b.Delete(e.Key)
 		return nil
 	}
-	if err := db.store.Iterate(slotPrefix(o.addr), del); err != nil {
+	if err := db.store.Iterate(slotPrefix(sn.addr), del); err != nil {
 		return err
 	}
-	return db.store.Iterate(storageNodePrefix(o.addr), del)
+	return db.store.Iterate(storageNodePrefix(sn.addr), del)
 }
 
 func (db *DB) forgetStorageTrie(addr Address) {
@@ -312,60 +436,15 @@ func (db *DB) shrinkStorageTries() {
 	}
 }
 
-func (db *DB) storageTrie(o *object, root Hash) *trie.Trie {
-	if t, ok := db.storageTries[o.addr]; ok {
+func (db *DB) storageTrie(addr Address, root Hash) *trie.Trie {
+	if t, ok := db.storageTries[addr]; ok {
 		assert.Ok(t.Hash() == root, "cached storage trie matches the account's storage root")
 		return t
 	}
-	t := trie.Open(root, nodeReader{store: db.store, prefix: storageNodePrefix(o.addr)})
-	db.storageTries[o.addr] = t
+	t := trie.Open(root, nodeReader{store: db.store, prefix: storageNodePrefix(addr)})
+	db.storageTries[addr] = t
 	db.storageNodes += t.Nodes()
 	return t
-}
-
-func (db *DB) commitStorage(o *object, b *storage.Batch) (Hash, error) {
-	baseRoot := o.base.storageRoot
-	if o.wiped {
-		baseRoot = emptyRoot
-	}
-	if len(o.changed) == 0 {
-		return baseRoot, nil
-	}
-	t := db.storageTrie(o, baseRoot)
-	before := t.Nodes()
-	keys := sortedHashes(o.changed)
-	for _, k := range keys {
-		if err := db.commitSlot(slotWrite{t: t, o: o, key: k}, b); err != nil {
-			return Hash{}, err
-		}
-	}
-	root := t.Commit(nodeWriter{batch: b, prefix: storageNodePrefix(o.addr)})
-	if t.Nodes() > db.opts.StorageNodes {
-		t.Evict(storageKeepDepthDefault)
-	}
-	db.storageNodes += t.Nodes() - before
-	return root, nil
-}
-
-type slotWrite struct {
-	t   *trie.Trie
-	o   *object
-	key Hash
-}
-
-func (db *DB) commitSlot(w slotWrite, b *storage.Batch) error {
-	v := w.o.committed[w.key]
-	hk := db.hasher.Hash(w.key[:])
-	sk := slotKeyBytes(w.o.addr, w.key)
-	if v.IsZero() {
-		b.Delete(sk)
-		return w.t.Unset(hk[:])
-	}
-	enc := encodeSlot(v)
-	b.Put(sk, enc)
-	db.enc.Reset()
-	db.enc.WriteBytes(enc)
-	return w.t.Set(hk[:], db.enc.Encoded())
 }
 
 func sortedAddresses[V any](m map[Address]V) []Address {

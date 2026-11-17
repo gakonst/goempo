@@ -40,9 +40,12 @@ type object struct {
 	base       base
 	wiped      bool
 	inTx       bool
-	committed  map[Hash]u256.Int
-	dirty      map[Hash]u256.Int
-	changed    map[Hash]struct{}
+	// pendingWipe: the account was destructed in a block whose pipelined
+	// commit has not deleted its stored slots yet, so they read as zero.
+	pendingWipe bool
+	committed   map[Hash]u256.Int
+	dirty       map[Hash]u256.Int
+	changed     map[Hash]struct{}
 }
 
 func newObject(addr Address, b base) *object {
@@ -173,6 +176,9 @@ func (s *State) load(addr Address) *object {
 }
 
 func (s *State) Account(addr Address) (Account, bool) {
+	if err := s.db.settlePending(); err != nil {
+		s.fail(err)
+	}
 	o := s.load(addr)
 	if !o.exists {
 		return Account{}, false
@@ -327,7 +333,7 @@ func (s *State) committedValue(o *object, key Hash) u256.Int {
 	if v, ok := o.committed[key]; ok {
 		return v
 	}
-	if o.wiped {
+	if o.wiped || o.pendingWipe {
 		return u256.Zero()
 	}
 	if !o.base.exists {
@@ -391,7 +397,7 @@ func (s *State) HasStorage(addr Address) bool {
 			return true
 		}
 	}
-	if o.wiped {
+	if o.wiped || o.pendingWipe {
 		return false
 	}
 	if !o.base.exists {
@@ -522,6 +528,9 @@ func (s *State) resetTx() {
 }
 
 func (s *State) Discard() {
+	if err := s.db.settlePending(); err != nil {
+		s.db.err = err
+	}
 	s.resetTx()
 	clear(s.accounts)
 	clear(s.blockDirty)

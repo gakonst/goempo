@@ -34,14 +34,28 @@ func (r *replayer) step(blk *types.Block) bool {
 		r.failed = m
 		return false
 	}
-	root, err := r.db.State().Commit(h.Number)
-	if err != nil {
-		r.failed = &mismatch{number: h.Number, field: "commit", got: err.Error(), want: "ok"}
-		return false
-	}
-	if root != h.StateRoot {
-		r.failed = &mismatch{number: h.Number, field: "stateRoot", got: root.String(), want: h.StateRoot.String()}
-		return false
+	if r.rootEvery > 1 && h.Number%r.rootEvery != 0 && h.Number != r.target &&
+		(r.store.checkpoint == 0 || h.Number%r.store.checkpoint != 0) && !r.lastInChunk(h.Number) {
+		r.db.State().FinalizeTx()
+	} else if r.pipeline {
+		if !r.settle() {
+			return false
+		}
+		if err := r.db.State().CommitAsync(h.Number); err != nil {
+			r.failed = &mismatch{number: h.Number, field: "commit", got: err.Error(), want: "ok"}
+			return false
+		}
+		r.pending = &pendingRootCheck{number: h.Number, root: h.StateRoot}
+	} else {
+		root, err := r.db.State().Commit(h.Number)
+		if err != nil {
+			r.failed = &mismatch{number: h.Number, field: "commit", got: err.Error(), want: "ok"}
+			return false
+		}
+		if root != h.StateRoot {
+			r.failed = &mismatch{number: h.Number, field: "stateRoot", got: root.String(), want: h.StateRoot.String()}
+			return false
+		}
 	}
 	r.hashes.setHeader(h.Number, &blk.Header)
 	r.head = h.Number
@@ -63,3 +77,29 @@ func compareBlock(h *types.EthHeader, res *executor.Result) *mismatch {
 	}
 	return nil
 }
+
+// settle waits for the pipelined commit in flight and checks its state root.
+// On a mismatch the replay's head goes back to the block before it.
+func (r *replayer) settle() bool {
+	p := r.pending
+	if p == nil {
+		return true
+	}
+	r.pending = nil
+	c, err := r.db.State().WaitCommit()
+	switch {
+	case err != nil:
+		r.failed = &mismatch{number: p.number, field: "commit", got: err.Error(), want: "ok"}
+	case c.Root != p.root:
+		r.failed = &mismatch{number: p.number, field: "stateRoot", got: c.Root.String(), want: p.root.String()}
+	default:
+		return true
+	}
+	r.head = p.number - 1
+	return false
+}
+
+// lastInChunk reports whether number is the last block of a cache chunk, so
+// batched roots are checked at least once a chunk and a stop lands on a
+// checked block.
+func (r *replayer) lastInChunk(number uint64) bool { return (number+1)%chunkBlocks == 0 }

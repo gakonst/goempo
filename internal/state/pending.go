@@ -7,6 +7,9 @@ import (
 func (s *State) PendingRoot() (Hash, error) {
 	s.FinalizeTx()
 	db := s.db
+	if err := db.settlePending(); err != nil {
+		return Hash{}, err
+	}
 	if db.err != nil {
 		return Hash{}, db.err
 	}

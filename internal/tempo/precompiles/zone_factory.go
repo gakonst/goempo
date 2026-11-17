@@ -643,7 +643,7 @@ func (c *Context) emitPortalEvents(in portalInit, meta zoneTokenMeta) error {
 }
 
 func (c *Context) isZonePortal(a Address) (bool, error) {
-	if [12]byte(a[:12]) != zonePortalPrefix {
+	if [12]byte(a[:12]) != zonePortalPrefix || binary.BigEndian.Uint64(a[12:]) == 0 {
 		return false, nil
 	}
 	next, err := c.zoneNextID()

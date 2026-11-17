@@ -268,10 +268,7 @@ var keychainV2Table = extend(keychainTable,
 			return nil, revert(nil)
 		}
 		w := a[2].bytes32()
-		g := KeyGrant{Account: c.Caller, KeyID: a[0].addr(), SigType: a[1].u8(), Admin: true, Restrictions: KeyRestrictions{Expiry: ^uint64(0), AllowAnyCalls: true}}
-		if w != (Hash{}) {
-			g.Witness = &w
-		}
+		g := KeyGrant{Account: c.Caller, KeyID: a[0].addr(), SigType: a[1].u8(), Admin: true, Restrictions: KeyRestrictions{Expiry: ^uint64(0), AllowAnyCalls: true}, Witness: &w}
 		return nil, AuthorizeKey(c, g)
 	}).from(hardfork.T6),
 	mutate("setAllowedCalls(address,(address,(bytes4,address[])[])[])", []abiType{tRaw}, func(c *Context, a []abiValue) ([]byte, error) {

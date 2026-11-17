@@ -556,7 +556,7 @@ func (t Token) isProtected(from Address) bool {
 	if f >= hardfork.T6 && from == ReceivePolicyGuardAddress {
 		return true
 	}
-	return f >= hardfork.T12 && bytes.HasPrefix(from[:], zonePortalPrefix[:2])
+	return f >= hardfork.T12 && [12]byte(from[:12]) == zonePortalPrefix
 }
 
 func (t Token) checkBurnAddress(from Address) error {

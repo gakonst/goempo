@@ -1,8 +1,4 @@
 # Oracle cases (zempo src/tempo/precompiles/testdata) that still differ from the reference; remove a line when it passes.
-zone/isZonePortal-0/T11
-zone/isZonePortal-0/T12
-zone/isZonePortal-0/T13
-zone/isZonePortal-0/T14
 sigver/verifyConfigurableAccount-first-use/T14
 sigver/verifyConfigurableAccount-registered/T14
 sigver/verifyConfigurableAccount-stale/T14
@@ -21,9 +17,6 @@ sigver/verifyConfigurableAccount-primitive/T14
 sigver/verifyConfigurableAccount-keychain/T14
 sigver/verifyConfigurableAccount-low-gas/T14
 sigver/verifyConfigurableAccount-beyond-cap/T14
-keychain/authorizeAdminKey-type0/T11
-keychain/authorizeAdminKey-type0/T12
-keychain/authorizeAdminKey-type0/T13
 keychain/authorizeAdminKey-type0/T14
 keychain/authorize-type3/T14
 keychain/authorize-witness-type3/T14

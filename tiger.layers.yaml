@@ -17,3 +17,5 @@
 "./internal/rlp":
   - ./internal/primitives
   - github.com/kapetan-io/tiger/assert
+"./internal/u256":
+  - github.com/kapetan-io/tiger/assert

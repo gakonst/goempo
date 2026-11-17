@@ -7,6 +7,7 @@ import (
 	"github.com/gakonst/goempo/internal/evm"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/tempo/precompiles"
+	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
 )
 
@@ -27,6 +28,7 @@ type txRun struct {
 	ctx     *precompiles.Context
 	token   Address
 	maxFee  u256.Int
+	keyID   Address
 	machine *evm.EVM
 }
 
@@ -53,6 +55,13 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 	r.warm()
 	r.applyAuthorizations()
 	ran := r.execute()
+	if ran.success && env.Rules.AtLeast(hardfork.T7) {
+		credits, err := precompiles.SettleStorageCreditRefunds(r.ctx)
+		if err != nil {
+			return TxOutcome{}, fmt.Errorf("storage credits: %w", err)
+		}
+		env.State.AddRefund(credits)
+	}
 	gasUsed := r.settleGas(ran.gasLeft)
 	if err := r.refundFee(gasUsed); err != nil {
 		return TxOutcome{}, fmt.Errorf("fee refund: %w", err)
@@ -148,12 +157,8 @@ func (r *txRun) chargeFee() error {
 	r.set.Env.FeeToken = token
 	r.set.Env.NonCreditable = nil
 	precompiles.SetTxOrigin(r.ctx, r.view.sender)
-	if r.view.isAA() && r.view.aa.Signature.Keychain != 0 {
-		key, err := r.view.aa.Signature.KeyID(r.env.Tx.SigningHash())
-		if err != nil {
-			return err
-		}
-		precompiles.SetTransactionKey(r.ctx, key)
+	if err := r.useAccessKey(); err != nil {
+		return err
 	}
 	if r.maxFee.IsZero() {
 		return nil
@@ -164,7 +169,42 @@ func (r *txRun) chargeFee() error {
 		MaxAmount:   r.maxFee,
 		Beneficiary: r.env.Block.Coinbase,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if r.env.Rules.AtLeast(hardfork.T7) {
+		precompiles.MarkFeeSlotsNonCreditable(r.ctx, precompiles.FeeSlots{
+			FeePayer: r.view.feePayer,
+			FeeToken: token,
+			KeyID:    r.keyID,
+		})
+	}
+	return nil
+}
+
+func (r *txRun) useAccessKey() error {
+	if !r.view.isAA() || r.view.aa.Signature.Keychain == types.KeychainNone {
+		return nil
+	}
+	sig := &r.view.aa.Signature
+	key, err := sig.KeyID(r.env.Tx.SigningHash())
+	if err != nil {
+		return err
+	}
+	r.keyID = key
+	if r.view.aa.KeyAuthorization == nil {
+		_, err = precompiles.ValidateKeychainAuthorization(r.ctx, precompiles.KeyUse{
+			Account: r.view.sender,
+			KeyID:   key,
+			SigType: uint8(sig.Inner.Kind),
+			Check:   r.env.Rules.AtLeast(hardfork.T1),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	precompiles.SetTransactionKey(r.ctx, key)
+	return nil
 }
 
 func (r *txRun) checkFeeToken() error {

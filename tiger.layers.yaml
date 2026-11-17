@@ -12,6 +12,7 @@
   - ./internal/types
 "./internal/version": []
 "./internal/io/...":
+  - net
   - os
   - crypto/rand
 "./internal/primitives": []

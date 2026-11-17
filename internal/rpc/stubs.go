@@ -92,6 +92,13 @@ func addDebugStubs(t map[string]handler) {
 	t["debug_traceBadBlock"] = debugTraceBadBlock
 	t["debug_getRawTransactions"] = debugGetRawTransactions
 	t["rpc_modules"] = rpcModules
+	t["eth_getBlockAccessList"] = blockAccessListHandler(balByID, balJSON)
+	t["eth_getBlockAccessListRaw"] = blockAccessListHandler(balByID, balRLP)
+	t["eth_getBlockAccessListByBlockHash"] = blockAccessListHandler(balByHash, balJSON)
+	t["eth_getBlockAccessListByBlockNumber"] = blockAccessListHandler(balByNumber, balJSON)
+	t["debug_chainConfig"] = debugChainConfig
+	t["eth_config"] = ethConfig
+	t["debug_traceCallMany"] = debugTraceCallMany
 	t["debug_codeByHash"] = debugCodeByHash
 	t["eth_getMultiProof"] = ethGetMultiProof
 	t["trace_transactionOpcodeGas"] = traceTransactionOpcodeGas

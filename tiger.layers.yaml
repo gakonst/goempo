@@ -26,6 +26,7 @@
 "./internal/version": []
 "./internal/tracing":
   - ./internal/evm
+  - ./internal/rlp
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
 "./internal/io/...":

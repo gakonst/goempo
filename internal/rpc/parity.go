@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 
@@ -572,44 +573,61 @@ type rawStateContext struct {
 	TransactionIndex json.RawMessage `json:"transactionIndex"`
 }
 
-func ethCallMany(s *Server, p *params) ([]byte, error) {
+type bundleArgs struct {
+	bundles []CallBundle
+	block   uint64
+}
+
+func callBundlesArgs(s *Server, p *params) (bundleArgs, error) {
 	raw, err := p.required("bundles")
 	if err != nil {
-		return nil, err
+		return bundleArgs{}, err
+	}
+	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '[' {
+		return bundleArgs{}, typeError(t, "a sequence")
 	}
 	var rb []rawBundle
 	if err := json.Unmarshal(raw, &rb); err != nil {
-		return nil, invalidParams(err.Error())
+		return bundleArgs{}, invalidParams(err.Error())
 	}
 	bundles := make([]CallBundle, len(rb))
 	for i := range rb {
 		for _, t := range rb[i].Transactions {
 			req, err := callParam(t)
 			if err != nil {
-				return nil, err
+				return bundleArgs{}, err
 			}
 			bundles[i].Calls = append(bundles[i].Calls, req)
 		}
 		ov, err := parseOverrides(rb[i].BlockOverride)
 		if err != nil {
-			return nil, err
+			return bundleArgs{}, err
 		}
 		bundles[i].Number = ov.Number
 	}
 	var sc rawStateContext
 	if ctx := p.optional("state_context"); present(ctx) {
 		if err := json.Unmarshal(ctx, &sc); err != nil {
-			return nil, invalidParams(err.Error())
+			return bundleArgs{}, invalidParams(err.Error())
 		}
 	}
 	ref, err := blockIDParam(sc.BlockNumber)
 	if err != nil {
-		return nil, err
+		return bundleArgs{}, err
 	}
 	n, err := s.stateBlock(ref)
 	if err != nil {
+		return bundleArgs{}, err
+	}
+	return bundleArgs{bundles: bundles, block: n}, nil
+}
+
+func ethCallMany(s *Server, p *params) ([]byte, error) {
+	args, err := callBundlesArgs(s, p)
+	if err != nil {
 		return nil, err
 	}
+	bundles, n := args.bundles, args.block
 	if s.exec == nil {
 		return nil, internalError("unimplemented")
 	}

@@ -238,3 +238,34 @@ func TestOpcodeGas(t *testing.T) {
 	}
 	assert.Equal(total, 22, "every step counted once")
 }
+
+func TestBlockAccessListSystemOnly(t *testing.T) {
+	system := []evm.Address{
+		{0x00, 0x00, 0x09, 0x61, 0xef, 0x48, 0x0e, 0xb5, 0x5e, 0x80, 0xd1, 0x9a, 0xd8, 0x35, 0x79, 0xa6, 0x4c, 0x00, 0x70, 0x02},
+		{0x00, 0x00, 0xbb, 0xdd, 0xc7, 0xce, 0x48, 0x86, 0x42, 0xfb, 0x57, 0x9f, 0x8b, 0x00, 0xf3, 0xa5, 0x90, 0x00, 0x72, 0x51},
+		{0x00, 0x00, 0xf9, 0x08, 0x27, 0xf1, 0xc5, 0x3a, 0x10, 0xcb, 0x7a, 0x02, 0x33, 0x5b, 0x17, 0x53, 0x20, 0x00, 0x29, 0x35},
+		{0x00, 0x0f, 0x3d, 0xf6, 0xd7, 0x32, 0x80, 0x7e, 0xf1, 0x31, 0x9f, 0xb7, 0xb8, 0xbb, 0x85, 0x22, 0xd0, 0xbe, 0xac, 0x02},
+	}
+	bal := tracing.BuildAccessList(nil, append([]evm.Address{{}}, system...))
+	want := "0xf887da940000000000000000000000000000000000000000c0c0c0c0c0da9400000961ef480eb55e80d19ad83579a64c007002c0c0c0c0c0da940000bbddc7ce488642fb579f8b00f3a590007251c0c0c0c0c0da940000f90827f1c53a10cb7a02335b175320002935c0c0c0c0c0da94000f3df6d732807ef1319fb7b8bb8522d0beac02c0c0c0c0c0"
+	assert.Equal(fmt.Sprintf("0x%x", bal.RLP()), want, "mainnet block 2 eth_getBlockAccessListRaw")
+}
+
+func TestBlockAccessListChangesAndReads(t *testing.T) {
+	addr := evm.Address{0x42}
+	read, wrote, same := evm.Hash{31: 1}, evm.Hash{31: 2}, evm.Hash{31: 3}
+	acc := &tracing.Account{
+		Address:     addr,
+		Slots:       []evm.Hash{read, wrote, same},
+		Pre:         map[evm.Hash]u256.Int{wrote: u256.FromUint64(1), same: u256.FromUint64(5)},
+		Post:        map[evm.Hash]u256.Int{wrote: u256.FromUint64(9), same: u256.FromUint64(5)},
+		Balance:     u256.FromUint64(10),
+		PostBalance: u256.FromUint64(7),
+		Nonce:       1,
+		PostNonce:   2,
+	}
+	bal := tracing.BuildAccessList([]tracing.IndexedTrace{{Index: 1, Trace: &tracing.TxTrace{Accounts: []*tracing.Account{acc}}}}, nil)
+	got := string(bal.JSON())
+	want := `[{"address":"0x4200000000000000000000000000000000000000","balanceChanges":[{"index":"0x1","value":"0x7"}],"codeChanges":[],"nonceChanges":[{"index":"0x1","value":"0x2"}],"storageChanges":[{"changes":[{"index":"0x1","value":"0x9"}],"key":"0x2"}],"storageReads":["0x1","0x3"]}]`
+	assert.Equal(got, want, "written slot is a change, unchanged slots are reads")
+}

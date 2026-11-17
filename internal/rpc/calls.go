@@ -61,6 +61,7 @@ type Executor interface {
 	ReplayBlock(block uint64, diff DiffMode) ([]*TxReplay, error)
 	TraceCalls(block uint64, reqs []*CallRequest, diff DiffMode) ([]TxReplay, error)
 	CallMany(block uint64, bundles []CallBundle) ([][]CallResult, error)
+	TraceCallMany(block uint64, bundles []CallBundle, opts *TraceOptions) ([][]json.RawMessage, error)
 	TraceCall(block uint64, req *CallRequest, opts *TraceOptions) (json.RawMessage, error)
 	CreateAccessList(block uint64, req *CallRequest, gasCap uint64) (AccessListResult, error)
 	SimulateV1(block uint64, req *SimulateRequest) ([]SimulatedBlock, error)

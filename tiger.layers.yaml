@@ -39,6 +39,8 @@
   - github.com/kapetan-io/tiger/assert
 "./internal/crypto/p256": []
 "./internal/evm":
+  - ./internal/crypto/p256
+  - ./internal/crypto/secp256k1
   - ./internal/primitives
   - ./internal/u256
   - ./internal/crypto/keccak

@@ -5,6 +5,8 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
+const selfDestructRefund = 24000
+
 type callArgs struct {
 	kind  CallKind
 	gas   u256.Int
@@ -224,6 +226,9 @@ func opSelfDestruct(e *EVM, f *Frame) Status {
 	}
 	if !f.UseGas(cost) {
 		return StatusOutOfGas
+	}
+	if e.Config.Fork < London && !e.State.HasSelfDestructed(f.address) {
+		e.State.AddRefund(selfDestructRefund)
 	}
 	e.State.SubBalance(f.address, balance)
 	e.State.AddBalance(beneficiary, balance)

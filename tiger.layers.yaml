@@ -104,3 +104,10 @@
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
 "./internal/p2p/snappy": []
+"./internal/p2p/rlpx":
+  - ./internal/crypto/secp256k1
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/io
+  - ./internal/p2p/snappy
+  - golang.org/x/crypto/sha3

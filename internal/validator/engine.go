@@ -19,6 +19,7 @@ const (
 	finalsKept     = 1024
 	futureMax      = 1024
 	requestEvery   = 500
+	backfillAfter  = 3000
 	settleMax      = 64
 	pendingWalkMax = 4096
 	RecoverMax     = 1 << 20
@@ -84,11 +85,12 @@ type Config struct {
 }
 
 type Stats struct {
-	Proposed  uint64
-	Committed uint64
-	Epochs    uint64
-	Dealt     uint64
-	Acks      uint64
+	Proposed     uint64
+	Committed    uint64
+	Epochs       uint64
+	Dealt        uint64
+	Acks         uint64
+	MissedShares uint64
 }
 
 type Engine struct {
@@ -103,6 +105,9 @@ type Engine struct {
 	finals    map[uint64]consensus.Finalized
 	requested map[consensus.Digest]consensus.Millis
 	asked     map[uint64]consensus.Digest
+	backfill  map[uint64]uint64
+	progress  consensus.Millis
+	askedAt   consensus.Millis
 	verdicts  map[consensus.Digest]consensus.Verdict
 	nextID    uint64
 	cur       *epochState
@@ -131,7 +136,7 @@ func New(cfg Config) (*Engine, error) {
 		cfg: cfg, me: dkg.KeyOf(cfg.Key.Private()), ns: consensus.NewNamespace(consensus.TempoNamespace),
 		blocks: map[consensus.Digest]*types.Block{}, finalOf: map[consensus.Digest]consensus.Finalized{},
 		finals: map[uint64]consensus.Finalized{}, requested: map[consensus.Digest]consensus.Millis{},
-		asked: map[uint64]consensus.Digest{}, verdicts: map[consensus.Digest]consensus.Verdict{},
+		asked: map[uint64]consensus.Digest{}, backfill: map[uint64]uint64{}, verdicts: map[consensus.Digest]consensus.Verdict{},
 	}
 	head := cfg.Chain.Head()
 	epoch := cfg.Epocher.Epoch(head.Header.Inner.Number + 1)
@@ -224,11 +229,49 @@ func (e *Engine) Tick(now consensus.Millis) {
 	if e.cur.voter != nil {
 		e.emit(e.cur, e.cur.voter.Tick(now))
 	}
-	if e.prev != nil && e.prev.voter != nil {
-		e.emit(e.prev, e.prev.voter.Tick(now))
-	}
 	e.retryRequests()
+	e.requestBackfill()
 	e.settle()
+}
+
+func (e *Engine) requestBackfill() {
+	if e.now < e.progress+backfillAfter || e.now < e.askedAt+requestEvery {
+		return
+	}
+	e.askedAt = e.now
+	clear(e.backfill)
+	height := e.cfg.Chain.Head().Header.Inner.Number + 1
+	e.nextID++
+	e.backfill[e.nextID] = height
+	q := wire.MarshalRequest{ID: e.nextID, Key: wire.MarshalKey{Kind: wire.KeyFinalized, Height: height}}
+	e.cfg.Net.Send(wire.ChannelMarshal, nil, q.Encode())
+}
+
+func (e *Engine) onBackfill(height uint64, body []byte) {
+	if height != e.cfg.Chain.Head().Header.Inner.Number+1 {
+		return
+	}
+	cb, err := wire.DecodeCertifiedBlock(body, consensus.KindFinalize)
+	if err != nil {
+		return
+	}
+	b, err := types.DecodeBlock(cb.Block)
+	if err != nil {
+		return
+	}
+	f := consensus.Finalization{Proposal: cb.Certified.Proposal, Certificate: cb.Certified.Certificate}
+	if b.Header.Inner.Number != height || consensus.Digest(b.Hash()) != f.Proposal.Payload {
+		return
+	}
+	if f.Proposal.Round.Epoch != e.cur.epoch || consensus.VerifyFinalization(e.cur.identity, e.ns, f) != nil {
+		return
+	}
+	e.store(&b)
+	e.onFinalized(consensus.Finalized{Proposal: f.Proposal, Certificate: f.Certificate})
+	e.drain()
+	e.askedAt = 0
+	e.progress = 0
+	e.requestBackfill()
 }
 
 func (e *Engine) Deadline() consensus.Millis {
@@ -496,6 +539,11 @@ func (e *Engine) topFinal() (consensus.Finalized, bool) {
 func (e *Engine) nextToCommit(top consensus.Finalized) (*types.Block, bool) {
 	head := e.cfg.Chain.Head()
 	want := head.Header.Inner.Number + 1
+	if f, ok := e.finals[want]; ok {
+		if b, ok := e.block(f.Proposal.Payload); ok && b.Header.Inner.ParentHash == head.Hash() {
+			return b, true
+		}
+	}
 	b, ok := e.block(top.Proposal.Payload)
 	for range pendingWalkMax {
 		if !ok {
@@ -538,6 +586,10 @@ func (e *Engine) commit(b *types.Block) {
 	}
 	e.stats.Committed++
 	e.events++
+	e.progress = e.now
+	if !boundary {
+		e.prev = nil
+	}
 	delete(e.blocks, consensus.Digest(b.Hash()))
 	e.pruneFinals(n)
 	st.round.onFinalized(b)
@@ -628,6 +680,7 @@ func (e *Engine) receiveMarshal(from PeerKey, msg []byte) {
 		e.onResponse(f)
 	case wire.FrameError:
 		delete(e.asked, f.ID)
+		delete(e.backfill, f.ID)
 	default:
 		assert.Unreachable("FrameKind: unhandled value")
 	}
@@ -674,6 +727,11 @@ func (e *Engine) lookup(key wire.MarshalKey) ([]byte, bool) {
 }
 
 func (e *Engine) onResponse(f wire.Frame) {
+	if h, ok := e.backfill[f.ID]; ok {
+		delete(e.backfill, f.ID)
+		e.onBackfill(h, f.Body)
+		return
+	}
 	d, ok := e.asked[f.ID]
 	if !ok {
 		return

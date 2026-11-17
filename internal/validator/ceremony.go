@@ -233,7 +233,8 @@ func (c *ceremony) nextShare(r reckoning) (*dkg.Share, error) {
 	}
 	s, err := c.player.Finalize(r.entries, r.selection)
 	if err != nil {
-		return nil, err
+		c.e.stats.MissedShares++
+		return nil, nil
 	}
 	return &s, nil
 }

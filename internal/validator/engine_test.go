@@ -294,3 +294,21 @@ func TestEngineSurvivesOneValidatorDown(_ *testing.T) {
 	c.runUntil(c.allAt(netEpochLength + 3))
 	assert.Ok(c.engines[0].Epoch() >= 1, "the epoch turned with a validator down")
 }
+
+func TestEngineBackfillsAfterDowntime(_ *testing.T) {
+	c := newCluster()
+	c.runUntil(c.allAt(3))
+	last := netValidators - 1
+	c.down[last] = true
+	c.runUntil(c.allAt(netEpochLength + 5))
+	behind := c.height(last)
+	assert.Ok(behind < netEpochLength, "the stopped validator fell an epoch behind")
+	c.down[last] = false
+	c.runUntil(c.allAt(netEpochLength + 10))
+	for h := range uint64(netEpochLength + 10) {
+		a, _ := c.chains[0].BlockByNumber(h)
+		b, _ := c.chains[last].BlockByNumber(h)
+		assert.Equal(b.Hash(), a.Hash(), "backfilled chain matches")
+	}
+	assert.Ok(c.engines[last].Epoch() >= 1, "it crossed the epoch it missed")
+}

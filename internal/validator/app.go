@@ -162,8 +162,5 @@ func (a *app) checkExtra(ctx consensus.ProposeContext, b *types.Block) consensus
 	if !a.st.round.info.CheckSignedDealerLog(l) {
 		return consensus.Reject
 	}
-	if [types.ProposerKeyLength]byte(l.Dealer) != a.e.proposer(a.st, ctx.Leader) {
-		return consensus.Reject
-	}
 	return consensus.Accept
 }

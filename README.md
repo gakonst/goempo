@@ -30,3 +30,7 @@ go build -o goempo ./cmd/goempo
 ```
 
 goempo executes every block from its state's head to the mainnet tip (from the chunk archive in ~/cache/mainnet, then the upstream's debug_getRawBlock), verifies each finalization certificate from consensus_getFinalization (available from block 25,165,748), checks gas used, receipts root, bloom and state root, and serves JSON-RPC over the live state while it follows the chain. It stops at the first block that does not match. -to N stops after block N (-hold keeps serving), -certify=false skips certificates, -summary writes a JSON report.
+
+## License
+
+Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

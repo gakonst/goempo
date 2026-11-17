@@ -54,7 +54,7 @@ Every agent ran the same loop ([LOOP.md](../LOOP.md)), one measured step at a ti
 
 One lead agent took the request, wrote the scaffold (the rules in [AGENTS.md](../AGENTS.md), the ladder, the loop, the verify script and the tiger configuration) and then spawned workers, each owning disjoint packages. The lead reassigned agents as rungs fell and pushed the shared origin to GitHub; nobody else pushed there.
 
-Phase one, by wave (times UTC, from the build thread and the commit log):
+Phase one, by wave (times UTC, from the lead's records and the commit log):
 
 | Time | Agents | Scope |
 |---|---|---|
@@ -70,9 +70,9 @@ How they kept out of each other's way:
 
 - **One package, one agent.** Write scopes were disjoint; only shared files (`tiger.layers.yaml`, `go.mod`, `FRONTIER.*`, `README.md`) were edited by everyone, and rebase conflicts there were resolved by keeping both sides.
 - **A local bare repository as origin.** Each agent cloned `~/goempo.git` into its own worktree under `~/wt/<role>`, committed small verified slices and ran `git pull --rebase origin main && scripts/verify.sh && git push origin main`. Unpushed work dies with the agent, and restarts did kill agents, so slices were small.
-- **Messages for interfaces.** Agents asked each other for what they needed with `send_agent_message` instead of editing another agent's package. The climber, for instance, sent the precompiles agent each mismatching precompile call it found (`FRONTIER.md` records "sent to agent 5" for the ValidatorConfig selector at block 4,165,889), and the rpc agent built `eth_call` on the executor agent's `ApplyCall`.
+- **Messages for interfaces.** Agents asked each other for what they needed with directed agent messages instead of editing another agent's package. The climber, for instance, sent the precompiles agent each mismatching precompile call it found (`FRONTIER.md` records "sent to agent 5" for the ValidatorConfig selector at block 4,165,889), and the rpc agent built `eth_call` on the executor agent's `ApplyCall`.
 - **Shared caches, one writer per file.** Mainnet blocks (`~/cache/mainnet`, 4,940 chunks of 10,000 blocks, 14 GB), the R1 sample and the RPC corpus live under `~/cache`; agents added files and never deleted others'.
-- **The right machine for long runs.** Multi-hour replays ran in the background with a result JSON and a log under `~/scratch`, fetching blocks from an internal mainnet node on the tailnet in parallel shards to stay clear of public RPC limits; Rust builds and pinned-core perf measurements ran on dev-georgios (32 cores), not on the 4-core hosted Hand.
+- **The right machine for long runs.** Multi-hour replays ran in the background with a result JSON and a log under `~/scratch`, fetching blocks from a private mainnet RPC node in parallel shards to stay clear of public RPC limits; Rust builds and pinned-core perf measurements ran on a 32-core build machine, not on the 4-core dev host.
 
 Phase two (from 18:01 UTC) is described under [R6 for real](#r6-for-real-the-validator-swarm).
 
@@ -86,7 +86,7 @@ Nothing was taken from the reference except its behavior. The rule was: read the
 
 **Trace diagnosis.** For a mismatching transaction, `replay` (since 04c516f) fetches the reference's `callTracer` frames and compares them with goempo's frame by frame, naming the first call whose gas differs. Most fixes started from that line.
 
-**RPC differential corpus (R5).** Scripts (`scripts/rpc-corpus.py`, `rpc-corpus-extra.py`, `rpc-record.py`) recorded 8,549 requests and their answers from `https://rpc.tempo.xyz` and the internal mainnet node into `~/cache/rpc/corpus*.jsonl`: blocks of every transaction shape, replayable blocks for state, call and trace methods, and malformed requests for error codes. `goempo-dev rpcdiff` serves goempo from the cached blocks with state replayed from genesis and compares status code and JSON for every case. Cases whose answers depend on time, the gateway or the reference's own node are recorded as such and skipped (24 live, 5 gateway, 8 node-local). Probing about 200 method names found 121 methods the mainnet node answers; goempo serves all of them.
+**RPC differential corpus (R5).** Scripts (`scripts/rpc-corpus.py`, `rpc-corpus-extra.py`, `rpc-record.py`) recorded 8,549 requests and their answers from `https://rpc.tempo.xyz` and a private mainnet RPC node into `~/cache/rpc/corpus*.jsonl`: blocks of every transaction shape, replayable blocks for state, call and trace methods, and malformed requests for error codes. `goempo-dev rpcdiff` serves goempo from the cached blocks with state replayed from genesis and compares status code and JSON for every case. Cases whose answers depend on time, the gateway or the reference's own node are recorded as such and skipped (24 live, 5 gateway, 8 node-local). Probing about 200 method names found 121 methods the mainnet node answers; goempo serves all of them.
 
 **Reference oracle corpus.** zempo's corpus of 4,992 generated precompile calls, each with the outcome tempoxyz/tempo's own precompiles produce over the same prestate (status, output, gas, refund, logs, changed slots), runs as `go test ./internal/tempo/precompiles -run TestOracle`. It covers paths mainnet has not exercised yet. goempo went from 4,563 to 4,986 identical; the 6 that differ are T14 keychain grants where goempo follows a newer tempo commit than the corpus.
 
@@ -176,10 +176,10 @@ Six agents started at 18:01 UTC, each with disjoint packages:
 | wire | byte-compatible consensus, DKG and marshal messages, checked against golden vectors from the Rust code | R6b wire vectors |
 | builder | transaction pool and payload builder | R6c builder |
 | validator | keys, registration tooling, cmd/goempo validator mode wiring the pieces together | R6d validator wiring |
-| devnet | a Rust tempo devnet harness on dev-georgios, then a mixed goempo and Rust devnet, then moderato readiness | R6e mixed devnet (goempo's votes counted and its proposals finalized by Rust validators), R6f moderato readiness |
+| devnet | a Rust tempo devnet harness on a 32-core build machine, then a mixed goempo and Rust devnet, then moderato readiness | R6e mixed devnet (goempo's votes counted and its proposals finalized by Rust validators), R6f moderato readiness |
 | scribe | this document, [METRICS.md](METRICS.md) and `scripts/metrics.sh` | |
 
-Rust is allowed only in harnesses under `~/goempo-work` on dev-georgios, to produce golden vectors and run reference nodes; never in goempo itself.
+Rust is allowed only in harnesses under `~/goempo-work` on a 32-core build machine, to produce golden vectors and run reference nodes; never in goempo itself.
 
 ### R6 progress
 

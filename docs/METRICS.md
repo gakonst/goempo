@@ -15,7 +15,7 @@ It needs Go 1.26 on `PATH` (it adds `~/.local/go/bin`) and `jq` for the frontier
 
 ## Snapshot
 
-At 8a4bc6b (end of phase one, measured 2026-11-17 18:03 UTC on the hosted Hand, 4 cores):
+At 8a4bc6b (end of phase one, measured 2026-11-17 18:03 UTC on the 4-core dev host):
 
 | Metric | Value |
 |---|---|
@@ -34,7 +34,7 @@ At 8a4bc6b (end of phase one, measured 2026-11-17 18:03 UTC on the hosted Hand, 
 | R3 replay 35.9M..49.4M | 13.5M blocks in 3,181 s: 4.2k blocks/s, 289 Mgas/s, 4.2 GB peak RSS |
 | R5 RPC | 111/111 methods, 3,378/3,378 cases |
 | R6 | local simulation tests pass (`go test ./internal/sim/`, ~22 s) |
-| R7 | 59.0k blocks/s, 30.3 Mgas/s on 1..4,165,926 (dev-georgios, 4 pinned cores) |
+| R7 | 59.0k blocks/s, 30.3 Mgas/s on 1..4,165,926 (32-core build machine, 4 pinned cores) |
 | precompiles oracle | 4,986/4,992 |
 | caches | 4,940 mainnet chunks (14 GB, through 49,399,999); 8,549 RPC corpus requests; 632 R1 sample blocks |
 
@@ -81,7 +81,7 @@ The script builds `cmd/goempo-dev` into a temporary directory and runs, all from
 | R3 replay | `goempo-dev replay -to $GOEMPO_REPLAY_TO -diagnose off` | gas used, receipts root, bloom and state root of every block, in memory |
 | R6 sim (`--all`) | `go test -count=1 ./internal/sim/` | simplex and DKG reshare across 4-7 simulated validators with faults |
 
-The full R3 score (genesis to the tip of the cache) takes about three hours on the hosted Hand with `-datadir`, so the script reads it from FRONTIER and the cached result files instead of rerunning it.
+The full R3 score (genesis to the tip of the cache) takes about three hours on the 4-core dev host with `-datadir`, so the script reads it from FRONTIER and the cached result files instead of rerunning it.
 
 ## Adding a metric
 

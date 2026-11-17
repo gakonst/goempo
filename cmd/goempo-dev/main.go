@@ -12,6 +12,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis>")
 		os.Exit(2)
 	}
+	if os.Args[1] == "statetest" {
+		os.Exit(runStatetest(os.Args[2:]))
+	}
 	if os.Args[1] == "genesis" {
 		os.Exit(runGenesis(os.Args[2:]))
 	}

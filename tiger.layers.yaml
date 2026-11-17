@@ -2,6 +2,7 @@
   - os
   - ./internal/version
 "./cmd/goempo-dev":
+  - ./internal/statetest
   - os
   - net
   - ./internal/version
@@ -37,3 +38,23 @@
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
 "./internal/crypto/p256": []
+"./internal/evm":
+  - ./internal/primitives
+  - ./internal/u256
+  - ./internal/crypto/keccak
+  - github.com/kapetan-io/tiger/assert
+"./internal/evm/memstate":
+  - ./internal/evm
+  - ./internal/primitives
+  - ./internal/u256
+  - ./internal/crypto/keccak
+  - github.com/kapetan-io/tiger/assert
+"./internal/statetest":
+  - os
+  - ./internal/evm
+  - ./internal/evm/memstate
+  - ./internal/primitives
+  - ./internal/u256
+  - ./internal/rlp
+  - ./internal/trie
+  - ./internal/crypto/keccak

@@ -5,7 +5,8 @@
 #
 #   scripts/metrics.sh            repo counts, frontier rows, cached results
 #   scripts/metrics.sh --run      also score R1, R2, R5 and a short R3 replay
-#   scripts/metrics.sh --all      --run plus the R6 simulator tests (~25 s)
+#   scripts/metrics.sh --all      --run plus the R6 local checks: sim, p2p and wire
+#                                 vectors, pool and builder, validator cluster (~50 s)
 #   scripts/metrics.sh --json     one JSON object instead of text (implies --run)
 #
 # Environment: GOEMPO_CACHE (default ~/cache), GOEMPO_RESULTS (space-separated
@@ -22,7 +23,7 @@ for arg in "$@"; do
     --run) run=1 ;;
     --all) run=1; sim=1 ;;
     --json) run=1; json=1 ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -160,10 +161,26 @@ if [ "$run" = 1 ]; then
     J[r3_window]=$(jq -c '{height, seconds, blocks_per_sec}' <<< "$r3" 2>/dev/null || echo null)
   fi
   if [ "$sim" = 1 ]; then
-    start=$(date +%s)
-    if go test -count=1 ./internal/sim/ >/dev/null 2>&1; then simres="pass"; else simres="FAIL"; fi
-    kv "R6 local sim tests" "$simres ($(( $(date +%s) - start )) s, go test ./internal/sim/)"
-    J[r6_sim]="\"$simres\""
+    r6checks=(
+      "R6 sim|./internal/sim/"
+      "R6a p2p vectors|./internal/cwp2p -run CommonwareVectors"
+      "R6b wire vectors|./internal/consensus/wire ./internal/dkg -run Rust|Mainnet"
+      "R6c pool and builder|./internal/txpool ./internal/builder"
+      "R6d validator cluster|./internal/validator"
+    )
+    r6json=""
+    for check in "${r6checks[@]}"; do
+      name="${check%%|*}"; args="${check#*|}"
+      pkgs="${args%% -run *}"; run=""
+      [ "$pkgs" != "$args" ] && run="${args#* -run }"
+      start=$(date +%s)
+      # shellcheck disable=SC2086
+      if go test -count=1 $pkgs ${run:+-run "$run"} >/dev/null 2>&1; then res="pass"; else res="FAIL"; fi
+      secs=$(( $(date +%s) - start ))
+      kv "$name" "$res ($secs s, go test $args)"
+      r6json+="${r6json:+,}"$name":"$res""
+    done
+    J[r6_checks]="{$r6json}"
   fi
 fi
 

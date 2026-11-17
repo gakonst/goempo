@@ -113,8 +113,10 @@ func (c *Context) checkGrant(g KeyGrant) error {
 		return errSel("ZeroPublicKey()")
 	}
 	delegate := t14 && g.SigType == SigConfigurableAccount
-	if (g.Admin || delegate) && g.KeyID == g.Account {
-		return errSel("InvalidKeyId()")
+	if g.KeyID == g.Account {
+		if g.Admin || delegate {
+			return errSel("InvalidKeyId()")
+		}
 	}
 	if delegate {
 		if !ValidConfigurableAccount(g.KeyID, c.Fork) {

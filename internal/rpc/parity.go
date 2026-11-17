@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"slices"
+	"strconv"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/types"
@@ -47,12 +48,16 @@ type traceTypes struct {
 }
 
 func traceTypesParam(raw json.RawMessage) (traceTypes, error) {
-	var names []string
-	if err := json.Unmarshal(raw, &names); err != nil {
-		return traceTypes{}, invalidParams("invalid trace types")
-	}
 	var t traceTypes
-	for _, n := range names {
+	elems, ok := arrayElems(bytes.TrimSpace(raw))
+	if !ok {
+		return t, typeError(bytes.TrimSpace(raw), "a sequence")
+	}
+	for _, e := range elems {
+		n, err := stringParam(e.raw, "a string")
+		if err != nil {
+			return t, shiftColumn(err, e.off)
+		}
 		switch n {
 		case "trace":
 			t.trace = true
@@ -61,7 +66,7 @@ func traceTypesParam(raw json.RawMessage) (traceTypes, error) {
 		case "vmTrace":
 			t.vmTrace = true
 		default:
-			return traceTypes{}, invalidParams("unknown variant `" + n + "`, expected one of `vmTrace`, `trace`, `stateDiff`")
+			return t, invalidParams("unknown variant `" + n + "`, expected one of `trace`, `vmTrace`, `stateDiff`" + columnMarker + strconv.Itoa(e.off+len(e.raw)))
 		}
 	}
 	return t, nil

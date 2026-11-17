@@ -49,6 +49,8 @@ var nodeLocal = map[string]bool{
 	"eth_newBlockFilter":              true,
 	"eth_newPendingTransactionFilter": true,
 	"eth_subscribe":                   true,
+	"operator_peers":                  true,
+	"tempo_fundAddress":               true,
 }
 
 var (

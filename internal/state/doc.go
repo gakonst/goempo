@@ -26,6 +26,11 @@
 // root), goes into storage in one batch, so a crash leaves the state of the
 // last block whose batch was flushed, never a mix of two blocks.
 //
+// Block numbers only go up: Commit at or below the head returns
+// ErrBlockOrder and leaves the block's changes pending. Nodes are kept by
+// path, so the store holds only the latest state; RebuildRoot recomputes the
+// root from the flat index alone, to check the two agree.
+//
 // Store read errors inside evm.State methods are latched and returned by the
 // next Commit, which then refuses to write; a DB that failed must be
 // reopened.

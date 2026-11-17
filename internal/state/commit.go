@@ -15,6 +15,9 @@ func (s *State) Commit(number uint64) (Hash, error) {
 	if db.err != nil {
 		return Hash{}, db.err
 	}
+	if db.head.Loaded && number <= db.head.Number {
+		return Hash{}, ErrBlockOrder
+	}
 	if s.err != nil {
 		db.err = s.err
 		return Hash{}, s.err

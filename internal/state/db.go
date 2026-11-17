@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	ErrCorrupt  = errors.New("state: stored value is corrupt")
-	ErrNotEmpty = errors.New("state: genesis loaded into a database that already holds a state")
+	ErrCorrupt    = errors.New("state: stored value is corrupt")
+	ErrNotEmpty   = errors.New("state: genesis loaded into a database that already holds a state")
+	ErrBlockOrder = errors.New("state: block committed at or below the head")
 )
 
 var emptyRoot = trie.EmptyRoot

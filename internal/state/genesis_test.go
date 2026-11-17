@@ -46,6 +46,9 @@ func TestMainnetGenesis(t *testing.T) {
 	if _, err := db.LoadGenesis(g); !errors.Is(err, state.ErrNotEmpty) {
 		t.Fatalf("second genesis load: %v", err)
 	}
+	if _, err := db.State().Commit(0); !errors.Is(err, state.ErrBlockOrder) {
+		t.Fatalf("commit at the head: %v", err)
+	}
 	must(t, db.Close())
 
 	fs.Crash()

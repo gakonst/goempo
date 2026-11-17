@@ -111,6 +111,17 @@ func opSstore(e *EVM, f *Frame) Status {
 		value:    value,
 	}
 	cost += e.sstoreCost(slot)
+	if e.storage != nil && slot.current.IsZero() != value.IsZero() {
+		if f.gas < e.gas.WarmAccess {
+			return StatusOutOfGas
+		}
+		w := StorageWrite{Address: f.address, Key: key, Current: slot.current, Value: value, Gas: f.gas - e.gas.WarmAccess}
+		used, ok := e.storage.CrossZero(w)
+		if !ok {
+			return StatusOutOfGas
+		}
+		cost += used
+	}
 	if !f.UseGas(cost) {
 		return StatusOutOfGas
 	}

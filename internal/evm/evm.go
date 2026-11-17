@@ -15,11 +15,24 @@ const instructionsMax = 1 << 40
 const _ = uint64(instructionsMax - CallDepthLimit)
 
 type Context struct {
-	State  State
-	Block  *BlockContext
-	Tx     *TxContext
-	Config *Config
-	Tracer Tracer
+	State   State
+	Block   *BlockContext
+	Tx      *TxContext
+	Config  *Config
+	Tracer  Tracer
+	Storage StorageHook
+}
+
+type StorageWrite struct {
+	Address Address
+	Key     Hash
+	Current u256.Int
+	Value   u256.Int
+	Gas     uint64
+}
+
+type StorageHook interface {
+	CrossZero(w StorageWrite) (uint64, bool)
 }
 
 type EVM struct {
@@ -34,6 +47,7 @@ type EVM struct {
 	hasher   *keccak.Hasher
 	analysis map[Hash][]uint64
 	tracer   Tracer
+	storage  StorageHook
 }
 
 func New(ctx Context) *EVM {
@@ -52,6 +66,7 @@ func New(ctx Context) *EVM {
 		hasher:   keccak.New(),
 		analysis: make(map[Hash][]uint64),
 		tracer:   tracerOf(ctx),
+		storage:  ctx.Storage,
 	}
 }
 

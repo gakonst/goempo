@@ -161,7 +161,14 @@ func (r *txRun) protocolContext() *precompiles.Context {
 	return c
 }
 
+func (r *txRun) uncredited() func() {
+	prev := r.ctx.SkipStorageCredits
+	r.ctx.SkipStorageCredits = true
+	return func() { r.ctx.SkipStorageCredits = prev }
+}
+
 func (r *txRun) applyNonce() error {
+	defer r.uncredited()()
 	v := &r.view
 	st := r.env.State
 	if v.isAA() && isExpiring(v, r.env.Rules) {
@@ -215,12 +222,14 @@ func (r *txRun) chargeFee() error {
 	if r.maxFee.IsZero() {
 		return nil
 	}
+	restore := r.uncredited()
 	_, err = precompiles.CollectFeePreTx(r.ctx, precompiles.FeeCollection{
 		FeePayer:    r.view.feePayer,
 		Token:       token,
 		MaxAmount:   r.maxFee,
 		Beneficiary: r.env.Block.Coinbase,
 	})
+	restore()
 	if err != nil {
 		return err
 	}
@@ -351,10 +360,11 @@ func (r *txRun) execute() execution {
 	st := r.env.State
 	v := &r.view
 	machine := evm.New(evm.Context{
-		State:  st,
-		Block:  r.env.Block,
-		Tx:     &evm.TxContext{Origin: v.sender, GasPrice: r.price},
-		Config: r.env.Config,
+		State:   st,
+		Block:   r.env.Block,
+		Tx:      &evm.TxContext{Origin: v.sender, GasPrice: r.price},
+		Config:  r.env.Config,
+		Storage: r.storageHook(),
 	})
 	gasLeft, allowed := r.checkCallScopes(v.gasLimit - r.need.gas)
 	if !allowed {
@@ -380,6 +390,27 @@ func (r *txRun) execute() execution {
 		}
 	}
 	return execution{success: true, gasLeft: gasLeft}
+}
+
+type creditHook struct {
+	ctx *precompiles.Context
+}
+
+func (h *creditHook) CrossZero(w evm.StorageWrite) (uint64, bool) {
+	used, err := precompiles.EVMStorageCredits(h.ctx, w.Gas, precompiles.EVMStore{Owner: w.Address, Key: w.Key, Present: w.Current, Next: w.Value})
+	return used, err == nil
+}
+
+func (r *txRun) storageHook() evm.StorageHook {
+	if !r.env.Rules.AtLeast(hardfork.T7) {
+		return nil
+	}
+	k := precompiles.NewContext(r.env.State, r.env.Rules.Fork, 0)
+	k.Block = r.ctx.Block
+	k.Tx = r.ctx.Tx
+	k.Env = r.ctx.Env
+	k.ChainID = r.ctx.ChainID
+	return &creditHook{ctx: k}
 }
 
 func (r *txRun) checkCallScopes(gas uint64) (uint64, bool) {
@@ -416,6 +447,7 @@ func (r *txRun) settleGas(gasLeft uint64) uint64 {
 }
 
 func (r *txRun) refundFee(gasUsed uint64) error {
+	defer r.uncredited()()
 	if r.maxFee.IsZero() {
 		return nil
 	}

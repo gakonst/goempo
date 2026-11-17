@@ -59,6 +59,13 @@ type Executor interface {
 	TraceBlock(block uint64, opts *TraceOptions) ([]json.RawMessage, error)
 	TraceBlockParity(block uint64) ([]json.RawMessage, error)
 	TraceCall(block uint64, req *CallRequest, opts *TraceOptions) (json.RawMessage, error)
+	CreateAccessList(block uint64, req *CallRequest, gasCap uint64) (AccessListResult, error)
+}
+
+type AccessListResult struct {
+	AccessList types.AccessList
+	GasUsed    uint64
+	Failure    CallResult
 }
 
 type callObject struct {
@@ -257,10 +264,33 @@ func ethEstimateGas(s *Server, p *params) ([]byte, error) {
 }
 
 func ethCreateAccessList(s *Server, p *params) ([]byte, error) {
-	if _, err := s.callArgs(p); err != nil {
+	t, err := s.callArgs(p)
+	if err != nil {
 		return nil, err
 	}
-	return nil, internalError("unimplemented")
+	if s.exec == nil {
+		return nil, internalError("unimplemented")
+	}
+	res, err := s.exec.CreateAccessList(t.block, t.req, s.cfg.GasCap)
+	if err != nil {
+		return nil, executionError(err)
+	}
+	failure := ""
+	switch {
+	case res.Failure.Reverted:
+		failure = RevertError(res.Failure.Return).Message
+	case res.Failure.Halt != "":
+		failure = res.Failure.Halt
+	}
+	return encode(func(w *writer) {
+		w.objOpen()
+		writeAccessList(w, res.AccessList)
+		if failure != "" {
+			w.kStr("error", failure)
+		}
+		w.kQuantity("gasUsed", res.GasUsed)
+		w.objClose()
+	}), nil
 }
 
 func traceOptions(p *params) (*TraceOptions, error) {

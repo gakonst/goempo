@@ -88,6 +88,22 @@ func (s *Session) EVMTracer(tx *evm.TxContext) evm.Tracer {
 	return s.cur.Recorder
 }
 
+func (s *Session) Close() *TxTrace {
+	t := s.cur
+	if s.claimed != noClaim {
+		for _, a := range t.Accounts {
+			s.capturePost(a)
+		}
+		s.traces[s.claimed] = t
+		s.next++
+	}
+	if t.Recorder == nil {
+		t.Recorder = NewRecorder(nil, StepOptions{})
+	}
+	s.reset()
+	return t
+}
+
 func (s *Session) FinalizeTx() {
 	if s.claimed != noClaim {
 		for _, a := range s.cur.Accounts {

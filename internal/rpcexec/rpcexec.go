@@ -3,7 +3,6 @@ package rpcexec
 import (
 	"sync"
 
-	"encoding/json"
 	"errors"
 	"github.com/gakonst/goempo/internal/tempo/executor"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/tempo/precompiles"
+	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
 )
 
@@ -64,10 +64,11 @@ type Executor struct {
 }
 
 type env struct {
-	st    State
-	rules chain.Rules
-	cfg   *evm.Config
-	block *evm.BlockContext
+	header *types.Block
+	st     State
+	rules  chain.Rules
+	cfg    *evm.Config
+	block  *evm.BlockContext
 }
 
 func (x *Executor) envAt(number uint64) (env, error) {
@@ -92,7 +93,7 @@ func (x *Executor) envAt(number uint64) (env, error) {
 		PrevRandao: h.Inner.MixHash,
 		GetHash:    x.blockHash(number),
 	}
-	return env{st: st, rules: rules, cfg: rules.Config(ts.Millis(), set), block: blk}, nil
+	return env{header: b.Block, st: st, rules: rules, cfg: rules.Config(ts.Millis(), set), block: blk}, nil
 }
 
 func (x *Executor) blockHash(current uint64) func(uint64) primitives.Hash {
@@ -207,7 +208,7 @@ func (x *Executor) Call(block uint64, req *rpc.CallRequest, gasCap uint64) (rpc.
 	if err != nil {
 		return rpc.CallResult{}, err
 	}
-	out, err := x.run(&e, req, x.gasLimit(&e, req, gasCap))
+	out, err := x.execute(&e, req, x.gasLimit(&e, req, gasCap))
 	if err != nil {
 		return rpc.CallResult{}, err
 	}
@@ -254,7 +255,7 @@ func (x *Executor) EstimateGas(block uint64, req *rpc.CallRequest, gasCap uint64
 		return 0, err
 	}
 	highest := x.gasLimit(&e, req, gasCap)
-	out, err := x.run(&e, req, highest)
+	out, err := x.execute(&e, req, highest)
 	if err != nil {
 		return 0, err
 	}
@@ -264,7 +265,7 @@ func (x *Executor) EstimateGas(block uint64, req *rpc.CallRequest, gasCap uint64
 	g := gasRange{lowest: out.gasUsed - 1, highest: highest}
 	optimistic := (out.gasUsed + uint64(max(e.st.Refund(), 0)) + callStipend) * 64 / 63
 	if optimistic < g.highest {
-		if o, err := x.run(&e, req, optimistic); err == nil {
+		if o, err := x.execute(&e, req, optimistic); err == nil {
 			g.update(o, optimistic)
 		}
 	}
@@ -273,7 +274,7 @@ func (x *Executor) EstimateGas(block uint64, req *rpc.CallRequest, gasCap uint64
 		if g.settled() {
 			break
 		}
-		o, err := x.run(&e, req, mid)
+		o, err := x.execute(&e, req, mid)
 		if err != nil {
 			g.lowest = mid
 		} else {
@@ -289,8 +290,4 @@ func failure(out outcome) error {
 		return rpc.RevertError(out.res.Output)
 	}
 	return errors.New(haltText(out.res.Status))
-}
-
-func (x *Executor) TraceCall(uint64, *rpc.CallRequest, *rpc.TraceOptions) (json.RawMessage, error) {
-	return nil, ErrNoTracer
 }

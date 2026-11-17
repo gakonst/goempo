@@ -168,3 +168,17 @@ type expect string
 func same(got any, want expect, msg string) {
 	assert.Equal(fmt.Sprint(got), string(want), msg)
 }
+
+func TestAccessList(t *testing.T) {
+	tr := runTraced(t, tracing.StepOptions{Enabled: true, Stack: true}).trace
+	list := tracing.AccessListOf(tr.Recorder, tracing.AccessSpec{
+		Sender:   sender,
+		Excluded: func(evm.Address) bool { return false },
+		Initial:  []tracing.AccessTuple{{Address: sender, Keys: []evm.Hash{{1}}}},
+	})
+	assert.Equal(len(list), 2, "contract slots and the callee")
+	assert.Equal(list[0].Address, contract, "contract first")
+	assert.Equal(len(list[0].Keys), 1, "stored slot kept even though the callee of the transaction is excluded")
+	assert.Equal(list[1].Address, callee, "called address")
+	assert.Equal(len(list[1].Keys), 0, "no callee slots")
+}

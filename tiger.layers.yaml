@@ -63,3 +63,5 @@
 "./internal/storage":
   - ./internal/io
   - github.com/kapetan-io/tiger/assert
+"./internal/crypto/bn254":
+  - github.com/kapetan-io/tiger/assert

@@ -103,3 +103,4 @@
   - ./internal/trie
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
+"./internal/p2p/snappy": []

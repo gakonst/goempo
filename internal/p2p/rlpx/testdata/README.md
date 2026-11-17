@@ -1,0 +1,1 @@
+handshake.txt and frames.txt: RLPx test vectors copied from tempoxyz/zempo src/devp2p/rlpx_vectors.zig and frame_vectors.zig (EIP-8 handshake vectors and frames from the devp2p spec / reference implementations).

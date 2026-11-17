@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"math/big"
 
+	"github.com/gakonst/goempo/internal/crypto/blake2f"
 	"github.com/gakonst/goempo/internal/crypto/bn254"
 	"github.com/gakonst/goempo/internal/crypto/p256"
 	"github.com/gakonst/goempo/internal/crypto/secp256k1"
@@ -93,7 +94,7 @@ func addCryptoPrecompiles(s *PrecompileSet, fork Fork) {
 	s.Set(PrecompileAddress(0x06), NewPriced(Priced{Gas: constGas(bn254.AddGas), Run: bnAdd}))
 	s.Set(PrecompileAddress(0x07), NewPriced(Priced{Gas: constGas(bn254.MulGas), Run: bnMul}))
 	s.Set(PrecompileAddress(0x08), NewPriced(Priced{Gas: bnPairingGas, Valid: bnPairingValid, Run: bnPairing}))
-	s.Set(PrecompileAddress(0x09), NewPriced(Priced{Gas: blake2fGas, Valid: blake2fValid, Run: Backend.Blake2F}))
+	s.Set(PrecompileAddress(0x09), NewPriced(Priced{Gas: blake2fGas, Valid: blake2fValid, Run: blake2fCompress}))
 	if fork >= Cancun {
 		s.Set(PrecompileAddress(0x0a), NewPriced(Priced{Gas: constGas(pointEvalGas), Valid: exactLength(pointEvalInput), Run: Backend.PointEval}))
 	}
@@ -166,6 +167,14 @@ func blake2fGas(input []byte) uint64 {
 
 func blake2fValid(input []byte) bool {
 	return len(input) == blake2fInputSize && input[blake2fInputSize-1] <= 1
+}
+
+func blake2fCompress(input []byte) ([]byte, bool) {
+	out, err := blake2f.Compress(input)
+	if err != nil {
+		return nil, false
+	}
+	return out[:], true
 }
 
 func ecrecover(input []byte) ([]byte, bool) {

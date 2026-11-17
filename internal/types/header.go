@@ -1,6 +1,8 @@
 package types
 
 import (
+	"errors"
+
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
@@ -127,20 +129,20 @@ func decodeEthHeader(s *rlp.Stream) (EthHeader, error) {
 	if err != nil {
 		return h, err
 	}
-	n, err := list.Count()
+	if err = decodeEthBase(&list, &h); err != nil {
+		if errors.Is(err, rlp.ErrEmpty) {
+			return h, ErrHeaderFields
+		}
+		return h, err
+	}
+	optional, err := list.Count()
 	if err != nil {
 		return h, err
 	}
-	if n < headerBaseFields {
+	if optional > headerFieldsMax-headerBaseFields {
 		return h, ErrHeaderFields
 	}
-	if n > headerFieldsMax {
-		return h, ErrHeaderFields
-	}
-	h.OptionalFields = n - headerBaseFields
-	if err = decodeEthBase(&list, &h); err != nil {
-		return h, err
-	}
+	h.OptionalFields = optional
 	if err = decodeEthOptional(&list, &h); err != nil {
 		return h, err
 	}

@@ -255,6 +255,7 @@ func (c *Context) validateCallScope(scope CallScope) error {
 			return errSel("InvalidCallScope()")
 		}
 	}
+	known := &tip20Probe{target: scope.Target}
 	for i, r := range scope.SelectorRules {
 		if !c.at(hardfork.T11) {
 			for j := 0; j < i; j++ {
@@ -263,26 +264,47 @@ func (c *Context) validateCallScope(scope CallScope) error {
 				}
 			}
 		}
-		if err := c.validateRecipients(scope.Target, r); err != nil {
+		if err := c.validateRecipients(known, r); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Context) validateRecipients(target Address, r SelectorRule) error {
+type tip20Probe struct {
+	target Address
+	probed flag
+	tip20  flag
+}
+
+func (c *Context) probeTIP20(p *tip20Probe) (bool, error) {
+	if p.probed {
+		return bool(p.tip20), nil
+	}
+	ok := IsTIP20(p.target)
+	if !c.at(hardfork.T4) {
+		deployed, err := IsTIP20Deployed(c, p.target)
+		if err != nil {
+			return false, err
+		}
+		ok = deployed
+	}
+	p.probed, p.tip20 = true, flag(ok)
+	return ok, nil
+}
+
+func (c *Context) validateRecipients(known *tip20Probe, r SelectorRule) error {
 	if len(r.Recipients) == 0 {
 		return nil
 	}
-	tip20 := IsTIP20(target)
-	if !c.at(hardfork.T4) {
-		ok, err := IsTIP20Deployed(c, target)
-		if err != nil {
-			return err
-		}
-		tip20 = ok
+	if !isConstrainedSelector(r.Selector) {
+		return errSel("InvalidCallScope()")
 	}
-	if !isConstrainedSelector(r.Selector) || !tip20 {
+	tip20, err := c.probeTIP20(known)
+	if err != nil {
+		return err
+	}
+	if !tip20 {
 		return errSel("InvalidCallScope()")
 	}
 	words := make([]Hash, len(r.Recipients))

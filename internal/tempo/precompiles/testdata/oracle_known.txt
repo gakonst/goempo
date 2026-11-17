@@ -72,10 +72,6 @@ t13/exec-tip403-receivePolicy-mode-3
 t13/exec-tip20-name-short-invalid-utf8
 t13/exec-tip20-name-long-invalid-utf8
 t13/exec-fee-setUserToken-invalid-utf8-currency
-T4-13/keychain/authorize-recipients-of-two-rules/T3
-T4-13/keychain/setAllowedCalls-recipients-of-two-rules/T3
-T4-13/keychain/authorize-recipients-of-mint/T3
-T4-13/keychain/setAllowedCalls-recipients-of-mint/T3
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T12/gas+101
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T13/gas+101
 T7-10/reserve/storageCredits-above-u64/T7

@@ -84,19 +84,35 @@ func (t *Trie) retention() encodingRetention {
 	return dropEncodings
 }
 
+type SplitWriter interface {
+	NodeWriter
+	Split(n int) []NodeWriter
+	Join()
+}
+
 func (t *Trie) Commit(w NodeWriter) primitives.Hash {
 	if t.root == nil {
 		return EmptyRoot
 	}
+	pending := t.pending
 	t.computeRootRefs()
 	if !t.root.saved {
-		t.save(w)
+		sw, split := w.(SplitWriter)
+		if split && pending >= parallelMin && runtime.GOMAXPROCS(0) > 1 {
+			t.saveParallel(sw, pending)
+		} else {
+			t.save(w)
+		}
 	}
 	return t.rootHash()
 }
 
 func (t *Trie) save(w NodeWriter) {
-	stack := append(t.scratch[:0], nodeVisit{n: t.root})
+	t.scratch = t.saveFrom(w, nodeVisit{n: t.root}, t.scratch[:0])
+}
+
+func (t *Trie) saveFrom(w NodeWriter, start nodeVisit, stack []nodeVisit) []nodeVisit {
+	stack = append(stack, start)
 	limit := min(t.nodes+1, nodesMax+1)
 	steps := 0
 	for ; steps < limit; steps++ {
@@ -105,47 +121,90 @@ func (t *Trie) save(w NodeWriter) {
 		}
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		n := top.n
-		if n.hashRef() || n == t.root {
-			encoded := n.enc
-			if encoded == nil {
-				encoded = t.encode(n)
-			}
-			w.WriteNode(StoredNode{Path: top.path, Encoded: encoded})
-		}
-		n.enc = nil
-		n.saved = true
-		children := 0
-		for _, child := range n.children {
-			if child != nil && !child.saved {
-				children++
-			}
-		}
-		if children == 0 {
-			continue
-		}
-		width := len(top.path) + 1
-		if n.kind == kindExtension {
-			width = len(top.path) + len(n.path)
-		}
-		paths := make([]byte, 0, children*width)
-		for i, child := range n.children {
-			if child == nil || child.saved {
-				continue
-			}
-			start := len(paths)
-			paths = append(paths, top.path...)
-			if n.kind == kindExtension {
-				paths = append(paths, n.path...)
-			} else {
-				paths = append(paths, byte(i))
-			}
-			stack = append(stack, nodeVisit{n: child, path: paths[start:len(paths):len(paths)]})
-		}
+		stack = t.saveNode(w, top, stack)
 	}
 	assert.Ok(len(stack) == 0, "trie save visited more nodes than the trie holds")
 	clear(stack[:cap(stack)])
-	t.scratch = stack[:0]
+	return stack[:0]
+}
+
+func (t *Trie) saveNode(w NodeWriter, v nodeVisit, out []nodeVisit) []nodeVisit {
+	n := v.n
+	if n.hashRef() || n == t.root {
+		encoded := n.enc
+		if encoded == nil {
+			encoded = t.encode(n)
+		}
+		w.WriteNode(StoredNode{Path: v.path, Encoded: encoded})
+	}
+	n.enc = nil
+	n.saved = true
+	children := 0
+	for _, child := range n.children {
+		if child != nil && !child.saved {
+			children++
+		}
+	}
+	if children == 0 {
+		return out
+	}
+	width := len(v.path) + 1
+	if n.kind == kindExtension {
+		width = len(v.path) + len(n.path)
+	}
+	paths := make([]byte, 0, children*width)
+	for i, child := range n.children {
+		if child == nil || child.saved {
+			continue
+		}
+		start := len(paths)
+		paths = append(paths, v.path...)
+		if n.kind == kindExtension {
+			paths = append(paths, n.path...)
+		} else {
+			paths = append(paths, byte(i))
+		}
+		out = append(out, nodeVisit{n: child, path: paths[start:len(paths):len(paths)]})
+	}
+	return out
+}
+
+func (t *Trie) saveParallel(w SplitWriter, pending int) {
+	depth := 1
+	if pending >= parallelWideMin {
+		depth = 2
+	}
+	tasks := []nodeVisit{{n: t.root}}
+	for d := 0; d < depth && len(tasks) > 0; d++ {
+		next := make([]nodeVisit, 0, 16*len(tasks))
+		for _, v := range tasks {
+			next = t.saveNode(w, v, next)
+		}
+		tasks = next
+	}
+	if len(tasks) == 0 {
+		return
+	}
+	assert.Ok(len(tasks) <= tasksMax, "trie parallel save tasks over tasksMax")
+	writers := w.Split(len(tasks))
+	assert.Equal(len(writers), len(tasks), "trie split writer count")
+	workers := min(len(tasks), runtime.GOMAXPROCS(0), workersMax)
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			var stack []nodeVisit
+			for range len(tasks) {
+				i := int(next.Add(1)) - 1
+				if i >= len(tasks) {
+					break
+				}
+				stack = t.saveFrom(writers[i], tasks[i], stack)
+			}
+		})
+	}
+	wg.Wait()
+	w.Join()
 }
 
 func (t *Trie) encode(n *node) []byte {

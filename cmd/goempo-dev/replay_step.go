@@ -24,12 +24,18 @@ func (r *replayer) step(blk *types.Block) bool {
 	if h.Number == 1 {
 		r.hashes.setHash(0, h.ParentHash)
 	}
-	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHash, Senders: r.senders})
+	if r.getHashFn == nil {
+		r.getHashFn = r.getHash
+	}
+	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHashFn, Senders: r.senders, Receipts: r.resultSlot.Receipts})
 	if err != nil {
 		r.failed = &mismatch{number: h.Number, field: "execution", got: err.Error(), want: "ok"}
 		return false
 	}
-	r.result = &res
+	// resultSlot and its receipts are reused by the next block: a caller
+	// that keeps a result copies it.
+	r.resultSlot = res
+	r.result = &r.resultSlot
 	if m := compareBlock(h, &res); m != nil {
 		r.failed = m
 		return false

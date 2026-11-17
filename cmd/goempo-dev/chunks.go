@@ -13,10 +13,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
@@ -186,21 +188,138 @@ func appendRawBlocks(out *bytes.Buffer, results []json.RawMessage) error {
 	return nil
 }
 
-func readChunkBytes(dir string, start uint64) ([]byte, error) {
-	f, err := os.Open(chunkPath(dir, start))
+// chunkArenas is how many chunks' buffers replay keeps: one executing, one
+// prefetching and one spare, so a prefetch never waits on the executor.
+const chunkArenas = 3
+
+// chunkArena holds one chunk's file bytes, its decompressed blocks and their
+// decoded form. Decoded blocks alias plain and the decoders' slabs, so an
+// arena returns to its pool only once replay is done with every block in it.
+type chunkArena struct {
+	packed   []byte
+	plain    []byte
+	raws     [][]byte
+	blocks   []decodedBlock
+	decoders []types.BlockDecoder
+	senders  [][]executor.Sender
+	inflate  io.ReadCloser
+	packedRd bytes.Reader
+}
+
+// chunkPool hands out the arenas replay allocates at startup.
+type chunkPool struct {
+	free chan *chunkArena
+}
+
+func newChunkPool() *chunkPool {
+	p := &chunkPool{free: make(chan *chunkArena, chunkArenas)}
+	workers := decodeWorkers()
+	for i := 0; i < chunkArenas; i++ {
+		a := &chunkArena{
+			raws:     make([][]byte, 0, chunkBlocks),
+			blocks:   make([]decodedBlock, 0, chunkBlocks),
+			decoders: make([]types.BlockDecoder, workers),
+			senders:  make([][]executor.Sender, workers),
+		}
+		a.inflate = flate.NewReader(&a.packedRd)
+		p.free <- a
+	}
+	return p
+}
+
+func (p *chunkPool) get(ctx context.Context) (*chunkArena, error) {
+	select {
+	case a := <-p.free:
+		return a, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (p *chunkPool) put(a *chunkArena) {
+	assert.Ok(a != nil, "only arenas return to the pool")
+	clear(a.blocks)
+	a.blocks = a.blocks[:0]
+	a.raws = a.raws[:0]
+	select {
+	case p.free <- a:
+	default:
+		assert.Fail("chunk pool returned more arenas than it holds")
+	}
+}
+
+func decodeWorkers() int {
+	return min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
+}
+
+// readPlain reads the chunk's decompressed bytes into a.plain, reusing the
+// arena's file buffer and inflater.
+func (a *chunkArena) readPlain(dir string, start uint64) error {
+	packed, err := readFileInto(a.packed[:0], chunkPath(dir, start))
 	if errors.Is(err, os.ErrNotExist) {
-		return os.ReadFile(chunkRawPath(dir, start))
+		a.plain, err = readFileInto(a.plain[:0], chunkRawPath(dir, start))
+		return err
 	}
 	if err != nil {
-		return nil, err
+		return err
+	}
+	a.packed = packed
+	a.packedRd.Reset(a.packed)
+	resetter, ok := a.inflate.(flate.Resetter)
+	assert.Ok(ok, "flate readers reset")
+	if err := resetter.Reset(&a.packedRd, nil); err != nil {
+		return err
+	}
+	a.plain, err = readAllInto(a.plain[:0], a.inflate)
+	return err
+}
+
+func readFileInto(buf []byte, path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return buf, err
 	}
 	defer f.Close()
-	zr := flate.NewReader(f)
-	defer zr.Close()
-	return io.ReadAll(io.LimitReader(zr, chunkBytesMax))
+	info, err := f.Stat()
+	if err != nil {
+		return buf, err
+	}
+	if info.Size() > chunkBytesMax {
+		return buf, errChunk
+	}
+	// Headroom past the file's size lets the next, usually similar, chunk
+	// reuse the buffer.
+	if need := int(info.Size()) + 1; cap(buf) < need {
+		buf = make([]byte, 0, need+need/4)
+	}
+	return readAllInto(buf, f)
+}
+
+// readAllInto appends everything r yields to buf, growing it only when it is
+// full, and fails past chunkBytesMax.
+func readAllInto(buf []byte, r io.Reader) ([]byte, error) {
+	const readMin = 1 << 16
+	for range chunkBytesMax / readMin {
+		if cap(buf)-len(buf) < readMin {
+			buf = slices.Grow(buf, max(readMin, cap(buf)))
+		}
+		n, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if errors.Is(err, io.EOF) {
+			return buf, nil
+		}
+		if err != nil {
+			return buf, err
+		}
+		if len(buf) > chunkBytesMax {
+			return buf, errChunk
+		}
+	}
+	return buf, errChunk
 }
 
 type chunkRead struct {
+	arena  *chunkArena
 	blocks []decodedBlock
 	err    error
 }
@@ -216,14 +335,23 @@ type chunkPrefetch struct {
 	out chan chunkRead
 }
 
-func prefetchChunk(ctx context.Context, dir string, start uint64) *chunkPrefetch {
+func prefetchChunk(ctx context.Context, pool *chunkPool, dir string, start uint64) *chunkPrefetch {
 	p := &chunkPrefetch{out: make(chan chunkRead, 1)}
 	p.wg.Go(func() {
-		raws, err := readChunk(dir, start)
-		got := chunkRead{blocks: decodeChunk(raws), err: err}
+		got := chunkRead{}
+		a, err := pool.get(ctx)
+		if err != nil {
+			return
+		}
+		got.arena = a
+		if got.err = a.readChunk(dir, start); got.err == nil {
+			a.decodeChunk()
+			got.blocks = a.blocks
+		}
 		select {
 		case p.out <- got:
 		case <-ctx.Done():
+			pool.put(a)
 		}
 	})
 	return p
@@ -244,33 +372,49 @@ func (p *chunkPrefetch) Wait() {
 
 const decodeWorkersMax = 64
 
+// sendersSlabMin is the smallest sender slab a decode worker allocates.
+const sendersSlabMin = 1 << 10
+
 const _ = uint(chunkBlocks - decodeWorkersMax)
 
-func decodeChunk(raws [][]byte) []decodedBlock {
-	out := make([]decodedBlock, len(raws))
-	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
-	per := (len(raws) + workers - 1) / workers
+// decodeChunk decodes a.raws into a.blocks in place, one decoder and sender
+// slab per worker.
+func (a *chunkArena) decodeChunk() {
+	n := len(a.raws)
+	a.blocks = a.blocks[:n]
+	workers := len(a.decoders)
+	assert.Ok(workers >= 1, "a chunk arena has decoders")
+	per := (n + workers - 1) / workers
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
-		part := out[min(w*per, len(out)):min((w+1)*per, len(out))]
-		in := raws[min(w*per, len(raws)):min((w+1)*per, len(raws))]
+		part := a.blocks[min(w*per, n):min((w+1)*per, n)]
+		in := a.raws[min(w*per, n):min((w+1)*per, n)]
+		d := &a.decoders[w]
+		senders := &a.senders[w]
 		wg.Go(func() {
+			d.Reset()
+			*senders = (*senders)[:0]
 			for i := range in {
-				part[i] = decodeBlock(in[i])
+				part[i] = decodeBlock(d, senders, in[i])
 			}
 		})
 	}
 	wg.Wait()
-	return out
 }
 
-func decodeBlock(raw []byte) decodedBlock {
-	blk, err := types.DecodeBlock(raw)
+func decodeBlock(d *types.BlockDecoder, slab *[]executor.Sender, raw []byte) decodedBlock {
+	blk, err := d.DecodeBlock(raw)
 	if err != nil {
 		return decodedBlock{err: err}
 	}
-	senders := make([]executor.Sender, len(blk.Transactions))
+	n := len(blk.Transactions)
+	if cap(*slab)-len(*slab) < n {
+		*slab = make([]executor.Sender, 0, max(2*cap(*slab), n, sendersSlabMin))
+	}
+	senders := (*slab)[len(*slab) : len(*slab)+n : len(*slab)+n]
+	*slab = (*slab)[:len(*slab)+n]
 	for i := range blk.Transactions {
+		senders[i] = executor.Sender{}
 		if !executor.IsSystemTx(&blk.Transactions[i]) {
 			senders[i] = executor.RecoverSender(&blk.Transactions[i])
 		}
@@ -278,26 +422,38 @@ func decodeBlock(raw []byte) decodedBlock {
 	return decodedBlock{blk: blk, senders: senders}
 }
 
-func readChunk(dir string, start uint64) ([][]byte, error) {
-	data, err := readChunkBytes(dir, start)
-	if err != nil {
-		return nil, err
+func (a *chunkArena) readChunk(dir string, start uint64) error {
+	if err := a.readPlain(dir, start); err != nil {
+		return err
 	}
-	blocks := make([][]byte, 0, chunkBlocks)
+	data := a.plain
+	a.raws = a.raws[:0]
 	for i := 0; i < chunkBlocks && len(data) > 0; i++ {
 		if len(data) < chunkLengthPrefix {
-			return nil, errChunk
+			return errChunk
 		}
 		n := int(binary.BigEndian.Uint32(data))
 		data = data[chunkLengthPrefix:]
 		if n > len(data) {
-			return nil, errChunk
+			return errChunk
 		}
-		blocks = append(blocks, data[:n])
+		a.raws = append(a.raws, data[:n:n])
 		data = data[n:]
 	}
 	if len(data) != 0 {
-		return nil, errChunk
+		return errChunk
 	}
-	return blocks, nil
+	return nil
+}
+
+// readChunk reads one chunk's raw blocks into fresh buffers the caller owns,
+// for tools that keep them; replay reuses pooled arenas instead.
+func readChunk(dir string, start uint64) ([][]byte, error) {
+	a := &chunkArena{}
+	a.inflate = flate.NewReader(&a.packedRd)
+	defer a.inflate.Close()
+	if err := a.readChunk(dir, start); err != nil {
+		return nil, err
+	}
+	return a.raws, nil
 }

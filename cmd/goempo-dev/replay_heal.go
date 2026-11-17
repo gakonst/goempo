@@ -37,7 +37,11 @@ func (r *replayer) stepOrHeal(blk *types.Block) bool {
 	}
 	if r.heal.first == nil {
 		r.heal.first = r.failed
-		r.heal.firstRes = r.result
+		if r.result != nil {
+			first := *r.result
+			first.Receipts = slices.Clone(first.Receipts)
+			r.heal.firstRes = &first
+		}
 		r.firstHead = r.head
 	}
 	r.heal.remaining--

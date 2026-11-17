@@ -61,6 +61,8 @@ type replayer struct {
 	failed      *mismatch
 	failedBlock *types.Block
 	result      *executor.Result
+	resultSlot  executor.Result
+	getHashFn   func(uint64) executor.Hash
 
 	heal      *healer
 	firstHead uint64
@@ -237,7 +239,8 @@ func (r *replayer) run(to uint64) error {
 	if first >= chunks {
 		return nil
 	}
-	next := prefetchChunk(r.ctx, r.dir, first*chunkBlocks)
+	pool := newChunkPool()
+	next := prefetchChunk(r.ctx, pool, r.dir, first*chunkBlocks)
 	defer func() { next.Wait() }()
 	defer r.settle()
 	for i := first; i < chunks; i++ {
@@ -250,7 +253,7 @@ func (r *replayer) run(to uint64) error {
 		}
 		next.Wait()
 		if i+1 < chunks {
-			next = prefetchChunk(r.ctx, r.dir, start+chunkBlocks)
+			next = prefetchChunk(r.ctx, pool, r.dir, start+chunkBlocks)
 		}
 		blocks, err := got.blocks, got.err
 		if errors.Is(err, os.ErrNotExist) {
@@ -266,6 +269,10 @@ func (r *replayer) run(to uint64) error {
 		if done {
 			return nil
 		}
+		// Nothing replay keeps (hash ring headers, results, receipts) aliases
+		// the chunk's blocks, so its arena is free for the next prefetch.
+		r.failedBlock = nil
+		pool.put(got.arena)
 	}
 	return nil
 }

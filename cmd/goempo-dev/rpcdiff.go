@@ -359,7 +359,8 @@ func replayTo(r *replayer, chain *rpc.MemChain, to uint64) error {
 		if !r.step(b.Block) {
 			return nil
 		}
-		data, err := rpc.NewBlockData(b.Block, b.Raw, r.result.Receipts)
+		// The replayer reuses its receipt buffer for the next block.
+		data, err := rpc.NewBlockData(b.Block, b.Raw, slices.Clone(r.result.Receipts))
 		if err != nil {
 			return err
 		}

@@ -20,6 +20,7 @@
   - ./internal/tempo/executor
   - ./internal/u256
   - ./internal/rpc
+  - ./internal/rpcexec
 "./internal/version": []
 "./internal/io/...":
   - net
@@ -170,3 +171,16 @@
   - ./internal/tempo/hardfork
   - ./internal/io
   - github.com/kapetan-io/tiger/assert
+"./internal/rpcexec":
+  - ./internal/genesis
+  - ./internal/io
+  - ./internal/state
+  - ./internal/types
+  - github.com/kapetan-io/tiger/assert
+  - ./internal/evm
+  - ./internal/primitives
+  - ./internal/rpc
+  - ./internal/tempo/chain
+  - ./internal/tempo/hardfork
+  - ./internal/tempo/precompiles
+  - ./internal/u256

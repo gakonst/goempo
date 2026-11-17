@@ -3,6 +3,7 @@ package rpc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/types"
@@ -181,7 +182,7 @@ func (s *Server) callArgs(p *params) (callTarget, error) {
 	return callTarget{req: req, block: n}, nil
 }
 
-func revertError(ret []byte) *Error {
+func RevertError(ret []byte) *Error {
 	msg := "execution reverted"
 	if reason, ok := decodeErrorString(ret); ok {
 		msg += ": " + reason
@@ -210,6 +211,10 @@ func decodeErrorString(ret []byte) (string, bool) {
 }
 
 func executionError(err error) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
 	return newError(CodeServer, err.Error())
 }
 
@@ -223,7 +228,7 @@ func ethCall(s *Server, p *params) ([]byte, error) {
 		return nil, executionError(err)
 	}
 	if res.Reverted {
-		return nil, revertError(res.Return)
+		return nil, RevertError(res.Return)
 	}
 	if res.Halt != "" {
 		return nil, newError(CodeServer, res.Halt)

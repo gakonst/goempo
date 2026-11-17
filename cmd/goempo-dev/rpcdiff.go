@@ -15,15 +15,18 @@ import (
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rpc"
+	"github.com/gakonst/goempo/internal/rpcexec"
+	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
 )
 
 const (
-	corpusFileName   = "corpus.jsonl"
-	corpusEntriesMax = 1 << 20
-	corpusBytesMax   = 1 << 34
-	diffShown        = 400
-	percent          = 100
+	corpusFileName      = "corpus.jsonl"
+	stateCorpusFileName = "corpus-b.jsonl"
+	corpusEntriesMax    = 1 << 20
+	corpusBytesMax      = 1 << 34
+	diffShown           = 400
+	percent             = 100
 )
 
 const _ = uint(corpusBytesMax - corpusEntriesMax)
@@ -61,16 +64,16 @@ type r5Result struct {
 }
 
 func defaultCorpusPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join("cache", "rpc", corpusFileName)
+	dir := filepath.Join("cache", "rpc")
+	if home, err := os.UserHomeDir(); err == nil {
+		dir = filepath.Join(home, dir)
 	}
-	return filepath.Join(home, "cache", "rpc", corpusFileName)
+	return filepath.Join(dir, corpusFileName) + "," + filepath.Join(dir, stateCorpusFileName)
 }
 
 func runRPCDiff(args []string) int {
 	fs := flag.NewFlagSet("rpcdiff", flag.ContinueOnError)
-	corpus := fs.String("corpus", defaultCorpusPath(), "recorded corpus (scripts/rpc-record.py)")
+	corpus := fs.String("corpus", defaultCorpusPath(), "recorded corpora, comma separated (scripts/rpc-record.py)")
 	blocks := fs.String("blocks", defaultBlockDir(), "fetched blocks with receipts (fetch)")
 	chunks := fs.String("chunks", defaultChunkDir(), "raw block chunks for replay (fetch-range)")
 	verbose := fs.Bool("v", false, "print the first difference of every method")
@@ -148,6 +151,13 @@ type replayState struct {
 	r *replayer
 }
 
+func (s *replayState) ExecState(number uint64) (rpcexec.State, error) {
+	if number != s.r.head {
+		return nil, errStateMissing
+	}
+	return s.r.db.State(), nil
+}
+
 func (s *replayState) StateAt(number uint64) (rpc.StateReader, error) {
 	if number != s.r.head {
 		return nil, errStateMissing
@@ -163,9 +173,16 @@ type diffPaths struct {
 
 func rpcDiff(paths diffPaths) (*r5Result, error) {
 	blockDir, chunkDir := paths.blocks, paths.chunks
-	entries, err := loadCorpus(paths.corpus)
-	if err != nil {
-		return nil, err
+	var entries []corpusEntry
+	for _, path := range strings.Split(paths.corpus, ",") {
+		part, err := loadCorpus(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, part...)
 	}
 	chain := rpc.NewMemChain()
 	if err := loadFetchedBlocks(chain, blockDir); err != nil {
@@ -189,7 +206,9 @@ func rpcDiff(paths diffPaths) (*r5Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, &replayState{r: r}, nil)
+	states := &replayState{r: r}
+	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states}
+	srv := rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, states, exec)
 	res := &r5Result{Rung: "R5", PerMethod: map[string]*methodScore{}}
 	for _, e := range scoreOrder(entries) {
 		if e.Block != nil && *e.Block > r.head && r.failed == nil {

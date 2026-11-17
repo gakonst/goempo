@@ -74,3 +74,17 @@ func TestBatchWarmsLaterTargetsOnlyWhenTheirCallStarts(t *testing.T) {
 	assert.Ok(out.Success, "succeeds")
 	assert.Equal(out.GasUsed, uint64(2_087_728), "pathUSD is cold when the first call touches it")
 }
+
+func TestKeychainTxChecksCallScopesFromT3(t *testing.T) {
+	blocks := readBlocks(t, "testdata/mainnet-16986086.blk")
+	assert.Equal(len(blocks), 1, "one block")
+	tx := &blocks[0].Transactions[0]
+	sender, err := tx.Sender()
+	assert.NoError(err, "sender")
+	st := loadPrestate(t, "testdata/mainnet-16986086-tx0-prestate.json")
+	x := &executor.Executor{ChainID: hardfork.MainnetChainID}
+	out, err := x.ApplyCall(st, &blocks[0], tx, executor.Simulation{Sender: sender})
+	assert.NoError(err, "apply")
+	assert.Ok(out.Success, "succeeds")
+	assert.Equal(out.GasUsed, uint64(59_274), "the call scope check reads the key's scoped flag")
+}

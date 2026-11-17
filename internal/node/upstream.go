@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	goio "github.com/gakonst/goempo/internal/io"
 )
 
 const (
 	UpstreamBatchMax = 32
+	UpstreamParallel = 16
 	codeUnavailable  = 503
 	jsonRPCVersion   = "2.0"
 )
@@ -21,6 +23,8 @@ var (
 	ErrUpstream      = errors.New("node: upstream returned an error")
 	ErrUpstreamReply = errors.New("node: upstream reply is malformed")
 )
+
+const _ = uint(BatchMax - UpstreamParallel*UpstreamBatchMax)
 
 type Upstream struct {
 	caller goio.Caller
@@ -96,7 +100,31 @@ func (u *Upstream) Tip() (uint64, error) {
 }
 
 func (u *Upstream) RawBlocks(from uint64, count int) ([][]byte, error) {
-	count = max(1, min(count, UpstreamBatchMax))
+	count = max(1, min(count, UpstreamParallel*UpstreamBatchMax))
+	parts := make([][][]byte, (count+UpstreamBatchMax-1)/UpstreamBatchMax)
+	errs := make([]error, len(parts))
+	var wg sync.WaitGroup
+	for i := range parts {
+		start := i * UpstreamBatchMax
+		wg.Go(func() {
+			parts[i], errs[i] = u.rawBatch(from+uint64(start), min(UpstreamBatchMax, count-start))
+		})
+	}
+	wg.Wait()
+	raws := make([][]byte, 0, count)
+	for i, part := range parts {
+		raws = append(raws, part...)
+		if errs[i] != nil || len(part) < UpstreamBatchMax {
+			if len(raws) == 0 {
+				return nil, errs[i]
+			}
+			return raws, nil
+		}
+	}
+	return raws, nil
+}
+
+func (u *Upstream) rawBatch(from uint64, count int) ([][]byte, error) {
 	reqs := make([]upstreamRequest, count)
 	for i := range reqs {
 		reqs[i] = upstreamRequest{JSONRPC: jsonRPCVersion, ID: i, Method: "debug_getRawBlock", Params: []any{quantity(from + uint64(i))}}

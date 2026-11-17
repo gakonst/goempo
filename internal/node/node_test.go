@@ -17,7 +17,12 @@ import (
 	"github.com/gakonst/goempo/internal/rpc"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/kapetan-io/tiger/assert"
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 const (
 	block200Hash   = "0x2ff233e47fe16743bbfc0e4e5ec61a81b974590a630702375cdbdf60662ecac5"

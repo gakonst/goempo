@@ -7,7 +7,6 @@ import (
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
-	"github.com/gakonst/goempo/internal/rlp"
 	"github.com/kapetan-io/tiger/assert"
 )
 
@@ -34,14 +33,43 @@ const (
 	kindSealed    nodeKind = 4
 )
 
+// node is one trie node. Its reference (its RLP when shorter than 32 bytes,
+// else the keccak of it) lives in refBuf, so re-hashing a dirty node reuses
+// the node's own storage. height is scratch for computeRefs.
 type node struct {
 	kind     nodeKind
 	saved    bool
+	refLen   uint8
+	height   uint16
 	path     []byte
 	value    []byte
 	children [16]*node
-	ref      []byte
 	enc      []byte
+	refBuf   [primitives.HashLength]byte
+}
+
+func (n *node) hasRef() bool {
+	return n.refLen > 0
+}
+
+// hashRef reports a reference that is a hash, not an embedded encoding.
+func (n *node) hashRef() bool {
+	return n.refLen == primitives.HashLength
+}
+
+func (n *node) ref() []byte {
+	return n.refBuf[:n.refLen]
+}
+
+func (n *node) setRef(ref []byte) {
+	assert.Ok(len(ref) > 0 && len(ref) <= primitives.HashLength, "trie node reference length")
+	n.refLen = uint8(copy(n.refBuf[:], ref))
+}
+
+func sealedNode(ref []byte, saved bool) *node {
+	n := &node{kind: kindSealed, saved: saved}
+	n.setRef(ref)
+	return n
 }
 
 type Value []byte
@@ -62,12 +90,15 @@ type NodeWriter interface {
 type Trie struct {
 	root    *node
 	nodes   int
+	pending int
 	last    []byte
 	sorted  int
 	reader  NodeReader
-	enc     rlp.Encoder
 	hasher  *keccak.Hasher
-	scratch []nodeVisit
+	// borrowValues keeps the caller's value slices instead of copies, for a
+	// trie that lives only inside one call (OrderedRoot).
+	borrowValues bool
+	scratch      []nodeVisit
 }
 
 type nodeVisit struct {
@@ -77,13 +108,13 @@ type nodeVisit struct {
 }
 
 func New() *Trie {
-	return &Trie{hasher: keccak.New()}
+	return &Trie{}
 }
 
 func Open(root primitives.Hash, reader NodeReader) *Trie {
-	t := &Trie{hasher: keccak.New(), reader: reader}
+	t := &Trie{reader: reader}
 	if root != EmptyRoot {
-		t.root = &node{kind: kindSealed, saved: true, ref: bytes.Clone(root[:])}
+		t.root = sealedNode(root[:], true)
 		t.nodes = 1
 	}
 	return t
@@ -96,6 +127,9 @@ func (t *Trie) Nodes() int {
 func (t *Trie) newLeaf(path []byte, value Value) *node {
 	assert.Ok(t.nodes < nodesMax, "trie holds nodesMax nodes")
 	t.nodes++
+	if t.borrowValues {
+		return &node{kind: kindLeaf, path: path, value: value}
+	}
 	return &node{kind: kindLeaf, path: path, value: bytes.Clone(value)}
 }
 
@@ -120,7 +154,7 @@ func (t *Trie) drop() {
 }
 
 func dirty(n *node) {
-	n.ref = nil
+	n.refLen = 0
 	n.enc = nil
 	n.saved = false
 }
@@ -198,6 +232,7 @@ func (t *Trie) UpdateSorted(key []byte, value Value) {
 }
 
 func (t *Trie) insert(kn []byte, value Value, seal []byte) error {
+	t.pending++
 	slot := &t.root
 	pos := 0
 	for steps := 0; steps <= len(kn)+1; steps++ {
@@ -298,6 +333,7 @@ func (t *Trie) Unset(key []byte) error {
 	if err != nil || !found {
 		return err
 	}
+	t.pending++
 	for i := range parents {
 		dirty(*parents[i].slot)
 	}

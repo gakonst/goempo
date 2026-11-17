@@ -3,7 +3,7 @@ package trie
 import (
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
-	"github.com/gakonst/goempo/internal/rlp"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 type Secure struct {
@@ -38,18 +38,39 @@ func (s *Secure) Hash() primitives.Hash {
 	return s.trie.Hash()
 }
 
+// OrderedRoot is the root of the trie mapping rlp(i) to items[i], the
+// transactions, receipts and withdrawals root. It builds the whole trie
+// without copying the items, then hashes it level by level (and on workers
+// for long lists).
 func OrderedRoot(items [][]byte) primitives.Hash {
-	t := New()
 	n := len(items)
 	if n == 0 {
 		return EmptyRoot
 	}
-	for i := 1; i < min(n, 0x80); i++ {
-		t.UpdateSorted(rlp.EncodeUint64(uint64(i)), items[i])
-	}
-	t.UpdateSorted(rlp.EncodeUint64(0), items[0])
-	for i := 0x80; i < n; i++ {
-		t.UpdateSorted(rlp.EncodeUint64(uint64(i)), items[i])
+	t := &Trie{borrowValues: true}
+	for i := 0; i < n; i++ {
+		assert.Ok(len(items[i]) > 0, "trie OrderedRoot with an empty item")
+		var key [9]byte
+		assert.NoError(t.insert(keyNibbles(appendIndexKey(key[:0], uint64(i))), items[i], nil), "ordered trie insert")
 	}
 	return t.Hash()
+}
+
+// appendIndexKey appends rlp(v), the key of item v in an ordered trie.
+func appendIndexKey(dst []byte, v uint64) []byte {
+	if v == 0 {
+		return append(dst, 0x80)
+	}
+	if v < 0x80 {
+		return append(dst, byte(v))
+	}
+	size := 0
+	for rest := v; rest > 0 && size < 8; rest >>= 8 {
+		size++
+	}
+	dst = append(dst, 0x80+byte(size))
+	for k := size - 1; k >= 0; k-- {
+		dst = append(dst, byte(v>>(8*k)))
+	}
+	return dst
 }

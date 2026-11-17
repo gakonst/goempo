@@ -16,7 +16,7 @@ func (t *Trie) Prove(key []byte) ([][]byte, error) {
 	if t.root == nil {
 		return nil, nil
 	}
-	t.computeRefs(t.root)
+	t.computeRootRefs()
 	kn := keyNibbles(key)
 	slot := &t.root
 	pos := 0
@@ -30,8 +30,8 @@ func (t *Trie) Prove(key []byte) ([][]byte, error) {
 			return proof, nil
 		}
 		t.computeRefs(n)
-		enc := bytes.Clone(t.encodeNode(n))
-		if steps == 0 || len(n.ref) == primitives.HashLength {
+		enc := t.encode(n)
+		if steps == 0 || n.hashRef() {
 			proof = append(proof, enc)
 		}
 		next, done := step(n, kn, &pos)

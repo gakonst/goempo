@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
@@ -201,7 +202,7 @@ func readChunkBytes(dir string, start uint64) ([]byte, error) {
 }
 
 type chunkRead struct {
-	blocks []decodedBlock
+	blocks *decodedChunk
 	err    error
 }
 
@@ -211,20 +212,44 @@ type decodedBlock struct {
 	err     error
 }
 
+type decodedChunk struct {
+	blocks []decodedBlock
+	ready  []chan struct{}
+	wg     sync.WaitGroup
+}
+
+func (c *decodedChunk) len() int {
+	return len(c.blocks)
+}
+
+func (c *decodedChunk) block(ctx context.Context, i int) (*decodedBlock, error) {
+	select {
+	case <-c.ready[i]:
+		return &c.blocks[i], nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *decodedChunk) Wait() {
+	c.wg.Wait()
+}
+
 type chunkPrefetch struct {
 	wg  sync.WaitGroup
 	out chan chunkRead
 }
 
-func prefetchChunk(ctx context.Context, dir string, start uint64) *chunkPrefetch {
+func prefetchChunk(ctx context.Context, dir string, span chunkSpan) *chunkPrefetch {
 	p := &chunkPrefetch{out: make(chan chunkRead, 1)}
 	p.wg.Go(func() {
-		raws, err := readChunk(dir, start)
-		got := chunkRead{blocks: decodeChunk(raws), err: err}
+		raws, err := readChunk(dir, span.start)
+		got := chunkRead{blocks: decodeChunk(raws, span), err: err}
 		select {
 		case p.out <- got:
 		case <-ctx.Done():
 		}
+		got.blocks.Wait()
 	})
 	return p
 }
@@ -246,22 +271,35 @@ const decodeWorkersMax = 64
 
 const _ = uint(chunkBlocks - decodeWorkersMax)
 
-func decodeChunk(raws [][]byte) []decodedBlock {
-	out := make([]decodedBlock, len(raws))
+func decodeChunk(raws [][]byte, span chunkSpan) *decodedChunk {
+	c := &decodedChunk{blocks: make([]decodedBlock, len(raws)), ready: make([]chan struct{}, len(raws))}
+	c.start(raws, span)
+	return c
+}
+
+func (c *decodedChunk) start(raws [][]byte, span chunkSpan) {
+	for i := range c.ready {
+		c.ready[i] = make(chan struct{})
+	}
+	skip := int(min(span.skip, uint64(len(raws))))
+	for i := range skip {
+		close(c.ready[i])
+	}
+	var next atomic.Int64
+	next.Store(int64(skip))
 	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
-	per := (len(raws) + workers - 1) / workers
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		part := out[min(w*per, len(out)):min((w+1)*per, len(out))]
-		in := raws[min(w*per, len(raws)):min((w+1)*per, len(raws))]
-		wg.Go(func() {
-			for i := range in {
-				part[i] = decodeBlock(in[i])
+	for range workers {
+		c.wg.Go(func() {
+			for range len(raws) {
+				i := int(next.Add(1) - 1)
+				if i >= len(raws) {
+					return
+				}
+				c.blocks[i] = decodeBlock(raws[i])
+				close(c.ready[i])
 			}
 		})
 	}
-	wg.Wait()
-	return out
 }
 
 func decodeBlock(raw []byte) decodedBlock {

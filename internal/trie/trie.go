@@ -41,6 +41,7 @@ type node struct {
 	value    []byte
 	children [16]*node
 	ref      []byte
+	enc      []byte
 }
 
 type Value []byte
@@ -120,6 +121,7 @@ func (t *Trie) drop() {
 
 func dirty(n *node) {
 	n.ref = nil
+	n.enc = nil
 	n.saved = false
 }
 

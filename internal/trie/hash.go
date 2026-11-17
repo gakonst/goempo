@@ -45,10 +45,14 @@ func (t *Trie) save(w NodeWriter) {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		n := top.n
-		encoded := t.encodeNode(n)
 		if len(n.ref) == primitives.HashLength || n == t.root {
-			w.WriteNode(StoredNode{Path: top.path, Encoded: bytes.Clone(encoded)})
+			encoded := n.enc
+			if encoded == nil {
+				encoded = bytes.Clone(t.encodeNode(n))
+			}
+			w.WriteNode(StoredNode{Path: top.path, Encoded: encoded})
 		}
+		n.enc = nil
 		n.saved = true
 		for i, child := range n.children {
 			if child == nil || child.saved {
@@ -218,6 +222,9 @@ func (t *Trie) encodeNode(n *node) []byte {
 	}
 	h := t.hasher.Hash(encoded)
 	n.ref = h[:]
+	if t.reader != nil {
+		n.enc = bytes.Clone(encoded)
+	}
 	return encoded
 }
 

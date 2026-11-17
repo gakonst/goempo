@@ -3,3 +3,4 @@
 {"date":"2026-11-17","rung":"R4","score":"headers+bodies","commit":"dc3d3d3","note":"goempo-dev follow: 1082 mainnet blocks from 1000 below the tip linked, bodies checked against headers, all hashes equal to rpc.tempo.xyz, then followed the tip; no execution yet; devp2p tested only in simulation (no route to mainnet peers)"}
 {"date": "2026-11-17", "rung": "R3", "score": "3662", "commit": "033b5e0", "note": "replay from genesis matches gas, receipts root, bloom, state root for blocks 1..3662; first mismatch block 3663 (setUserToken gas in fee manager precompile)"}
 {"date":"2026-11-17","rung":"R3","score":"3857","commit":"2529d0d","note":"fee token validation warms TIP-20 slots like tempo's ensure_tip20_usd; first mismatch block 3858: TIP-20 factory createToken not implemented"}
+{"date":"2026-11-17","rung":"R3","score":"3864","commit":"6ebe692","note":"createToken (agent 5) and CREATE match; first mismatch block 3865: keychain authorizeKey missing"}

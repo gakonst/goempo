@@ -33,7 +33,12 @@ func (c *Context) mapKey(key Hash, base slot) slot {
 	var buf [64]byte
 	copy(buf[:32], key[:])
 	copy(buf[32:], base[:])
-	return slot(c.keccak(buf[:]))
+	if s, ok := mapKeys.get(&buf); ok {
+		return s
+	}
+	s := slot(c.keccak(buf[:]))
+	mapKeys.put(&buf, s)
+	return s
 }
 
 func (c *Context) mapAddr(key Address, base slot) slot { return c.mapKey(addressWord(key), base) }

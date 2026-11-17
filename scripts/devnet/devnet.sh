@@ -195,6 +195,10 @@ cmd_monitor() {
 	python3 "$HERE/monitor.py" --nodes "$NET/nodes.json" "$@"
 }
 
+cmd_votes() {
+	python3 "$HERE/votes.py" --nodes "$NET/nodes.json" "$@"
+}
+
 cmd_quorum() {
 	[ $# -ge 2 ] || die "usage: $0 quorum <slot-to-stop> <seconds> [monitor args]"
 	local slot=$1 secs=$2
@@ -206,7 +210,7 @@ cmd_quorum() {
 
 usage() {
 	cat <<EOF
-usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum> [args]
+usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum|votes> [args]
   build                 clone tempoxyz/tempo at TEMPO_REV and build tempo, tempo-xtask
   gen                   fresh genesis + DKG for N validators into NET (stops the net)
   start [slot...]       start all (or the given) slots; DEVNET_GOEMPO=0,1 runs those slots as goempo
@@ -215,6 +219,7 @@ usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum> [args]
   status                head and finalized height per slot
   monitor [--duration S] [--report FILE]   forks, stalls, proposers, DKG epochs
   quorum <slot> <S>     stop one slot for S seconds and check finality continues
+  votes [--slots 1,2]   per Rust slot: votes received from each peer, latest vote view, WARNs naming it
 env: DEVNET_WORK=$WORK N=$N BASE_PORT=$BASE_PORT EPOCH=$EPOCH SEED=$SEED
 EOF
 }
@@ -231,6 +236,7 @@ main() {
 	status) cmd_status ;;
 	monitor) cmd_monitor "$@" ;;
 	quorum) cmd_quorum "$@" ;;
+	votes) cmd_votes "$@" ;;
 	*) usage; exit 2 ;;
 	esac
 }

@@ -289,7 +289,11 @@ func (e *EVM) jumpdestsFor(source Address, code []byte) []uint64 {
 	if ok {
 		return bits
 	}
-	bits = analyzeJumpdests(code)
+	bits, ok = sharedJumpdests.get(hash)
+	if !ok {
+		bits = analyzeJumpdests(code)
+		sharedJumpdests.put(hash, bits)
+	}
 	e.analysis[hash] = bits
 	return bits
 }

@@ -43,6 +43,7 @@ type State interface {
 type Executor struct {
 	ChainID     hardfork.ChainID
 	EpochLength uint64
+	Configs     *chain.Cache
 }
 
 type Input struct {
@@ -77,9 +78,8 @@ func (x *Executor) SystemSteps(st State, in Input) error {
 	assert.Ok(in.Block != nil, "system steps need a block")
 	header := &in.Block.Header
 	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
-	set := precompiles.NewSet(rules.Fork, rules.EthereumPrecompiles())
-	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
-	sys := &systemEnv{config: rules.Config(ts.Millis(), set), block: blockContext(header, in.GetHash), header: header, rules: rules}
+	set := precompiles.NewSet(rules.Fork, x.Configs.EthereumPrecompiles(rules))
+	sys := &systemEnv{config: x.Configs.Config(rules, set), block: blockContext(header, in.GetHash), header: header, rules: rules}
 	preBlock(st, sys)
 	return x.committeeCall(st, sys)
 }
@@ -88,9 +88,8 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	assert.Ok(in.Block != nil, "executor needs a block")
 	header := &in.Block.Header
 	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
-	set := precompiles.NewSet(rules.Fork, rules.EthereumPrecompiles())
-	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
-	cfg := rules.Config(ts.Millis(), set)
+	set := precompiles.NewSet(rules.Fork, x.Configs.EthereumPrecompiles(rules))
+	cfg := x.Configs.Config(rules, set)
 	blk := blockContext(header, in.GetHash)
 	sys := &systemEnv{config: cfg, block: blk, header: header, rules: rules}
 	preBlock(st, sys)
@@ -130,10 +129,12 @@ func apply(env *TxEnv, set *precompiles.Set, count int) (TxOutcome, error) {
 
 func blockContext(header *types.Header, getHash func(uint64) Hash) *evm.BlockContext {
 	h := &header.Inner
+	ts := chain.Timestamp{Seconds: h.Timestamp, MillisPart: header.TimestampMillisPart}
 	return &evm.BlockContext{
 		Coinbase:   h.Beneficiary,
 		Number:     h.Number,
 		Time:       h.Timestamp,
+		TimeMillis: ts.Millis(),
 		GasLimit:   h.GasLimit,
 		BaseFee:    u256.FromUint64(h.BaseFeePerGas),
 		PrevRandao: h.MixHash,

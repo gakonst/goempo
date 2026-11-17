@@ -56,8 +56,9 @@ func TestMillisTimestampBeforeT1C(t *testing.T) {
 	run := func(f hardfork.Fork) evm.Result {
 		st := memstate.New()
 		st.Put(contract, memstate.Account{Code: code, Nonce: 1})
-		cfg := rules(f).Config(ts.Millis(), nil)
-		machine := evm.New(evm.Context{State: st, Block: &evm.BlockContext{}, Tx: &evm.TxContext{}, Config: cfg})
+		cfg := rules(f).Config(nil)
+		blk := &evm.BlockContext{TimeMillis: ts.Millis()}
+		machine := evm.New(evm.Context{State: st, Block: blk, Tx: &evm.TxContext{}, Config: cfg})
 		return machine.Execute(evm.Message{Kind: evm.KindCall, To: contract, Gas: 100_000})
 	}
 	res := run(hardfork.T1B)

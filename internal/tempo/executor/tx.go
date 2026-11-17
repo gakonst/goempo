@@ -278,7 +278,7 @@ func (r *txRun) warm() {
 	if len(v.calls) > 0 && v.calls[0].to != nil {
 		st.WarmAddress(*v.calls[0].to)
 	}
-	base := r.env.Rules.EthereumPrecompiles().Addresses()
+	base := r.ethereumPrecompiles()
 	for i := 0; i < len(base); i++ {
 		st.WarmAddress(base[i])
 	}
@@ -399,4 +399,11 @@ func (r *txRun) refundFee(gasUsed uint64) error {
 		Beneficiary: r.env.Block.Coinbase,
 	})
 	return err
+}
+
+func (r *txRun) ethereumPrecompiles() []Address {
+	if eth, ok := r.set.Base.(*evm.PrecompileSet); ok {
+		return eth.Addresses()
+	}
+	return r.env.Rules.EthereumPrecompiles().Addresses()
 }

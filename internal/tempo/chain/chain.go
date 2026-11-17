@@ -85,32 +85,37 @@ func (r Rules) EthereumPrecompiles() *evm.PrecompileSet {
 	return evm.EthereumPrecompiles(r.EthereumFork())
 }
 
-func (r Rules) JumpTable(g *evm.GasTable, timestampMillis uint64) *evm.JumpTable {
+func (r Rules) JumpTable(g *evm.GasTable) *evm.JumpTable {
 	t := evm.NewJumpTable(evm.Osaka, g)
 	if !r.AtLeast(hardfork.T1C) {
-		ms := u256.FromUint64(timestampMillis)
 		t.Set(MillisTimestamp, evm.Operation{
-			Exec: func(_ *evm.EVM, f *evm.Frame) evm.Status {
-				f.Push(ms)
-				return evm.StatusContinue
-			},
-			Gas: millisTimestampGas,
-			Out: 1,
+			Exec: opMillisTimestamp,
+			Gas:  millisTimestampGas,
+			Out:  1,
 		})
 	}
 	return t
 }
 
-func (r Rules) Config(timestampMillis uint64, precompiles evm.PrecompileLookup) *evm.Config {
+func opMillisTimestamp(e *evm.EVM, f *evm.Frame) evm.Status {
+	f.Push(u256.FromUint64(e.Block.TimeMillis))
+	return evm.StatusContinue
+}
+
+func (r Rules) Config(precompiles evm.PrecompileLookup) *evm.Config {
 	g := r.GasTable()
 	if precompiles == nil {
 		precompiles = r.EthereumPrecompiles()
 	}
+	return r.config(g, r.JumpTable(g), precompiles)
+}
+
+func (r Rules) config(g *evm.GasTable, t *evm.JumpTable, precompiles evm.PrecompileLookup) *evm.Config {
 	return &evm.Config{
 		Fork:        evm.Osaka,
 		ChainID:     u256.FromUint64(uint64(r.ChainID)),
 		Gas:         g,
-		Table:       r.JumpTable(g, timestampMillis),
+		Table:       t,
 		Precompiles: precompiles,
 	}
 }

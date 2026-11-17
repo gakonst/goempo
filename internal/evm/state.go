@@ -63,6 +63,7 @@ type BlockContext struct {
 	Coinbase    Address
 	Number      uint64
 	Time        uint64
+	TimeMillis  uint64
 	GasLimit    uint64
 	BaseFee     u256.Int
 	BlobBaseFee u256.Int

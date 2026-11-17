@@ -20,6 +20,7 @@
   - ./internal/types
   - ./internal/state
   - ./internal/tempo/executor
+  - ./internal/tempo/chain
   - ./internal/u256
   - ./internal/rpc
   - ./internal/rpcexec

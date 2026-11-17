@@ -98,12 +98,13 @@ func (x *Executor) envAt(number uint64) (env, error) {
 		Coinbase:   h.Inner.Beneficiary,
 		Number:     h.Inner.Number,
 		Time:       h.Inner.Timestamp,
+		TimeMillis: ts.Millis(),
 		GasLimit:   h.Inner.GasLimit,
 		BaseFee:    u256.Zero(),
 		PrevRandao: h.Inner.MixHash,
 		GetHash:    x.blockHash(number),
 	}
-	return env{header: b.Block, st: st, rules: rules, cfg: rules.Config(ts.Millis(), set), block: blk}, nil
+	return env{header: b.Block, st: st, rules: rules, cfg: rules.Config(set), block: blk}, nil
 }
 
 func (x *Executor) blockHash(current uint64) func(uint64) primitives.Hash {

@@ -15,6 +15,7 @@ import (
 	"github.com/gakonst/goempo/internal/genesis"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/state"
+	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
@@ -172,7 +173,7 @@ func newReplayerStore(dir string, cfg storeConfig) (*replayer, error) {
 	if err := json.Unmarshal(g.Config.Raw, &extra); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
-	x := &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength}
+	x := &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength, Configs: chain.NewCache()}
 	r := &replayer{db: db, exec: x, dir: dir, store: cfg, ctx: context.Background()}
 	if err := r.resume(); err != nil {
 		return nil, errors.Join(err, db.Close())

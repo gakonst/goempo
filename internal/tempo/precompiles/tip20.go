@@ -633,11 +633,8 @@ type systemPull struct {
 }
 
 func (t Token) systemTransferFrom(p systemPull) error {
-	if t.c.at(hardfork.T5) {
-		allowed := p.caller == FeeManagerAddress || p.caller == StablecoinDEXAddress || p.caller == ChannelReserveAddress
-		if !allowed {
-			return errSel("Unauthorized()")
-		}
+	if t.c.at(hardfork.T5) && !isImplicitlyApproved(p.caller, t.c.Fork) {
+		return errSel("Unauthorized()")
 	}
 	res, err := t.validateTransfer(transferReq{from: p.from, to: p.caller, amount: p.amount})
 	if err != nil || !res.proceed {

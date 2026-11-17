@@ -54,7 +54,7 @@ func BenchmarkCommitBlock(b *testing.B) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	number := uint64(1)
 	b.ResetTimer()
-	for b.Loop() {
+	for n := 0; n < b.N; n++ {
 		for i := 0; i < 200; i++ {
 			a := benchAddr(rng.IntN(benchAccounts))
 			st.AddBalance(a, u256.FromUint64(1))
@@ -81,7 +81,7 @@ func BenchmarkColdSlotRead(b *testing.B) {
 	st := db.State()
 	rng := rand.New(rand.NewPCG(3, 4))
 	b.ResetTimer()
-	for b.Loop() {
+	for n := 0; n < b.N; n++ {
 		a := benchAddr(rng.IntN(benchContracts))
 		st.Storage(a, benchSlot(rng.IntN(benchSlots)))
 		st.Discard()
@@ -96,7 +96,7 @@ func BenchmarkColdAccountRead(b *testing.B) {
 	st := db.State()
 	rng := rand.New(rand.NewPCG(5, 6))
 	b.ResetTimer()
-	for b.Loop() {
+	for n := 0; n < b.N; n++ {
 		st.Balance(benchAddr(rng.IntN(benchAccounts)))
 		st.Discard()
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gakonst/goempo/internal/primitives"
@@ -24,6 +25,8 @@ const (
 	corpusFileName      = "corpus.jsonl"
 	stateCorpusFileName = "corpus-b.jsonl"
 	extraCorpusFileName = "corpus-d.jsonl"
+	auxCorpusFileName   = "corpus-e.jsonl"
+	statusForbidden     = 403
 	corpusEntriesMax    = 1 << 20
 	corpusBytesMax      = 1 << 34
 	diffShown           = 400
@@ -31,6 +34,14 @@ const (
 )
 
 const _ = uint(corpusBytesMax - corpusEntriesMax)
+
+var nodeLocal = map[string]bool{
+	"net_peerCount":                   true,
+	"eth_newFilter":                   true,
+	"eth_newBlockFilter":              true,
+	"eth_newPendingTransactionFilter": true,
+	"eth_subscribe":                   true,
+}
 
 var (
 	errCorpusTooLarge = errors.New("rpc corpus exceeds its limit")
@@ -59,6 +70,8 @@ type r5Result struct {
 	Cases            int                     `json:"cases"`
 	CasesIdentical   int                     `json:"cases_identical"`
 	LiveSkipped      int                     `json:"live_skipped"`
+	GatewaySkipped   int                     `json:"gateway_skipped"`
+	NodeLocalSkipped int                     `json:"node_local_skipped"`
 	ReplayHeight     uint64                  `json:"replay_height"`
 	Score            string                  `json:"score"`
 	PerMethod        map[string]*methodScore `json:"per_method"`
@@ -73,6 +86,7 @@ func defaultCorpusPath() string {
 		filepath.Join(dir, corpusFileName),
 		filepath.Join(dir, stateCorpusFileName),
 		filepath.Join(dir, extraCorpusFileName),
+		filepath.Join(dir, auxCorpusFileName),
 	}, ",")
 }
 
@@ -101,8 +115,10 @@ func runRPCDiff(args []string) int {
 		Cases            int    `json:"cases"`
 		CasesIdentical   int    `json:"cases_identical"`
 		LiveSkipped      int    `json:"live_skipped"`
+		GatewaySkipped   int    `json:"gateway_skipped"`
+		NodeLocalSkipped int    `json:"node_local_skipped"`
 		ReplayHeight     uint64 `json:"replay_height"`
-	}{res.Rung, res.Score, res.Methods, res.MethodsIdentical, res.Cases, res.CasesIdentical, res.LiveSkipped, res.ReplayHeight})
+	}{res.Rung, res.Score, res.Methods, res.MethodsIdentical, res.Cases, res.CasesIdentical, res.LiveSkipped, res.GatewaySkipped, res.NodeLocalSkipped, res.ReplayHeight})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rpcdiff:", err)
 		return 1
@@ -359,6 +375,14 @@ func (res *r5Result) score(srv *rpc.Server, e *corpusEntry) {
 		res.LiveSkipped++
 		return
 	}
+	if e.Status == statusForbidden {
+		res.GatewaySkipped++
+		return
+	}
+	if nodeLocal[requestMethod(e.Request)] {
+		res.NodeLocalSkipped++
+		return
+	}
 	name := requestMethod(e.Request)
 	m := res.PerMethod[name]
 	if m == nil {
@@ -464,34 +488,97 @@ func (c *chunkChain) Block(number uint64) (*rpc.BlockData, bool) {
 	return data, true
 }
 
+func auxResult(e *corpusEntry) ([]byte, bool) {
+	var resp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal([]byte(e.Response), &resp) != nil {
+		return nil, false
+	}
+	if len(resp.Result) == 0 || string(resp.Result) == "null" {
+		return nil, false
+	}
+	return resp.Result, true
+}
+
+func auxBlockNumber(e *corpusEntry) (uint64, bool) {
+	var req struct {
+		Params []string `json:"params"`
+	}
+	if json.Unmarshal([]byte(e.Request), &req) != nil || len(req.Params) != 1 {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(req.Params[0], "0x"), 16, 64)
+	return n, err == nil
+}
+
 func loadAuxBlocks(chain *rpc.MemChain, entries []corpusEntry) error {
+	receipts := map[uint64][]types.Receipt{}
 	for i := range entries {
 		e := &entries[i]
-		if !e.Aux {
+		if !e.Aux || requestMethod(e.Request) != "debug_getRawReceipts" {
 			continue
 		}
-		var resp struct {
-			Result string `json:"result"`
-		}
-		if json.Unmarshal([]byte(e.Response), &resp) != nil || resp.Result == "" {
+		res, ok := auxResult(e)
+		n, okN := auxBlockNumber(e)
+		if !ok || !okN {
 			continue
 		}
-		raw, err := primitives.DecodeHex(resp.Result)
-		if err != nil {
+		var raws []string
+		if err := json.Unmarshal(res, &raws); err != nil {
 			return err
 		}
-		blk, err := types.DecodeBlock(raw)
-		if err != nil {
-			return err
+		list := make([]types.Receipt, 0, len(raws))
+		for _, r := range raws {
+			b, err := primitives.DecodeHex(r)
+			if err != nil {
+				return err
+			}
+			rc, err := types.DecodeReceipt(b)
+			if err != nil {
+				return err
+			}
+			list = append(list, rc)
 		}
-		if _, ok := chain.Block(blk.Header.Inner.Number); ok {
-			continue
-		}
-		data, err := rpc.NewBlockData(&blk, raw, nil)
-		if err != nil {
-			return err
-		}
-		chain.Add(data)
+		receipts[n] = list
 	}
+	for i := range entries {
+		e := &entries[i]
+		if !e.Aux || requestMethod(e.Request) != "debug_getRawBlock" {
+			continue
+		}
+		if err := addAuxBlock(chain, e, receipts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addAuxBlock(chain *rpc.MemChain, e *corpusEntry, receipts map[uint64][]types.Receipt) error {
+	res, ok := auxResult(e)
+	if !ok {
+		return nil
+	}
+	var hexRaw string
+	if err := json.Unmarshal(res, &hexRaw); err != nil {
+		return err
+	}
+	raw, err := primitives.DecodeHex(hexRaw)
+	if err != nil {
+		return err
+	}
+	blk, err := types.DecodeBlock(raw)
+	if err != nil {
+		return err
+	}
+	n := blk.Header.Inner.Number
+	if _, ok := chain.Block(n); ok {
+		return nil
+	}
+	data, err := rpc.NewBlockData(&blk, raw, receipts[n])
+	if err != nil {
+		return err
+	}
+	chain.Add(data)
 	return nil
 }

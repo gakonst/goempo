@@ -105,6 +105,10 @@ func methodTable() map[string]handler {
 		"debug_traceCall":                            debugTraceCall,
 		"tempo_forkSchedule":                         tempoForkSchedule,
 		"eth_getTransactions":                        ethGetTransactions,
+		"txpool_status":                              constant([]byte(`{"pending":"0x0","queued":"0x0"}`)),
+		"txpool_content":                             constant([]byte(`{"pending":{},"queued":{}}`)),
+		"txpool_inspect":                             constant([]byte(`{"pending":{},"queued":{}}`)),
+		"txpool_contentFrom":                         txpoolContentFrom,
 		"eth_simulateV1":                             notServed("eth_simulateV1"),
 		"eth_callMany":                               notServed("eth_callMany"),
 		"consensus_getLatest":                        consensusGetLatest,
@@ -880,4 +884,15 @@ func notServed(method string) handler {
 
 func consensusGetLatest(_ *Server, _ *params) ([]byte, error) {
 	return nil, internalError("consensus_getLatest is not served by goempo yet")
+}
+
+func txpoolContentFrom(_ *Server, p *params) ([]byte, error) {
+	raw, err := p.required("from")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := addressParam(raw); err != nil {
+		return nil, err
+	}
+	return []byte(`{"pending":{},"queued":{}}`), nil
 }

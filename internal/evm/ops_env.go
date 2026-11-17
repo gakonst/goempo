@@ -16,6 +16,9 @@ func wordHash(w u256.Int) Hash {
 }
 
 func (e *EVM) accountAccessCost(addr Address) uint64 {
+	if !e.gas.AccessLists {
+		return e.gas.ColdAccountAccess
+	}
 	if e.State.AddressWarm(addr) {
 		return e.gas.WarmAccess
 	}

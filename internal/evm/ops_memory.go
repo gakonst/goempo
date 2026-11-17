@@ -84,12 +84,7 @@ func opMcopy(e *EVM, f *Frame) Status {
 func opSload(e *EVM, f *Frame) Status {
 	top := f.Peek(0)
 	key := wordHash(*top)
-	cost := e.gas.WarmAccess
-	if !e.State.SlotWarm(f.address, key) {
-		e.State.WarmSlot(f.address, key)
-		cost = e.gas.ColdSload
-	}
-	if !f.UseGas(cost) {
+	if !f.UseGas(e.AccessSlot(f.address, key)) {
 		return StatusOutOfGas
 	}
 	*top = e.State.Storage(f.address, key)
@@ -106,7 +101,7 @@ func opSstore(e *EVM, f *Frame) Status {
 	key := wordHash(f.Pop())
 	value := f.Pop()
 	cost := uint64(0)
-	if !e.State.SlotWarm(f.address, key) {
+	if e.gas.AccessLists && !e.State.SlotWarm(f.address, key) {
 		e.State.WarmSlot(f.address, key)
 		cost = e.gas.ColdSload
 	}

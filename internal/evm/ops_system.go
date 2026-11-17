@@ -216,7 +216,7 @@ func opSelfDestruct(e *EVM, f *Frame) Status {
 	}
 	beneficiary := wordAddress(f.Pop())
 	cost := uint64(0)
-	if !e.State.AddressWarm(beneficiary) {
+	if e.gas.AccessLists && !e.State.AddressWarm(beneficiary) {
 		e.State.WarmAddress(beneficiary)
 		cost = e.gas.ColdAccountAccess
 	}

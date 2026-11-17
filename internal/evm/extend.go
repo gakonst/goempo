@@ -7,6 +7,9 @@ func (e *EVM) GasTable() *GasTable { return e.gas }
 func (e *EVM) AccessAccount(addr Address) uint64 { return e.accountAccessCost(addr) }
 
 func (e *EVM) AccessSlot(addr Address, key Hash) uint64 {
+	if !e.gas.AccessLists {
+		return e.gas.ColdSload
+	}
 	if e.State.SlotWarm(addr, key) {
 		return e.gas.WarmAccess
 	}

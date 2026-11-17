@@ -86,7 +86,18 @@ func bitLen(b []byte) uint64 {
 }
 
 type modexpPricing struct {
-	osaka bool
+	osaka  bool
+	eip198 bool
+}
+
+func eip198Complexity(x sat) sat {
+	if x <= 64 {
+		return x.mul(x)
+	}
+	if x <= 1024 {
+		return x.mul(x)/4 + x.mul(96) - 3072
+	}
+	return x.mul(x)/16 + x.mul(480) - 199680
 }
 
 func (h modexpHeader) oversized() bool {
@@ -122,6 +133,9 @@ func (p modexpPricing) gas(input []byte) uint64 {
 		iterations = iterations.add(sat(headBits - 1))
 	}
 	iterations = max(iterations, 1)
+	if p.eip198 {
+		return uint64(eip198Complexity(sat(maxLen)).mul(iterations) / 20)
+	}
 	if p.osaka {
 		return uint64(max(500, complexity.mul(iterations)))
 	}

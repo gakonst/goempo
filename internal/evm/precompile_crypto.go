@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"github.com/gakonst/goempo/internal/crypto/blake2f"
+	"github.com/gakonst/goempo/internal/crypto/bls12381"
 	"github.com/gakonst/goempo/internal/crypto/bn254"
 	"github.com/gakonst/goempo/internal/crypto/p256"
 	"github.com/gakonst/goempo/internal/crypto/secp256k1"
@@ -50,16 +51,9 @@ func (w pricedPrecompile) Run(call *PrecompileCall) PrecompileResult {
 }
 
 type CryptoBackend struct {
-	Blake2F         ComputeFunc
-	PointEval       ComputeFunc
-	BLSG1Add        ComputeFunc
-	BLSG1MSM        ComputeFunc
-	BLSG2Add        ComputeFunc
-	BLSG2MSM        ComputeFunc
-	BLSPairingCheck ComputeFunc
-	BLSMapFpToG1    ComputeFunc
-	BLSMapFp2ToG2   ComputeFunc
-	ModExpOverride  ComputeFunc
+	Blake2F        ComputeFunc
+	PointEval      ComputeFunc
+	ModExpOverride ComputeFunc
 }
 
 var Backend CryptoBackend
@@ -85,7 +79,7 @@ func addCryptoPrecompiles(s *PrecompileSet, fork Fork) {
 	s.Set(PrecompileAddress(0x02), NewPriced(Priced{Gas: linearGas(linearCost{base: 60, word: 12}), Run: sha256Sum}))
 	s.Set(PrecompileAddress(0x03), NewPriced(Priced{Gas: linearGas(linearCost{base: 600, word: 120}), Run: ripemdSum}))
 	s.Set(PrecompileAddress(0x04), NewPriced(Priced{Gas: linearGas(linearCost{base: 15, word: 3}), Run: identity}))
-	modexp := modexpPricing{osaka: fork >= Osaka}
+	modexp := modexpPricing{osaka: fork >= Osaka, eip198: fork < Berlin}
 	modexpRun := ComputeFunc(modexpBig)
 	if Backend.ModExpOverride != nil {
 		modexpRun = Backend.ModExpOverride
@@ -109,13 +103,13 @@ func addCryptoPrecompiles(s *PrecompileSet, fork Fork) {
 func addBLS(s *PrecompileSet) {
 	g1 := msmPricing{pairSize: blsG1MulPair, baseGas: 12000, discounts: &blsG1Discounts}
 	g2 := msmPricing{pairSize: blsG2MulPair, baseGas: 22500, discounts: &blsG2Discounts}
-	s.Set(PrecompileAddress(0x0b), NewPriced(Priced{Gas: constGas(375), Valid: exactLength(blsG1AddInput), Run: Backend.BLSG1Add}))
-	s.Set(PrecompileAddress(0x0c), NewPriced(Priced{Gas: g1.gas, Valid: multipleOf(blsG1MulPair), Run: Backend.BLSG1MSM}))
-	s.Set(PrecompileAddress(0x0d), NewPriced(Priced{Gas: constGas(600), Valid: exactLength(blsG2AddInput), Run: Backend.BLSG2Add}))
-	s.Set(PrecompileAddress(0x0e), NewPriced(Priced{Gas: g2.gas, Valid: multipleOf(blsG2MulPair), Run: Backend.BLSG2MSM}))
-	s.Set(PrecompileAddress(0x0f), NewPriced(Priced{Gas: blsPairingGas, Valid: multipleOf(blsPairingPair), Run: Backend.BLSPairingCheck}))
-	s.Set(PrecompileAddress(0x10), NewPriced(Priced{Gas: constGas(5500), Valid: exactLength(blsMapFpInput), Run: Backend.BLSMapFpToG1}))
-	s.Set(PrecompileAddress(0x11), NewPriced(Priced{Gas: constGas(23800), Valid: exactLength(blsMapFp2Input), Run: Backend.BLSMapFp2ToG2}))
+	s.Set(PrecompileAddress(0x0b), NewPriced(Priced{Gas: constGas(375), Valid: exactLength(blsG1AddInput), Run: blsG1Add}))
+	s.Set(PrecompileAddress(0x0c), NewPriced(Priced{Gas: g1.gas, Valid: multipleOf(blsG1MulPair), Run: blsG1MSM}))
+	s.Set(PrecompileAddress(0x0d), NewPriced(Priced{Gas: constGas(600), Valid: exactLength(blsG2AddInput), Run: blsG2Add}))
+	s.Set(PrecompileAddress(0x0e), NewPriced(Priced{Gas: g2.gas, Valid: multipleOf(blsG2MulPair), Run: blsG2MSM}))
+	s.Set(PrecompileAddress(0x0f), NewPriced(Priced{Gas: blsPairingGas, Valid: multipleOf(blsPairingPair), Run: blsPairing}))
+	s.Set(PrecompileAddress(0x10), NewPriced(Priced{Gas: constGas(5500), Valid: exactLength(blsMapFpInput), Run: blsMapG1}))
+	s.Set(PrecompileAddress(0x11), NewPriced(Priced{Gas: constGas(23800), Valid: exactLength(blsMapFp2Input), Run: blsMapG2}))
 }
 
 func bnPairingGas(input []byte) uint64 {
@@ -175,6 +169,41 @@ func blake2fCompress(input []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return out[:], true
+}
+
+func blsG1Add(input []byte) ([]byte, bool) {
+	out, err := bls12381.G1Add(input)
+	return out[:], err == nil
+}
+
+func blsG1MSM(input []byte) ([]byte, bool) {
+	out, err := bls12381.G1MSM(input)
+	return out[:], err == nil
+}
+
+func blsG2Add(input []byte) ([]byte, bool) {
+	out, err := bls12381.G2Add(input)
+	return out[:], err == nil
+}
+
+func blsG2MSM(input []byte) ([]byte, bool) {
+	out, err := bls12381.G2MSM(input)
+	return out[:], err == nil
+}
+
+func blsPairing(input []byte) ([]byte, bool) {
+	out, err := bls12381.PairingCheck(input)
+	return out[:], err == nil
+}
+
+func blsMapG1(input []byte) ([]byte, bool) {
+	out, err := bls12381.MapFpToG1(input)
+	return out[:], err == nil
+}
+
+func blsMapG2(input []byte) ([]byte, bool) {
+	out, err := bls12381.MapFp2ToG2(input)
+	return out[:], err == nil
 }
 
 func ecrecover(input []byte) ([]byte, bool) {

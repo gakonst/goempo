@@ -46,6 +46,7 @@ type GasTable struct {
 	MaxRefundQuotient uint64
 	MaxCodeSize       int
 	MaxInitCodeSize   int
+	AccessLists       bool
 }
 
 func OsakaGas() *GasTable {
@@ -84,6 +85,7 @@ func OsakaGas() *GasTable {
 		MaxRefundQuotient: 5,
 		MaxCodeSize:       24576,
 		MaxInitCodeSize:   49152,
+		AccessLists:       true,
 	}
 }
 
@@ -96,6 +98,13 @@ func GasForFork(fork Fork) *GasTable {
 	if fork < London {
 		table.SstoreClearRefund = 15000
 		table.MaxRefundQuotient = 2
+	}
+	if fork < Berlin {
+		table.AccessLists = false
+		table.WarmAccess = 800
+		table.ColdSload = 800
+		table.ColdAccountAccess = 700
+		table.SstoreReset = 5000
 	}
 	return table
 }

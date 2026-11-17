@@ -5,7 +5,8 @@ import "github.com/gakonst/goempo/internal/u256"
 type Fork uint8
 
 const (
-	Berlin Fork = iota + 1
+	Istanbul Fork = iota + 1
+	Berlin
 	London
 	Paris
 	Shanghai
@@ -15,6 +16,7 @@ const (
 )
 
 var forkNames = map[string]Fork{
+	"Istanbul": Istanbul,
 	"Berlin":   Berlin,
 	"London":   London,
 	"Paris":    Paris,

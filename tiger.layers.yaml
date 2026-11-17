@@ -14,3 +14,6 @@
   - ./internal/primitives
   - golang.org/x/crypto/sha3
   - github.com/kapetan-io/tiger/assert
+"./internal/rlp":
+  - ./internal/primitives
+  - github.com/kapetan-io/tiger/assert

@@ -132,3 +132,12 @@
   - ./internal/rlp
   - ./internal/trie
   - ./internal/types
+"./internal/tempo/executor":
+  - ./internal/evm
+  - ./internal/primitives
+  - ./internal/tempo/chain
+  - ./internal/tempo/hardfork
+  - ./internal/trie
+  - ./internal/types
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert

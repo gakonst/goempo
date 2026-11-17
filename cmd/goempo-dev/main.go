@@ -12,11 +12,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis>")
 		os.Exit(2)
 	}
-	if os.Args[1] == "statetest" {
+	switch os.Args[1] {
+	case "statetest":
 		os.Exit(runStatetest(os.Args[2:]))
-	}
-	if os.Args[1] == "genesis" {
+	case "genesis":
 		os.Exit(runGenesis(os.Args[2:]))
+	case "fetch":
+		os.Exit(runFetch(os.Args[2:]))
+	case "score":
+		os.Exit(runScore(os.Args[2:]))
 	}
 	fmt.Fprintln(os.Stderr, version.String()+": unknown command "+os.Args[1])
 	os.Exit(2)

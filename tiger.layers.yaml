@@ -8,6 +8,8 @@
   - ./internal/version
   - ./internal/genesis
   - ./internal/primitives
+  - ./internal/trie
+  - ./internal/types
 "./internal/version": []
 "./internal/io/...":
   - os
@@ -72,3 +74,11 @@
 "./internal/crypto/blake2f": []
 "./internal/crypto/ripemd160":
   - golang.org/x/crypto/ripemd160
+"./internal/types":
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/u256
+  - ./internal/crypto/keccak
+  - ./internal/crypto/secp256k1
+  - ./internal/crypto/p256
+  - github.com/kapetan-io/tiger/assert

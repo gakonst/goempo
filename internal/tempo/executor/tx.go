@@ -247,7 +247,8 @@ func (r *txRun) checkFeeToken() error {
 	}
 	limit := feeAmount(r.view.gasLimit, r.view.maxFee)
 	if limit.IsZero() {
-		return nil
+		_, err := precompiles.TIP20(r.ctx, r.token).BalanceOf(r.view.feePayer)
+		return err
 	}
 	valid, err := precompiles.IsValidFeeToken(r.ctx, r.token)
 	if err != nil {

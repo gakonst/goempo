@@ -623,7 +623,7 @@ func (t Token) burnAt(req burnReq) error {
 	if err := t.reduceSupply(req.amount); err != nil {
 		return err
 	}
-	return t.c.emit(t.addr, []Hash{evBurnAt, addressWord(req.sender), addressWord(req.owner)}, encodeWords(toHash(req.amount)))
+	return t.c.emit(t.addr, []Hash{evBurnAt, addressWord(req.sender), addressWord(req.owner), toHash(req.amount)}, nil)
 }
 
 type systemPull struct {

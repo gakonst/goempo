@@ -7,10 +7,6 @@ vconfig/validatorsArray-huge/T11
 vconfig/validatorsArray-huge/T12
 vconfig/validatorsArray-huge/T13
 vconfig/validatorsArray-huge/T14
-dex/getOrder-missing/T11
-dex/getOrder-missing/T12
-dex/getOrder-missing/T13
-dex/getOrder-missing/T14
 sigver/verifyConfigurableAccount-first-use/T14
 sigver/verifyConfigurableAccount-registered/T14
 sigver/verifyConfigurableAccount-stale/T14
@@ -29,9 +25,6 @@ sigver/verifyConfigurableAccount-primitive/T14
 sigver/verifyConfigurableAccount-keychain/T14
 sigver/verifyConfigurableAccount-low-gas/T14
 sigver/verifyConfigurableAccount-beyond-cap/T14
-burnAt/T12
-burnAt/T13
-burnAt/T14
 keychain/authorizeAdminKey-type0/T11
 keychain/authorizeAdminKey-type0/T12
 keychain/authorizeAdminKey-type0/T13
@@ -127,8 +120,6 @@ review-5.3/verifyKeychainAdmin-type-4/T11
 review-5.3/verifyKeychainAdmin-type-4/T14
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T12/gas+101
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T13/gas+101
-T8-7/getOrder-8/T7
-T8-7/getOrder-8/T8
 T7-10/reserve/storageCredits-above-u64/T7
 T8-3/getPendingRewards-snapshot-above-accumulator/T7
 T8-3/getPendingRewards-self-no-balance/T7

@@ -773,11 +773,14 @@ func (c *Context) getOrder(id Word) (dexOrder, error) {
 	if err != nil {
 		return dexOrder{}, err
 	}
+	if o.maker == (Address{}) {
+		return dexOrder{}, errSel("OrderDoesNotExist()")
+	}
 	next, err := c.nextOrderID()
 	if err != nil {
 		return dexOrder{}, err
 	}
-	if o.maker != (Address{}) && o.id.Lt(next) {
+	if o.id.Lt(next) {
 		return o, nil
 	}
 	return dexOrder{}, errSel("OrderDoesNotExist()")

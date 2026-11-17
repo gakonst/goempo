@@ -11,3 +11,9 @@ func Namespace(app string) []byte {
 func TempoNamespace() []byte {
 	return Namespace("TEMPO")
 }
+
+const streamSuffix = "_STREAM"
+
+func StreamNamespace(namespace []byte) []byte {
+	return append(append(make([]byte, 0, len(namespace)+len(streamSuffix)), namespace...), streamSuffix...)
+}

@@ -1,3 +1,5 @@
 sake_cups_vectors.json: produced by the Rust harness in harness/ (`cargo run --release -- vectors`, built on a 32-core build machine with tempo's Cargo.lock) against commonware-cryptography/stream 2026.10.0, the version tempo pins: SAKE dial/listen with ed25519 seeds 0x01*32 and 0x02*32, counter entropy starting at 10 and 100, namespace union_unique("TEMPO","_P2P"), then the first CUPS records each way.
 
 harness/: the Rust harness source (not part of goempo; reference only). `vectors` prints the vectors above; `node` runs a commonware lookup network configured like tempo (SAKE V0, CUPS V0, channels 0-5 with tempo's rates) for interop runs.
+
+interop-evidence.txt: output of the live interop runs (Go test TestInteropWithRustCommonware built with -tags interop against the harness "node" on localhost TCP): run A with Go dialing, run B with Rust dialing.

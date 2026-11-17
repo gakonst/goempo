@@ -243,7 +243,7 @@ func (n *Network) streamConfig() *StreamConfig {
 	return &StreamConfig{
 		Sake:                  n.cfg.Sake,
 		Cups:                  n.cfg.Cups,
-		Namespace:             n.cfg.Namespace,
+		Namespace:             StreamNamespace(n.cfg.Namespace),
 		Key:                   n.cfg.Key,
 		Clock:                 n.cfg.Clock,
 		MaxAgeMs:              n.cfg.MaxHandshakeAgeMs,

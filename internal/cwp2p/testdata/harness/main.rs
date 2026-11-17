@@ -207,6 +207,7 @@ fn node(args: Vec<String>) {
 }
 
 fn main() {
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).with_writer(std::io::stderr).init();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("vectors") => vectors(),

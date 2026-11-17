@@ -45,6 +45,7 @@ func preBlock(st State, env *systemEnv) {
 			gas:    env.rules.SystemCallGas(),
 		})
 	}
+	deployBoundaryPrecompiles(st, env.rules)
 }
 
 func historyCall(st State, env *systemEnv, call systemCall) {

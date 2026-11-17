@@ -2,10 +2,13 @@ package rpc
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
 	"sync"
 
+	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/kapetan-io/tiger/assert"
@@ -362,7 +365,10 @@ func (t *filterTable) add(f *installed) ([]byte, error) {
 		return nil, newError(CodeServer, "too many installed filters")
 	}
 	t.counter++
-	key := "0x" + strconv.FormatUint(t.counter, 16)
+	var seed [8]byte
+	binary.BigEndian.PutUint64(seed[:], t.counter)
+	sum := keccak.Sum256(seed[:])
+	key := "0x" + hex.EncodeToString(sum[:filterIDLength])
 	t.byID[key] = f
 	return stringResult(key), nil
 }

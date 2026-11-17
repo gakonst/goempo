@@ -23,6 +23,7 @@ import (
 const (
 	corpusFileName      = "corpus.jsonl"
 	stateCorpusFileName = "corpus-b.jsonl"
+	extraCorpusFileName = "corpus-d.jsonl"
 	corpusEntriesMax    = 1 << 20
 	corpusBytesMax      = 1 << 34
 	diffShown           = 400
@@ -68,7 +69,11 @@ func defaultCorpusPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		dir = filepath.Join(home, dir)
 	}
-	return filepath.Join(dir, corpusFileName) + "," + filepath.Join(dir, stateCorpusFileName)
+	return strings.Join([]string{
+		filepath.Join(dir, corpusFileName),
+		filepath.Join(dir, stateCorpusFileName),
+		filepath.Join(dir, extraCorpusFileName),
+	}, ",")
 }
 
 func runRPCDiff(args []string) int {

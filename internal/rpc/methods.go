@@ -104,6 +104,16 @@ func methodTable() map[string]handler {
 		"debug_traceBlockByHash":                     debugTraceBlockByHash,
 		"debug_traceCall":                            debugTraceCall,
 		"tempo_forkSchedule":                         tempoForkSchedule,
+		"eth_getTransactions":                        ethGetTransactions,
+		"eth_simulateV1":                             notServed("eth_simulateV1"),
+		"eth_callMany":                               notServed("eth_callMany"),
+		"consensus_getLatest":                        consensusGetLatest,
+		"consensus_getFinalization":                  notServed("consensus_getFinalization"),
+		"trace_block":                                notServed("trace_block"),
+		"trace_transaction":                          notServed("trace_transaction"),
+		"trace_filter":                               notServed("trace_filter"),
+		"trace_replayBlockTransactions":              notServed("trace_replayBlockTransactions"),
+		"trace_call":                                 notServed("trace_call"),
 	}
 }
 
@@ -838,4 +848,36 @@ func unknownAccount2(_ *Server, p *params) ([]byte, error) {
 
 func subscribeOverHTTP(_ *Server, _ *params) ([]byte, error) {
 	return nil, internalError("Internal error")
+}
+
+func objectParam(p *params, name field, expected string) error {
+	raw, err := p.required(string(name))
+	if err != nil {
+		return err
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return typeError(raw, expected)
+	}
+	return nil
+}
+
+func ethGetTransactions(_ *Server, p *params) ([]byte, error) {
+	if err := objectParam(p, "params", "struct PaginationParams"); err != nil {
+		return nil, err
+	}
+	return nil, internalError("unimplemented")
+}
+
+func notServed(method string) handler {
+	return func(_ *Server, p *params) ([]byte, error) {
+		if _, err := p.required("params"); err != nil {
+			return nil, err
+		}
+		return nil, internalError(method + " is not served by goempo yet")
+	}
+}
+
+func consensusGetLatest(_ *Server, _ *params) ([]byte, error) {
+	return nil, internalError("consensus_getLatest is not served by goempo yet")
 }

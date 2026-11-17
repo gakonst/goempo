@@ -7,7 +7,7 @@
 | R2 Genesis | yes | d1c1553 | 2026-11-17 |
 | R3 Replay | 15150000 | c780ea9 | 2026-11-17 |
 | R4 Follow | headers+bodies+every finalization certificate incl. live epoch transition (no execution) | c22fe5a | 2026-11-17 |
-| R5 RPC | 50/57 methods identical, 2671/2697 cases (99.0%) | b4e8f48 | 2026-11-17 |
+| R5 RPC | 111/111 methods, 3378/3378 cases (100%); 121/121 reference methods served | ab9f4ae | 2026-11-17 |
 | R6 Validator | simplex+DKG reshare in local sim (4-7 nodes, faults), certificates accepted by consensus.Chain | 625567f | 2026-11-17 |
 | R7 Speed | - | - | - |
 
@@ -40,6 +40,8 @@ R5 (2026-11-17, agent 10): 66/66 methods, 3114/3114 recorded cases identical. Ad
 
 R5 (2026-11-17, agent 10): goempo-dev serve now serves connections concurrently (rpc.Transport.Serve: up to rpc.ConnsActiveMax=256 at once, Close stops the listener, closes open connections and waits; goleak in rpc tests). Replayed state is guarded by one lock shared by rpcexec (Executor.Lock) and the state readers. Checked with a -race build of serve at block 5000 under 24 concurrent clients mixing eth_call/estimateGas/getProof/traces: no races, consistent answers.
 R3 = 4,165,926 (2026-11-17, d3b6743): ValidatorConfig changeValidatorStatus (agent 5) matches at 4165889. First mismatch: block 4165927 tx 0, ValidatorConfig selector 0xffb4822e charges 100 gas less than mainnet. A -heal survey of 1..10.3M finds 40 mismatching blocks, every one a precompile path 100 gas short (ValidatorConfig 0xffb4822e, TIP-20 transfer/0x372500ab at T1C from 10,129,394, mint, one DEX swap); the handler side shows no mismatch. Block cache is contiguous to 13.84M (fetch from the tailnet node at ~1.5k blocks/s continues); the in-memory replay state is the next limit for a full-chain run (internal/state on disk).
+
+
 
 
 R3 = 10,129,393 (2026-11-17, 04c516f): "goempo-dev replay -datadir ~/scratch/r3dd -checkpoint 500000 -to 10129393 -rpc http://100.98.157.16:8545" executed every mainnet block from genesis to 10,129,393 with state on disk (internal/storage, checkpoint every 500k blocks), no heals: gas used, receipts root, logs bloom and state root all match, through T1/T1A (4,494,230), T1B (6,253,936) and T1C (8,967,990). 1224 s, 8.3k blocks/s on the hosted Hand. The run stopped at its target: the old binary's first mismatch was 10,129,394 (TIP-20 claimRewards 100 gas short, fixed by c20e89f, precompiles agent); with c20e89f a resumed run from the 10,129,393 checkpoint passes 10,129,394..10,300,000 (in progress toward 20.5M, the end of the contiguous block cache).

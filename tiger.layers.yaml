@@ -68,3 +68,6 @@
 "./internal/crypto/bn254":
   - github.com/kapetan-io/tiger/assert
 "./internal/crypto/modexp": []
+"./internal/crypto/blake2f": []
+"./internal/crypto/ripemd160":
+  - golang.org/x/crypto/ripemd160

@@ -341,7 +341,10 @@ func (r *txRun) execute() execution {
 		Tx:     &evm.TxContext{Origin: v.sender, GasPrice: r.price},
 		Config: r.env.Config,
 	})
-	gasLeft := v.gasLimit - r.need.gas
+	gasLeft, allowed := r.checkCallScopes(v.gasLimit - r.need.gas)
+	if !allowed {
+		return execution{success: false, gasLeft: gasLeft}
+	}
 	snapshot := st.Snapshot()
 	for i := 0; i < len(v.calls); i++ {
 		c := &v.calls[i]
@@ -362,6 +365,27 @@ func (r *txRun) execute() execution {
 		}
 	}
 	return execution{success: true, gasLeft: gasLeft}
+}
+
+func (r *txRun) checkCallScopes(gas uint64) (uint64, bool) {
+	if !r.view.isAA() || r.keyID == (Address{}) || !r.env.Rules.AtLeast(hardfork.T3) {
+		return gas, true
+	}
+	k := precompiles.NewContext(r.env.State, r.env.Rules.Fork, gas)
+	k.Block = r.ctx.Block
+	k.Tx = r.ctx.Tx
+	k.Env = r.ctx.Env
+	k.ChainID = r.ctx.ChainID
+	for _, c := range r.view.calls {
+		err := precompiles.ValidateTxCallScope(k, precompiles.TxCall{Account: r.view.sender, KeyID: r.keyID, To: c.to, Input: c.input})
+		if errors.Is(err, precompiles.ErrOutOfGas) {
+			return 0, false
+		}
+		if err != nil {
+			return gas - k.GasUsed(), false
+		}
+	}
+	return gas - k.GasUsed(), true
 }
 
 func (r *txRun) settleGas(gasLeft uint64) uint64 {

@@ -184,3 +184,5 @@
   - ./internal/tempo/hardfork
   - ./internal/tempo/precompiles
   - ./internal/u256
+"./internal/tempo/dkg":
+  - github.com/kapetan-io/tiger/assert

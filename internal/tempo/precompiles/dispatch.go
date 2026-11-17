@@ -176,6 +176,9 @@ func Call(c *Context, addr Address, input []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if addr == SignatureVerifierAddress && len(input) > maxVerifierInput {
+		return nil, errSel("InvalidFormat()")
+	}
 	c.self = addr
 	return table.dispatch(c, input)
 }

@@ -153,6 +153,7 @@
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
 "./internal/tempo/precompiles":
+  - ./internal/types
   - ./internal/crypto/keccak
   - ./internal/crypto/secp256k1
   - ./internal/evm

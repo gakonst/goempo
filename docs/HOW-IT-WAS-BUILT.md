@@ -185,4 +185,9 @@ Rust is allowed only in harnesses under `~/goempo-work` on a 32-core build machi
 
 Updated from the commit log as the swarm works.
 
-- 18:01: swarm started; no R6 sub-rung has passed yet.
+- 18:01: swarm started.
+- 18:06-18:17: validator key files (ed25519 signing key, BLS share) and ValidatorConfigV2 add/rotate call data (9af5049); commonware's Random leader elector, checked against mainnet's actual proposers (10a1fc5); the voter now follows commonware simplex (elected leaders, the proposal carried in the leader's notarize, certify before finalize; 869e15b); state and executor can build a block one transaction at a time with rollback and compute a pending root without writing (65ce9c9).
+- 18:11-18:15: **R6b passes** (426c0ff, 84dc0fa): every consensus, resolver, broadcast, marshal and DKG message encodes byte for byte like commonware 2026.10.0, in both directions. Rust-made votes and certificates decode, re-encode and verify in Go; Go-signed votes and Go-recovered certificates are byte-identical to Rust's; 32/32 Rust DKG dealings are accepted by Go players whose acks equal Rust's; Go-made messages verify in the Rust harness.
+- 18:15-18:19: commonware's SAKE handshake and CUPS records, byte-exact against vectors from the Rust harness (8489be1), then the authenticated lookup network: per-channel rate limits and backlogs, peer-set oracle, dialing, pings, blocking (6dc934e). R6a (interop with a live Rust peer) is not recorded yet.
+- 18:11-18:29: the Rust devnet harness (70aba0b, f21b8fe): 4 Rust validators from a fresh genesis and DKG ran 1,780 finalized heights on all four, 0 forks, 0 stalls, 30/30 DKG boundary outcomes; stopping 1 of 4 keeps finality and stopping 2 halts it, the quorum test that will prove goempo's votes count. Any slot can be swapped for goempo with the same keys. R6e waits on goempo's validator mode.
+- 18:27-18:29: transaction pool with Tempo admission checks and 2D-nonce lanes, payload builder with payment lanes (e92c7f5); validator engine wiring the simplex voter, wire codecs, block fetch and DKG reshare at epoch boundaries, finalizing 3 epochs in a 4-validator in-memory cluster (f6701cd).

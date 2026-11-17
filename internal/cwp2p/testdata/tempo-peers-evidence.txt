@@ -1,0 +1,21 @@
+=== RUN   TestPeerWithTempoValidators
+SELF 36f4804b24f9f54b3c4ed32baf76badf11ad0888324344cf145656b368f1266e tracking 3 peers
+CONNECTED 3/3
+  66ffb822372e78b234ff9304201ff758861f7a8e7b8e43937d8b1a97071f538b
+  9bdb607f02802cdd126290cfa1e025e4c13bbdbb347a70edeace584159303454
+  c59b7e01840352a3e491559c212a509e5a394f76932979de0e2d7061cd8c5802
+BYTES per channel map[0:52692 1:52018 3:43747 5:26809]
+RECV ch=0 from=c59b7e01 135
+RECV ch=0 from=9bdb607f 134
+RECV ch=1 from=9bdb607f 134
+RECV ch=1 from=c59b7e01 134
+RECV ch=0 from=66ffb822 139
+RECV ch=1 from=66ffb822 138
+RECV ch=3 from=66ffb822 26
+RECV ch=3 from=c59b7e01 19
+RECV ch=5 from=c59b7e01 27
+RECV ch=5 from=9bdb607f 27
+RECV ch=3 from=9bdb607f 14
+RECV ch=5 from=66ffb822 29
+--- PASS: TestPeerWithTempoValidators (30.00s)
+PASS

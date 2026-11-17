@@ -2,6 +2,7 @@ package trie
 
 import (
 	"bytes"
+	"errors"
 	"math"
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
@@ -14,6 +15,11 @@ var EmptyRoot = primitives.Hash{
 	0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
 	0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
 }
+
+var (
+	ErrNodeHash = errors.New("trie: stored node does not match its hash")
+	ErrNodeRLP  = errors.New("trie: stored node is not a valid node encoding")
+)
 
 const nodesMax = 1 << 36
 
@@ -30,6 +36,7 @@ const (
 
 type node struct {
 	kind     nodeKind
+	saved    bool
 	path     []byte
 	value    []byte
 	children [16]*node
@@ -38,11 +45,25 @@ type node struct {
 
 type Value []byte
 
+type NodeReader interface {
+	ReadNode(path []byte) ([]byte, error)
+}
+
+type StoredNode struct {
+	Path    []byte
+	Encoded []byte
+}
+
+type NodeWriter interface {
+	WriteNode(n StoredNode)
+}
+
 type Trie struct {
 	root    *node
 	nodes   int
 	last    []byte
 	sorted  int
+	reader  NodeReader
 	enc     rlp.Encoder
 	hasher  *keccak.Hasher
 	scratch []nodeVisit
@@ -51,10 +72,20 @@ type Trie struct {
 type nodeVisit struct {
 	n    *node
 	exit bool
+	path []byte
 }
 
 func New() *Trie {
 	return &Trie{hasher: keccak.New()}
+}
+
+func Open(root primitives.Hash, reader NodeReader) *Trie {
+	t := &Trie{hasher: keccak.New(), reader: reader}
+	if root != EmptyRoot {
+		t.root = &node{kind: kindSealed, saved: true, ref: bytes.Clone(root[:])}
+		t.nodes = 1
+	}
+	return t
 }
 
 func (t *Trie) Nodes() int {
@@ -87,48 +118,70 @@ func (t *Trie) drop() {
 	assert.Ok(t.nodes >= 0, "trie node count went negative")
 }
 
+func dirty(n *node) {
+	n.ref = nil
+	n.saved = false
+}
+
 func (t *Trie) Get(key []byte) ([]byte, bool) {
+	v, err := t.Find(key)
+	assert.NoError(err, "in-memory trie lookup")
+	return v, v != nil
+}
+
+func (t *Trie) Find(key []byte) ([]byte, error) {
 	kn := keyNibbles(key)
-	n := t.root
+	slot := &t.root
 	pos := 0
-	for steps := 0; steps <= len(kn)+1; steps++ {
+	for steps := 0; steps <= 2*len(kn)+2; steps++ {
+		if err := t.resolve(slot, kn[:pos]); err != nil {
+			return nil, err
+		}
+		n := *slot
 		if n == nil {
-			return nil, false
+			return nil, nil
 		}
 		switch n.kind {
 		case kindLeaf:
 			if bytes.Equal(n.path, kn[pos:]) {
-				return n.value, true
+				return n.value, nil
 			}
-			return nil, false
+			return nil, nil
 		case kindExtension:
 			if !bytes.HasPrefix(kn[pos:], n.path) {
-				return nil, false
+				return nil, nil
 			}
 			pos += len(n.path)
-			n = n.children[0]
+			slot = &n.children[0]
 		case kindBranch:
 			if pos == len(kn) {
-				return n.value, n.value != nil
+				return n.value, nil
 			}
-			n = n.children[kn[pos]]
+			slot = &n.children[kn[pos]]
 			pos++
 		case kindSealed:
-			assert.Fail("trie Get reached a sealed subtree")
+			assert.Fail("trie node still sealed after resolve")
 		default:
 			assert.Unreachable("trie node kind")
 		}
 	}
-	assert.Fail("trie Get walked past the key")
-	return nil, false
+	assert.Fail("trie Find walked past the key")
+	return nil, nil
 }
 
 func (t *Trie) Update(key []byte, value Value) {
+	assert.NoError(t.Set(key, value), "in-memory trie update")
+}
+
+func (t *Trie) Delete(key []byte) {
+	assert.NoError(t.Unset(key), "in-memory trie delete")
+}
+
+func (t *Trie) Set(key []byte, value Value) error {
 	if len(value) == 0 {
-		t.Delete(key)
-		return
+		return t.Unset(key)
 	}
-	t.insert(keyNibbles(key), value, nil)
+	return t.insert(keyNibbles(key), value, nil)
 }
 
 func (t *Trie) UpdateSorted(key []byte, value Value) {
@@ -139,31 +192,32 @@ func (t *Trie) UpdateSorted(key []byte, value Value) {
 	t.sorted++
 	t.last = append(t.last[:0], key...)
 	kn := keyNibbles(key)
-	t.insert(kn, value, kn)
+	assert.NoError(t.insert(kn, value, kn), "sorted trie insert")
 }
 
-func (t *Trie) insert(kn []byte, value Value, seal []byte) {
+func (t *Trie) insert(kn []byte, value Value, seal []byte) error {
 	slot := &t.root
 	pos := 0
 	for steps := 0; steps <= len(kn)+1; steps++ {
+		if err := t.resolve(slot, kn[:pos]); err != nil {
+			return err
+		}
 		n := *slot
 		if n == nil {
 			*slot = t.newLeaf(kn[pos:], value)
-			return
+			return nil
 		}
-		n.ref = nil
+		dirty(n)
 		switch n.kind {
 		case kindLeaf:
 			common := prefixLen(n.path, kn[pos:])
-			if common == len(n.path) {
-				if common == len(kn)-pos {
-					n.value = bytes.Clone(value)
-					return
-				}
+			if common == len(n.path) && common == len(kn)-pos {
+				n.value = bytes.Clone(value)
+				return nil
 			}
 			*slot = t.split(splitInput{old: n, oldPath: n.path, key: kn[pos:], common: common, value: value})
 			t.drop()
-			return
+			return nil
 		case kindExtension:
 			common := prefixLen(n.path, kn[pos:])
 			if common == len(n.path) {
@@ -173,11 +227,11 @@ func (t *Trie) insert(kn []byte, value Value, seal []byte) {
 			}
 			*slot = t.split(splitInput{old: n, oldPath: n.path, key: kn[pos:], common: common, value: value})
 			t.drop()
-			return
+			return nil
 		case kindBranch:
 			if pos == len(kn) {
 				n.value = bytes.Clone(value)
-				return
+				return nil
 			}
 			if seal != nil {
 				t.sealBelow(n, kn[pos])
@@ -185,12 +239,13 @@ func (t *Trie) insert(kn []byte, value Value, seal []byte) {
 			slot = &n.children[kn[pos]]
 			pos++
 		case kindSealed:
-			assert.Fail("trie insert reached a sealed subtree")
+			assert.Fail("trie node still sealed after resolve")
 		default:
 			assert.Unreachable("trie node kind")
 		}
 	}
 	assert.Fail("trie insert walked past the key")
+	return nil
 }
 
 type splitInput struct {
@@ -229,78 +284,94 @@ func (t *Trie) split(in splitInput) *node {
 	return t.newExtension(in.key[:c], branch)
 }
 
-func (t *Trie) Delete(key []byte) {
+type parent struct {
+	slot **node
+	pos  int
+}
+
+func (t *Trie) Unset(key []byte) error {
 	kn := keyNibbles(key)
-	parents := make([]**node, 0, len(kn)+2)
+	parents := make([]parent, 0, len(kn)+2)
+	found, err := t.findForDelete(kn, &parents)
+	if err != nil || !found {
+		return err
+	}
+	for i := range parents {
+		dirty(*parents[i].slot)
+	}
+	for i := len(parents) - 1; i >= 0; i-- {
+		if err := t.normalize(parents[i], kn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *Trie) findForDelete(kn []byte, parents *[]parent) (bool, error) {
 	slot := &t.root
 	pos := 0
-	steps := 0
-	for ; steps <= len(kn)+1; steps++ {
+	for steps := 0; steps <= len(kn)+1; steps++ {
+		if err := t.resolve(slot, kn[:pos]); err != nil {
+			return false, err
+		}
 		n := *slot
 		if n == nil {
-			return
+			return false, nil
 		}
-		if n.kind == kindLeaf {
+		switch n.kind {
+		case kindLeaf:
 			if !bytes.Equal(n.path, kn[pos:]) {
-				return
+				return false, nil
 			}
 			*slot = nil
 			t.drop()
-			break
-		}
-		if n.kind == kindExtension {
+			return true, nil
+		case kindExtension:
 			if !bytes.HasPrefix(kn[pos:], n.path) {
-				return
+				return false, nil
 			}
-			parents = append(parents, slot)
+			*parents = append(*parents, parent{slot: slot, pos: pos})
 			pos += len(n.path)
 			slot = &n.children[0]
-			continue
-		}
-		assert.Equal(n.kind, kindBranch, "trie Delete reached a sealed subtree")
-		parents = append(parents, slot)
-		if pos == len(kn) {
-			if n.value == nil {
-				return
+		case kindBranch:
+			if pos == len(kn) {
+				if n.value == nil {
+					return false, nil
+				}
+				*parents = append(*parents, parent{slot: slot, pos: pos})
+				n.value = nil
+				return true, nil
 			}
-			n.value = nil
-			break
+			*parents = append(*parents, parent{slot: slot, pos: pos})
+			slot = &n.children[kn[pos]]
+			pos++
+		case kindSealed:
+			assert.Fail("trie node still sealed after resolve")
+		default:
+			assert.Unreachable("trie node kind")
 		}
-		slot = &n.children[kn[pos]]
-		pos++
 	}
-	assert.Ok(steps <= len(kn)+1, "trie Delete walked past the key")
-	for i := 0; i < len(parents); i++ {
-		(*parents[i]).ref = nil
-	}
-	for i := len(parents) - 1; i >= 0; i-- {
-		t.normalize(parents[i])
-	}
+	assert.Fail("trie delete walked past the key")
+	return false, nil
 }
 
-func (t *Trie) normalize(slot **node) {
+func (t *Trie) normalize(p parent, kn []byte) error {
+	slot := p.slot
 	n := *slot
 	if n.kind == kindExtension {
-		child := n.children[0]
-		assert.Ok(child != nil, "extension lost its child")
-		if child.kind == kindLeaf {
-			*slot = t.newLeaf(joinPath(n.path, child.path), child.value)
+		if n.children[0] == nil {
+			*slot = nil
 			t.drop()
-			t.drop()
-			return
+			return nil
 		}
-		if child.kind == kindExtension {
-			*slot = t.newExtension(joinPath(n.path, child.path), child.children[0])
-			t.drop()
-			t.drop()
-		}
-		return
+		t.mergeExtension(slot, n)
+		return nil
 	}
 	assert.Equal(n.kind, kindBranch, "trie normalize of a leaf")
 	count := 0
 	only := -1
-	for i := 0; i < len(n.children); i++ {
-		if n.children[i] != nil {
+	for i, c := range n.children {
+		if c != nil {
 			count++
 			only = i
 		}
@@ -308,31 +379,45 @@ func (t *Trie) normalize(slot **node) {
 	if n.value != nil {
 		count++
 	}
-	assert.Ok(count >= 1, "branch emptied by one delete")
 	if count >= 2 {
-		return
+		return nil
+	}
+	if count == 0 {
+		*slot = nil
+		t.drop()
+		return nil
 	}
 	if only < 0 {
 		*slot = t.newLeaf(nil, n.value)
 		t.drop()
-		return
+		return nil
 	}
-	child := n.children[only]
-	prefix := nibblePath{byte(only)}
+	childPath := append(append([]byte(nil), kn[:p.pos]...), byte(only))
+	if err := t.resolve(&n.children[only], childPath); err != nil {
+		return err
+	}
+	ext := t.newExtension(nibblePath{byte(only)}, n.children[only])
+	t.drop()
+	*slot = ext
+	t.mergeExtension(slot, ext)
+	return nil
+}
+
+func (t *Trie) mergeExtension(slot **node, n *node) {
+	child := n.children[0]
 	switch child.kind {
 	case kindLeaf:
-		*slot = t.newLeaf(joinPath(prefix, child.path), child.value)
+		*slot = t.newLeaf(joinPath(n.path, child.path), child.value)
 		t.drop()
 		t.drop()
 	case kindExtension:
-		*slot = t.newExtension(joinPath(prefix, child.path), child.children[0])
+		*slot = t.newExtension(joinPath(n.path, child.path), child.children[0])
 		t.drop()
 		t.drop()
 	case kindBranch:
-		*slot = t.newExtension(prefix, child)
-		t.drop()
+		return
 	case kindSealed:
-		assert.Fail("trie Delete needs a sealed subtree")
+		assert.Fail("trie extension child left sealed")
 	default:
 		assert.Unreachable("trie node kind")
 	}

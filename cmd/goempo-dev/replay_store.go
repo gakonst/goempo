@@ -87,9 +87,9 @@ func (r *replayer) hashChunk(raws [][]byte, span chunkSpan, first uint64) (*type
 			return nil, fmt.Errorf("block %d: %w", number, err)
 		}
 		if number == 1 {
-			r.hashes[0] = blk.Header.Inner.ParentHash
+			r.hashes.setHash(0, blk.Header.Inner.ParentHash)
 		}
-		r.hashes[number%hashWindow] = blk.Header.Hash()
+		r.hashes.setHeader(number, &blk.Header)
 		last = &blk
 	}
 	return last, nil

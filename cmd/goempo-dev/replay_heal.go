@@ -88,7 +88,7 @@ func (r *replayer) applyTrace(blk *types.Block) error {
 	if root != h.StateRoot {
 		return errHealRoot
 	}
-	r.hashes[h.Number%hashWindow] = blk.Header.Hash()
+	r.hashes.setHeader(h.Number, &blk.Header)
 	r.head = h.Number
 	return nil
 }

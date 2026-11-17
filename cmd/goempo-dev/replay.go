@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gakonst/goempo/internal/genesis"
-	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/state"
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/executor"
@@ -56,7 +55,7 @@ func (m *mismatch) String() string {
 type replayer struct {
 	db          *state.DB
 	exec        *executor.Executor
-	hashes      [hashWindow]primitives.Hash
+	hashes      hashRing
 	head        uint64
 	dir         string
 	failed      *mismatch

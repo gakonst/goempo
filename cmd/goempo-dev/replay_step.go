@@ -15,14 +15,14 @@ func (r *replayer) getHash(n uint64) primitives.Hash {
 	if r.head+1-n > hashWindow {
 		return primitives.Hash{}
 	}
-	return r.hashes[n%hashWindow]
+	return r.hashes.at(n)
 }
 
 func (r *replayer) step(blk *types.Block) bool {
 	r.failedBlock = blk
 	h := &blk.Header.Inner
 	if h.Number == 1 {
-		r.hashes[0] = h.ParentHash
+		r.hashes.setHash(0, h.ParentHash)
 	}
 	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHash})
 	if err != nil {
@@ -43,7 +43,7 @@ func (r *replayer) step(blk *types.Block) bool {
 		r.failed = &mismatch{number: h.Number, field: "stateRoot", got: root.String(), want: h.StateRoot.String()}
 		return false
 	}
-	r.hashes[h.Number%hashWindow] = blk.Header.Hash()
+	r.hashes.setHeader(h.Number, &blk.Header)
 	r.head = h.Number
 	r.counters.add(res.GasUsed, len(blk.Transactions))
 	return true

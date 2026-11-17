@@ -45,6 +45,7 @@ type followOptions struct {
 	last      uint64
 	steps     uint64
 	batch     int
+	certify   bool
 }
 
 func runFollow(args []string) int {
@@ -57,6 +58,7 @@ func runFollow(args []string) int {
 	fs.Uint64Var(&o.last, "last", 1000, "start this many blocks below the tip")
 	fs.Uint64Var(&o.steps, "steps", 0, "stop after this many follower steps once the tip is reached (0: follow forever)")
 	fs.IntVar(&o.batch, "batch", followBatch, "blocks per request")
+	fs.BoolVar(&o.certify, "certify", true, "verify every block's finalization certificate (consensus_getFinalization from the upstream)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -74,12 +76,18 @@ type checker struct {
 	pending []sync.Link
 	checked uint64
 	txs     int
+	cert    *followCertifier
 }
 
 func (c *checker) Execute(block *types.Block) error {
 	c.head = sync.Link{Number: block.Header.Inner.Number, Hash: block.Hash()}
 	c.txs += len(block.Transactions)
 	c.pending = append(c.pending, c.head)
+	if c.cert != nil {
+		if err := c.cert.add(block); err != nil {
+			return err
+		}
+	}
 	if len(c.pending) >= followCheckBatch {
 		return c.flush()
 	}
@@ -89,6 +97,11 @@ func (c *checker) Execute(block *types.Block) error {
 func (c *checker) Head() sync.Link { return c.head }
 
 func (c *checker) flush() error {
+	if c.cert != nil {
+		if err := c.cert.flush(); err != nil {
+			return err
+		}
+	}
 	if len(c.pending) == 0 {
 		return nil
 	}
@@ -258,6 +271,12 @@ func follow(o followOptions) error {
 		}
 	}
 	exec := &checker{head: a.link, rpc: check}
+	if o.certify {
+		if exec.cert, err = newFollowCertifier(rawFetcher{rpc: newRPCClient(o.upstream)}, a.link.Number+1); err != nil {
+			return err
+		}
+		fmt.Printf("consensus anchor: %s\n", exec.cert.anchor)
+	}
 	follower := sync.NewFollower(source, exec, o.batch)
 	started := time.Now()
 	idle := uint64(0)
@@ -284,6 +303,10 @@ func follow(o followOptions) error {
 			reached = true
 			fmt.Printf("reached tip %d: %d blocks, %d transactions, %d hashes checked against %s in %s\n",
 				p.Head.Number, p.Head.Number-a.link.Number, exec.txs, exec.checked, o.check, time.Since(started).Round(time.Millisecond))
+			if exec.cert != nil {
+				fmt.Printf("finalization certificates: %d verified, %d certified through a descendant, %d awaiting a certificate, %d epoch transitions\n",
+					exec.cert.verified, exec.cert.linked, len(exec.cert.pending), exec.cert.transitions)
+			}
 			fmt.Println("R4 PASS")
 		}
 		time.Sleep(followIdle)

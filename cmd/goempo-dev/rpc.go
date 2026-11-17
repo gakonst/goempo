@@ -15,8 +15,9 @@ const (
 	rpcTimeout       = 60 * time.Second
 	rpcResponseMax   = 1 << 28
 	rpcBatchMax      = 50
-	rpcRetries       = 4
+	rpcRetries       = 12
 	rpcRetryBackoff  = 2 * time.Second
+	rpcBackoffMax    = 60 * time.Second
 	mainnetRPC       = "https://rpc.tempo.xyz"
 	rpcUserAgent     = "goempo-dev/0"
 	jsonRPCVersion   = "2.0"
@@ -28,6 +29,8 @@ const (
 )
 
 const blockJSONMax = 1 << 22
+
+const _ = uint(rpcTimeout - rpcBackoffMax)
 
 const _ = uint(rpcResponseMax - rpcBatchMax*blockJSONMax)
 
@@ -69,7 +72,7 @@ func (c *rpcClient) batch(reqs []rpcRequest) ([]json.RawMessage, error) {
 			return out, nil
 		}
 		lastErr = err
-		time.Sleep(rpcRetryBackoff * time.Duration(attempt+1))
+		time.Sleep(min(rpcRetryBackoff<<attempt, rpcBackoffMax))
 	}
 	return nil, lastErr
 }

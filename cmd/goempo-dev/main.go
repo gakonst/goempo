@@ -19,6 +19,8 @@ func main() {
 		os.Exit(runGenesis(os.Args[2:]))
 	case "fetch":
 		os.Exit(runFetch(os.Args[2:]))
+	case "fetch-range":
+		os.Exit(runFetchRange(os.Args[2:]))
 	case "score":
 		os.Exit(runScore(os.Args[2:]))
 	}

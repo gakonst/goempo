@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
@@ -188,9 +189,10 @@ func appendRawBlocks(out *bytes.Buffer, results []json.RawMessage) error {
 	return nil
 }
 
-// chunkArenas is how many chunks' buffers replay keeps: one executing, one
-// prefetching and one spare, so a prefetch never waits on the executor.
-const chunkArenas = 3
+const (
+	chunkPrefetchDepth = 4
+	chunkArenas        = chunkPrefetchDepth + 1
+)
 
 // chunkArena holds one chunk's file bytes, its decompressed blocks and their
 // decoded form. Decoded blocks alias plain and the decoders' slabs, so an
@@ -370,32 +372,51 @@ func (p *chunkPrefetch) Wait() {
 	p.wg.Wait()
 }
 
+func waitPrefetches(ring *[chunkPrefetchDepth]*chunkPrefetch) {
+	for _, p := range ring {
+		if p != nil {
+			p.Wait()
+		}
+	}
+}
+
 const decodeWorkersMax = 64
 
 // sendersSlabMin is the smallest sender slab a decode worker allocates.
 const sendersSlabMin = 1 << 10
 
+// decodeBatch is how many consecutive blocks a decode worker claims at once.
+const decodeBatch = 64
+
 const _ = uint(chunkBlocks - decodeWorkersMax)
 
+const _ = uint(chunkBlocks - decodeBatch)
+
 // decodeChunk decodes a.raws into a.blocks in place, one decoder and sender
-// slab per worker.
+// slab per worker. Workers claim batches of blocks from a shared cursor, so
+// a worker that draws heavy blocks does not hold up the chunk.
 func (a *chunkArena) decodeChunk() {
 	n := len(a.raws)
 	a.blocks = a.blocks[:n]
 	workers := len(a.decoders)
 	assert.Ok(workers >= 1, "a chunk arena has decoders")
-	per := (n + workers - 1) / workers
+	batches := (n + decodeBatch - 1) / decodeBatch
+	var cursor atomic.Int64
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
-		part := a.blocks[min(w*per, n):min((w+1)*per, n)]
-		in := a.raws[min(w*per, n):min((w+1)*per, n)]
 		d := &a.decoders[w]
 		senders := &a.senders[w]
 		wg.Go(func() {
 			d.Reset()
 			*senders = (*senders)[:0]
-			for i := range in {
-				part[i] = decodeBlock(d, senders, in[i])
+			for range batches {
+				lo := int(cursor.Add(decodeBatch)) - decodeBatch
+				if lo >= n {
+					return
+				}
+				for i := lo; i < min(lo+decodeBatch, n); i++ {
+					a.blocks[i] = decodeBlock(d, senders, a.raws[i])
+				}
 			}
 		})
 	}

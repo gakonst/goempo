@@ -18,6 +18,7 @@ import (
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
@@ -240,20 +241,28 @@ func (r *replayer) run(to uint64) error {
 		return nil
 	}
 	pool := newChunkPool()
-	next := prefetchChunk(r.ctx, pool, r.dir, first*chunkBlocks)
-	defer func() { next.Wait() }()
+	var ring [chunkPrefetchDepth]*chunkPrefetch
+	for k := range uint64(chunkPrefetchDepth) {
+		if first+k < chunks {
+			ring[k] = prefetchChunk(r.ctx, pool, r.dir, (first+k)*chunkBlocks)
+		}
+	}
+	defer waitPrefetches(&ring)
 	defer r.settle()
 	for i := first; i < chunks; i++ {
 		start := i * chunkBlocks
-		got := next.take(r.ctx)
+		slot := &ring[(i-first)%chunkPrefetchDepth]
+		assert.Ok(*slot != nil, "every chunk replay reaches was prefetched")
+		got := (*slot).take(r.ctx)
 		if stopRequested(r.ctx) {
 			r.stopped = true
 			fmt.Fprintf(os.Stderr, "replay: stopped after block %d\n", r.head)
 			return nil
 		}
-		next.Wait()
-		if i+1 < chunks {
-			next = prefetchChunk(r.ctx, pool, r.dir, start+chunkBlocks)
+		(*slot).Wait()
+		*slot = nil
+		if i+chunkPrefetchDepth < chunks {
+			*slot = prefetchChunk(r.ctx, pool, r.dir, start+chunkPrefetchDepth*chunkBlocks)
 		}
 		blocks, err := got.blocks, got.err
 		if errors.Is(err, os.ErrNotExist) {

@@ -435,6 +435,17 @@ func (c *Context) caUpgrade(threshold uint8, owners []caOwner) ([]byte, error) {
 	return encodeWords(h), nil
 }
 
+func (c *Context) accountCodeInvalid(addr Address) bool {
+	codeHash := c.State.CodeHash(addr)
+	if codeHash == (Hash{}) {
+		codeHash = emptyCodeHash
+	}
+	if c.commitmentOf(addr) == (Hash{}) {
+		return codeHash != emptyCodeHash
+	}
+	return codeHash != configurableCodeHash
+}
+
 func (c *Context) isRetiredRootT14(owner Address) (bool, error) {
 	h, err := c.configCommitment(owner)
 	return h != (Hash{}), err

@@ -105,11 +105,27 @@ func (c *Context) checkGrant(g KeyGrant) error {
 	if err := c.ensureAdminCaller(g.Account); err != nil {
 		return err
 	}
+	t14 := c.at(hardfork.T14)
+	if t14 && c.commitmentOf(g.Account) != (Hash{}) && c.accountCodeInvalid(g.Account) {
+		return errSel("InvalidKeyId()")
+	}
 	if g.KeyID == (Address{}) {
 		return errSel("ZeroPublicKey()")
 	}
-	if g.Admin && g.KeyID == g.Account {
+	delegate := t14 && g.SigType == SigConfigurableAccount
+	if (g.Admin || delegate) && g.KeyID == g.Account {
 		return errSel("InvalidKeyId()")
+	}
+	if delegate {
+		if !ValidConfigurableAccount(g.KeyID, c.Fork) {
+			return errSel("InvalidKeyId()")
+		}
+		if err := c.loadAccountGas(g.KeyID); err != nil {
+			return err
+		}
+		if c.accountCodeInvalid(g.KeyID) {
+			return errSel("InvalidKeyId()")
+		}
 	}
 	if g.Restrictions.Expiry <= c.timestamp() {
 		return errSel("ExpiryInPast()")
@@ -123,6 +139,15 @@ func (c *Context) checkGrant(g KeyGrant) error {
 	}
 	if existing.revoked {
 		return errSel("KeyAlreadyRevoked()")
+	}
+	if t14 && !delegate {
+		retired, err := c.isRetiredRootT14(g.KeyID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return errSel("InvalidSignatureType()")
+		}
 	}
 	if g.SigType > SigConfigurableAccount {
 		return errSel("InvalidSignatureType()")

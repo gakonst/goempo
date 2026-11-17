@@ -473,6 +473,13 @@ func (t Token) permit(a []abiValue) error {
 	if !ok || wordAddress(Hash(out)) != owner {
 		return errSel("InvalidSignature()")
 	}
+	retired, err := t.c.isRetiredRoot(owner)
+	if err != nil {
+		return err
+	}
+	if retired {
+		return revert(abiError(selector("RootKeyRetired(address)"), addressWord(owner)))
+	}
 	next, err := num(nonce).add(u256.One())
 	if err != nil {
 		return err

@@ -189,3 +189,10 @@ one full epoch boundary (about 3.2 h) with every block's state root matching.
   dealers) and 199 to 308 per pair of "serve send failed", tempo dropping
   marshal replies over its 8 per second per-peer quota during goempo backfill
   bursts; fixed in 3454772 (4 requests per peer per 500 ms).
+- 2026-11-17 22:17 UTC, goempo 3454772 (marshal request budget), r6e 900:
+  passed. Quorum window 405 to 499, soak 500 to 3117 in 902 s, 0 forks, 0
+  stalls, 51 of 51 epochs with both goempo dealer logs, 0 ceremony failures.
+  "serve send failed" naming goempo: 1 on slot 0 and 32 on slot 1, 32 of them
+  in one second while slot 0 was stopped for the quorum test. The only other
+  WARNs naming goempo were slot 0's own execution layer reporting SYNCING
+  while it caught up after that stop (goempo appears as the proposer).

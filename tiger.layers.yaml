@@ -1,0 +1,11 @@
+"./cmd/tempo":
+  - os
+  - ./internal/version
+"./cmd/goempo-dev":
+  - os
+  - net
+  - ./internal/version
+"./internal/version": []
+"./internal/io/...":
+  - os
+  - crypto/rand

@@ -5,3 +5,5 @@ mainnet-12964402.blk: mainnet block 12,964,402 (T2), same source and format. Its
 mainnet-12964402-tx0-prestate.json: debug_traceTransaction prestateTracer result for that tx (0x4eb14452...6925) on a mainnet RPC node.
 mainnet-16986086.blk: mainnet block 16,986,086 (T3), same source and format. Its tx 0 is a keychain-signed 0x76 tx; the T3 call-scope check reads the key's is_scoped slot cold (gasUsed 59,274).
 mainnet-16986086-tx0-prestate.json: prestateTracer result for that tx (0x59d8f1cb...94e3) on a mainnet RPC node.
+mainnet-18337286.blk: mainnet block 18,337,286 (T3), same source and format. Its tx 0 is a 0x76 CREATE under the expiring nonce key from a sender whose account nonce is 0 (pays new-account gas, gasUsed 959,243).
+mainnet-18337286-tx0-prestate.json: prestateTracer result for that tx (0xd853dfa8...bbed) on a mainnet RPC node.

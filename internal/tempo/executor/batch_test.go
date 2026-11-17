@@ -88,3 +88,17 @@ func TestKeychainTxChecksCallScopesFromT3(t *testing.T) {
 	assert.Ok(out.Success, "succeeds")
 	assert.Equal(out.GasUsed, uint64(59_274), "the call scope check reads the key's scoped flag")
 }
+
+func TestTwoDimensionalNonceCreateFromFreshSenderPaysNewAccount(t *testing.T) {
+	blocks := readBlocks(t, "testdata/mainnet-18337286.blk")
+	assert.Equal(len(blocks), 1, "one block")
+	tx := &blocks[0].Transactions[0]
+	sender, err := tx.Sender()
+	assert.NoError(err, "sender")
+	st := loadPrestate(t, "testdata/mainnet-18337286-tx0-prestate.json")
+	x := &executor.Executor{ChainID: hardfork.MainnetChainID}
+	out, err := x.ApplyCall(st, &blocks[0], tx, executor.Simulation{Sender: sender})
+	assert.NoError(err, "apply")
+	assert.Ok(out.Success, "succeeds")
+	assert.Equal(out.GasUsed, uint64(959_243), "a CREATE under a 2D nonce from a sender with nonce 0 pays new-account gas")
+}

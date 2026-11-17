@@ -130,10 +130,25 @@ func (r *txRun) validate() error {
 	}
 	r.price = v.effectiveGasPrice(baseFee)
 	r.need = intrinsic(v, rules)
+	r.need.gas += r.createAccountGas()
 	if v.gasLimit < max(r.need.gas, r.need.floor) {
 		return ErrIntrinsic
 	}
 	return nil
+}
+
+func (r *txRun) createAccountGas() uint64 {
+	v := &r.view
+	if !v.isAA() || v.nonceKey.IsZero() || len(v.calls) == 0 || v.calls[0].to != nil {
+		return 0
+	}
+	if r.env.State.Nonce(v.sender) != 0 {
+		return 0
+	}
+	if r.env.Rules.AtLeast(hardfork.T1) {
+		return r.env.Rules.NewAccountNonceGas()
+	}
+	return newAccountGasPreT1
 }
 
 func (r *txRun) protocolContext() *precompiles.Context {

@@ -15,6 +15,7 @@ const (
 	accessListSlotGas    = 1_900
 	initCodeWordGas      = 2
 	coldAccountGas       = 2_600
+	newAccountGasPreT1   = 25_000
 	p256VerifyGas        = 5_000
 	keychainGas          = 3_000
 	expiringNonceGas     = 13_000

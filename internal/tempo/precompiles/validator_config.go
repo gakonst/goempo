@@ -188,7 +188,15 @@ func (c *Context) addValidator(sender Address, r validatorRecord) error {
 	if err := c.writeValidator(r.address, r); err != nil {
 		return err
 	}
-	if err := c.sstore(ValidatorConfigAddress, c.validatorArraySlot(n), toWord(addressWord(r.address))); err != nil {
+	return c.pushValidator(r.address)
+}
+
+func (c *Context) pushValidator(v Address) error {
+	n, err := c.validatorCount()
+	if err != nil {
+		return err
+	}
+	if err := c.sstore(ValidatorConfigAddress, c.validatorArraySlot(n), toWord(addressWord(v))); err != nil {
 		return err
 	}
 	return c.sstore(ValidatorConfigAddress, slotVCArray, u256.FromUint64(n+1))

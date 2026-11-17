@@ -3,6 +3,7 @@ package precompiles_test
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -212,6 +213,10 @@ func replay(t *testing.T, path string) {
 		}
 		if !call.TopLevel {
 			assert.Equal(c.GasUsed(), call.GasUsed, "call gas used "+call.To)
+		} else {
+			total := int64(c.GasUsed() + topLevelIntrinsic(call.Input))
+			got := total - min(max(c.Refund(), 0), total/5)
+			assert.Ok(handlerOnlyGasDelta(got-int64(call.GasUsed)), fmt.Sprintf("top-level gas used %s delta %d", call.To, got-int64(call.GasUsed)))
 		}
 	}
 	settlement := precompiles.FeeSettlement{FeePayer: mustAddr(fx.FeePayer), Actual: actual, Refund: maxFee.Sub(actual), FeeToken: mustAddr(fx.FeeToken), Beneficiary: mustAddr(fx.Coinbase)}
@@ -311,4 +316,25 @@ func applyKeyAuth(run replayRun, h *precompiles.Context, fx replayFixture) {
 	}
 	flow := precompiles.TokenFlow{Account: mustAddr(fx.FeePayer), Token: mustAddr(fx.FeeToken), Amount: maxFee}
 	assert.NoError(precompiles.AuthorizeTransfer(h, flow), "authorize fee transfer")
+}
+
+func topLevelIntrinsic(input string) uint64 {
+	gas := uint64(21_000)
+	for _, b := range mustBytes(input) {
+		if b == 0 {
+			gas += 4
+		} else {
+			gas += 16
+		}
+	}
+	return gas
+}
+
+func handlerOnlyGasDelta(d int64) bool {
+	for _, allowed := range []int64{0, 245_000, -245_000, 250_000, -250_000} {
+		if d == allowed {
+			return true
+		}
+	}
+	return false
 }

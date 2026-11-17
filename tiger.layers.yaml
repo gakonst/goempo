@@ -42,6 +42,7 @@
 "./internal/crypto/p256": []
 "./internal/evm":
   - golang.org/x/crypto/ripemd160
+  - ./internal/crypto/kzg
   - ./internal/crypto/bls12381
   - ./internal/crypto/blake2f
   - ./internal/crypto/bn254

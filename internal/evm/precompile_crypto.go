@@ -7,6 +7,7 @@ import (
 	"github.com/gakonst/goempo/internal/crypto/blake2f"
 	"github.com/gakonst/goempo/internal/crypto/bls12381"
 	"github.com/gakonst/goempo/internal/crypto/bn254"
+	"github.com/gakonst/goempo/internal/crypto/kzg"
 	"github.com/gakonst/goempo/internal/crypto/p256"
 	"github.com/gakonst/goempo/internal/crypto/secp256k1"
 	"golang.org/x/crypto/ripemd160"
@@ -50,14 +51,6 @@ func (w pricedPrecompile) Run(call *PrecompileCall) PrecompileResult {
 	return w.p.execute(call)
 }
 
-type CryptoBackend struct {
-	Blake2F        ComputeFunc
-	PointEval      ComputeFunc
-	ModExpOverride ComputeFunc
-}
-
-var Backend CryptoBackend
-
 func constGas(g uint64) func([]byte) uint64 {
 	return func(_ []byte) uint64 { return g }
 }
@@ -80,17 +73,13 @@ func addCryptoPrecompiles(s *PrecompileSet, fork Fork) {
 	s.Set(PrecompileAddress(0x03), NewPriced(Priced{Gas: linearGas(linearCost{base: 600, word: 120}), Run: ripemdSum}))
 	s.Set(PrecompileAddress(0x04), NewPriced(Priced{Gas: linearGas(linearCost{base: 15, word: 3}), Run: identity}))
 	modexp := modexpPricing{osaka: fork >= Osaka, eip198: fork < Berlin}
-	modexpRun := ComputeFunc(modexpBig)
-	if Backend.ModExpOverride != nil {
-		modexpRun = Backend.ModExpOverride
-	}
-	s.Set(PrecompileAddress(0x05), NewPriced(Priced{Gas: modexp.gas, Valid: modexp.valid, Run: modexpRun}))
+	s.Set(PrecompileAddress(0x05), NewPriced(Priced{Gas: modexp.gas, Valid: modexp.valid, Run: modexpBig}))
 	s.Set(PrecompileAddress(0x06), NewPriced(Priced{Gas: constGas(bn254.AddGas), Run: bnAdd}))
 	s.Set(PrecompileAddress(0x07), NewPriced(Priced{Gas: constGas(bn254.MulGas), Run: bnMul}))
 	s.Set(PrecompileAddress(0x08), NewPriced(Priced{Gas: bnPairingGas, Valid: bnPairingValid, Run: bnPairing}))
 	s.Set(PrecompileAddress(0x09), NewPriced(Priced{Gas: blake2fGas, Valid: blake2fValid, Run: blake2fCompress}))
 	if fork >= Cancun {
-		s.Set(PrecompileAddress(0x0a), NewPriced(Priced{Gas: constGas(pointEvalGas), Valid: exactLength(pointEvalInput), Run: Backend.PointEval}))
+		s.Set(PrecompileAddress(0x0a), NewPriced(Priced{Gas: constGas(pointEvalGas), Valid: exactLength(pointEvalInput), Run: pointEvaluation}))
 	}
 	if fork >= Prague {
 		addBLS(s)
@@ -203,6 +192,11 @@ func blsMapG1(input []byte) ([]byte, bool) {
 
 func blsMapG2(input []byte) ([]byte, bool) {
 	out, err := bls12381.MapFp2ToG2(input)
+	return out[:], err == nil
+}
+
+func pointEvaluation(input []byte) ([]byte, bool) {
+	out, err := kzg.PointEvaluation(input)
 	return out[:], err == nil
 }
 

@@ -228,6 +228,26 @@ func (f *fuzzer) reopen(mode reopenMode) {
 		f.t.Fatalf("reopened head %+v want %+v", f.db.Head(), head)
 	}
 	f.checkAccounts()
+	f.checkRebuild()
+}
+
+func (f *fuzzer) checkRebuild() {
+	f.t.Helper()
+	root, err := f.db.RebuildRoot()
+	must(f.t, err)
+	if root != f.db.Head().Root {
+		f.t.Fatalf("flat index rebuilds root %s, head %+v", root, f.db.Head())
+	}
+}
+
+func (f *fuzzer) crashUnflushed(roots map[uint64]primitives.Hash) {
+	f.fs.Crash()
+	f.db = openDB(f.t, f.fs, f.opts)
+	head := f.db.Head()
+	if head.Root != roots[head.Number] {
+		f.t.Fatalf("crash left head %+v, block %d had root %s", head, head.Number, roots[head.Number])
+	}
+	f.checkRebuild()
 }
 
 func storageRoot(slots map[primitives.Hash]u256.Int) primitives.Hash {
@@ -280,6 +300,21 @@ func runFuzz(t *testing.T, seed uint64, opts state.Options, blocks int) {
 		}
 	}
 	must(t, f.db.Close())
+}
+
+func TestCrashWithoutFlushKeepsABlock(t *testing.T) {
+	opts := state.Options{MemtableBytes: 2 << 10}
+	for seed := uint64(200); seed <= 230; seed++ {
+		f := newFuzzer(t, seed, opts)
+		roots := map[uint64]primitives.Hash{0: f.db.Head().Root}
+		blocks := 5 + f.rng.IntN(40)
+		for n := 1; n <= blocks; n++ {
+			f.block(uint64(n))
+			roots[uint64(n)] = f.db.Head().Root
+		}
+		f.crashUnflushed(roots)
+		must(t, f.db.Close())
+	}
 }
 
 func TestRandomBlocksMatchRebuiltTrie(t *testing.T) {

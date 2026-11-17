@@ -64,9 +64,9 @@ func (o *object) setChanged(key Hash, v u256.Int) {
 	o.changed[key] = struct{}{}
 }
 
-func (o *object) foldDirty() {
+func (o *object) foldDirty() int {
 	if len(o.dirty) == 0 {
-		return
+		return 0
 	}
 	if o.committed == nil {
 		o.committed = make(map[Hash]u256.Int, len(o.dirty))
@@ -74,11 +74,13 @@ func (o *object) foldDirty() {
 	if o.changed == nil {
 		o.changed = make(map[Hash]struct{}, len(o.dirty))
 	}
+	before := len(o.committed)
 	for k, v := range o.dirty {
 		o.committed[k] = v
 		o.changed[k] = struct{}{}
 	}
 	clear(o.dirty)
+	return len(o.committed) - before
 }
 
 func (o *object) setDirty(key Hash, v u256.Int) {
@@ -488,7 +490,7 @@ func (s *State) FinalizeTx() {
 		if s.accounts[o.addr] != o {
 			continue
 		}
-		o.foldDirty()
+		s.cachedSlots += o.foldDirty()
 	}
 	s.resetTx()
 }

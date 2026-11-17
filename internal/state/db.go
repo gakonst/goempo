@@ -161,6 +161,7 @@ func (s *State) loadGenesisAccount(a *genesis.Account) {
 	o.codeDirty = true
 	for _, slot := range a.Storage {
 		o.setChanged(slot.Key, u256.FromBytes32(slot.Value))
+		s.cachedSlots++
 	}
 	s.blockDirty[a.Address] = struct{}{}
 }

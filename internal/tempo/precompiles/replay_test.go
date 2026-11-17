@@ -82,6 +82,7 @@ type replayFixture struct {
 	MaxFee       string                       `json:"maxFee"`
 	ActualFee    string                       `json:"actualFee"`
 	ExpiringHash string                       `json:"expiringHash"`
+	OpenContext  string                       `json:"openContext"`
 	ValidBefore  uint64                       `json:"validBefore"`
 	Calls        []replayCall                 `json:"calls"`
 	Pre          map[string]replayAccount     `json:"pre"`
@@ -183,6 +184,9 @@ func replay(t *testing.T, path string) {
 	}
 	if fx.ExpiringHash != "" {
 		assert.NoError(precompiles.CheckAndMarkExpiringNonce(h, mustHash(fx.ExpiringHash), fx.ValidBefore), "expiring nonce")
+	}
+	if fx.OpenContext != "" {
+		precompiles.SetChannelOpenContext(h, mustHash(fx.OpenContext))
 	}
 	for _, call := range fx.Calls {
 		gas := call.Gas

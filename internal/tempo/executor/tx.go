@@ -190,6 +190,7 @@ func (r *txRun) chargeFee() error {
 	r.set.Env.FeeToken = token
 	r.set.Env.NonCreditable = nil
 	precompiles.SetTxOrigin(r.ctx, r.view.sender)
+	precompiles.SetChannelOpenContext(r.ctx, r.env.Tx.UniqueID(r.view.sender))
 	if err := r.useAccessKey(); err != nil {
 		return err
 	}

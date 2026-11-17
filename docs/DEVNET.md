@@ -118,3 +118,11 @@ one full epoch boundary (about 3.2 h) with every block's state root matching.
   (0x0000F90827F1C53a10cb7A02335B175320002935) slot 0 set to the genesis hash,
   the Prague pre-block system call. Rust slots kept finalizing without it.
   Sent to the validator agent with the raw blocks.
+- 2026-11-17 18:47 UTC, same binary with a T13 genesis (the default now; the
+  first genesis activated T14 and T15, which goempo does not implement yet):
+  R6e with goempo in 1 of 4 slots passed. Quorum window 431 to 565 with Rust
+  slot 0 down; 1 hour soak 565 to 9703 with 0 forks, 0 stalls, 152 of 152
+  DKG outcomes, 2328 goempo blocks finalized by the Rust validators, goempo's
+  dealer log on chain in 162 of 162 epochs, 0 Rust ceremony failures, 0 WARNs
+  naming goempo. One host-load spike (load average 106 on 32 cores from other
+  builds) slowed blocks for a minute without a stall.

@@ -21,20 +21,22 @@ const (
 
 const _ = uint(blsG2MulPair - blsG1MulPair)
 
-func saturatingMul(a uint64, b uint64) uint64 {
-	hi, lo := bits.Mul64(a, b)
+type sat uint64
+
+func (a sat) mul(b sat) sat {
+	hi, lo := bits.Mul64(uint64(a), uint64(b))
 	if hi != 0 {
-		return ^uint64(0)
+		return sat(^uint64(0))
 	}
-	return lo
+	return sat(lo)
 }
 
-func saturatingAdd(a uint64, b uint64) uint64 {
-	sum, carry := bits.Add64(a, b, 0)
+func (a sat) add(b sat) sat {
+	sum, carry := bits.Add64(uint64(a), uint64(b), 0)
 	if carry != 0 {
-		return ^uint64(0)
+		return sat(^uint64(0))
 	}
-	return sum
+	return sat(sum)
 }
 
 func paddedSlice(input []byte, span memRange) []byte {
@@ -70,7 +72,7 @@ func readModexpHeader(input []byte) modexpHeader {
 }
 
 func (h modexpHeader) expHead(input []byte) []byte {
-	offset := saturatingAdd(3*modexpLengthWord, h.baseLen)
+	offset := uint64(sat(3 * modexpLengthWord).add(sat(h.baseLen)))
 	return paddedSlice(input, memRange{offset: offset, size: min(h.expLen, modexpLengthWord)})
 }
 
@@ -87,45 +89,56 @@ type modexpPricing struct {
 	osaka bool
 }
 
+func (h modexpHeader) oversized() bool {
+	return h.baseLen > modexpOsakaLimit || h.expLen > modexpOsakaLimit || h.modLen > modexpOsakaLimit
+}
+
 func (p modexpPricing) gas(input []byte) uint64 {
 	h := readModexpHeader(input)
-	if p.osaka && (h.baseLen > modexpOsakaLimit || h.expLen > modexpOsakaLimit || h.modLen > modexpOsakaLimit) {
-		return ^uint64(0)
+	if p.osaka {
+		if h.oversized() {
+			return ^uint64(0)
+		}
 	}
 	maxLen := max(h.baseLen, h.modLen)
-	words := saturatingAdd(maxLen, 7) / 8
-	complexity := saturatingMul(words, words)
+	words := sat(maxLen).add(7) / 8
+	complexity := words.mul(words)
 	if p.osaka {
 		complexity = 16
 		if maxLen > modexpLengthWord {
-			complexity = saturatingMul(saturatingMul(2, words), words)
+			complexity = sat(2).mul(words).mul(words)
 		}
 	}
 	headBits := bitLen(h.expHead(input))
-	iterations := uint64(0)
-	multiplier := uint64(8)
+	iterations := sat(0)
+	multiplier := sat(8)
 	if p.osaka {
 		multiplier = 16
 	}
 	if h.expLen > modexpLengthWord {
-		iterations = saturatingMul(multiplier, h.expLen-modexpLengthWord)
+		iterations = multiplier.mul(sat(h.expLen - modexpLengthWord))
 	}
 	if headBits > 0 {
-		iterations = saturatingAdd(iterations, headBits-1)
+		iterations = iterations.add(sat(headBits - 1))
 	}
 	iterations = max(iterations, 1)
 	if p.osaka {
-		return max(500, saturatingMul(complexity, iterations))
+		return uint64(max(500, complexity.mul(iterations)))
 	}
-	return max(200, saturatingMul(complexity, iterations)/3)
+	return uint64(max(200, complexity.mul(iterations)/3))
 }
 
 func (p modexpPricing) valid(input []byte) bool {
 	if !p.osaka {
 		return true
 	}
-	h := readModexpHeader(input)
-	return h.baseLen <= modexpOsakaLimit && h.expLen <= modexpOsakaLimit && h.modLen <= modexpOsakaLimit
+	return !readModexpHeader(input).oversized()
+}
+
+type modexpOperandSet struct {
+	base []byte
+	exp  []byte
+	mod  []byte
 }
 
 func modexpOperands(input []byte) (modexpOperandSet, bool) {
@@ -137,12 +150,6 @@ func modexpOperands(input []byte) (modexpOperandSet, bool) {
 	exp := paddedSlice(input, memRange{offset: 3*modexpLengthWord + h.baseLen, size: h.expLen})
 	mod := paddedSlice(input, memRange{offset: 3*modexpLengthWord + h.baseLen + h.expLen, size: h.modLen})
 	return modexpOperandSet{base: base, exp: exp, mod: mod}, true
-}
-
-type modexpOperandSet struct {
-	base []byte
-	exp  []byte
-	mod  []byte
 }
 
 var blsG1Discounts = [blsDiscountsCount]uint64{

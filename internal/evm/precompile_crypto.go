@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"math/big"
 
+	"github.com/gakonst/goempo/internal/crypto/bn254"
 	"github.com/gakonst/goempo/internal/crypto/p256"
 	"github.com/gakonst/goempo/internal/crypto/secp256k1"
 	"golang.org/x/crypto/ripemd160"
@@ -15,6 +16,10 @@ type Priced struct {
 	Gas   func(input []byte) uint64
 	Valid func(input []byte) bool
 	Run   ComputeFunc
+}
+
+func NewPriced(p Priced) Precompile {
+	return pricedPrecompile{p: p}
 }
 
 func (p Priced) execute(call *PrecompileCall) PrecompileResult {
@@ -43,24 +48,17 @@ func (w pricedPrecompile) Run(call *PrecompileCall) PrecompileResult {
 	return w.p.execute(call)
 }
 
-func NewPriced(p Priced) Precompile {
-	return pricedPrecompile{p: p}
-}
-
 type CryptoBackend struct {
-	BN254Add       ComputeFunc
-	BN254Mul       ComputeFunc
-	BN254Pairing   ComputeFunc
-	Blake2F        ComputeFunc
-	PointEval      ComputeFunc
-	BLSG1Add       ComputeFunc
-	BLSG1MSM       ComputeFunc
-	BLSG2Add       ComputeFunc
-	BLSG2MSM       ComputeFunc
-	BLSPairing     ComputeFunc
-	BLSMapFpToG1   ComputeFunc
-	BLSMapFp2ToG2  ComputeFunc
-	ModExpOverride ComputeFunc
+	Blake2F         ComputeFunc
+	PointEval       ComputeFunc
+	BLSG1Add        ComputeFunc
+	BLSG1MSM        ComputeFunc
+	BLSG2Add        ComputeFunc
+	BLSG2MSM        ComputeFunc
+	BLSPairingCheck ComputeFunc
+	BLSMapFpToG1    ComputeFunc
+	BLSMapFp2ToG2   ComputeFunc
+	ModExpOverride  ComputeFunc
 }
 
 var Backend CryptoBackend
@@ -92,9 +90,9 @@ func addCryptoPrecompiles(s *PrecompileSet, fork Fork) {
 		modexpRun = Backend.ModExpOverride
 	}
 	s.Set(PrecompileAddress(0x05), NewPriced(Priced{Gas: modexp.gas, Valid: modexp.valid, Run: modexpRun}))
-	s.Set(PrecompileAddress(0x06), NewPriced(Priced{Gas: constGas(150), Run: Backend.BN254Add}))
-	s.Set(PrecompileAddress(0x07), NewPriced(Priced{Gas: constGas(6000), Run: Backend.BN254Mul}))
-	s.Set(PrecompileAddress(0x08), NewPriced(Priced{Gas: bnPairingGas, Valid: bnPairingValid, Run: Backend.BN254Pairing}))
+	s.Set(PrecompileAddress(0x06), NewPriced(Priced{Gas: constGas(bn254.AddGas), Run: bnAdd}))
+	s.Set(PrecompileAddress(0x07), NewPriced(Priced{Gas: constGas(bn254.MulGas), Run: bnMul}))
+	s.Set(PrecompileAddress(0x08), NewPriced(Priced{Gas: bnPairingGas, Valid: bnPairingValid, Run: bnPairing}))
 	s.Set(PrecompileAddress(0x09), NewPriced(Priced{Gas: blake2fGas, Valid: blake2fValid, Run: Backend.Blake2F}))
 	if fork >= Cancun {
 		s.Set(PrecompileAddress(0x0a), NewPriced(Priced{Gas: constGas(pointEvalGas), Valid: exactLength(pointEvalInput), Run: Backend.PointEval}))
@@ -114,13 +112,41 @@ func addBLS(s *PrecompileSet) {
 	s.Set(PrecompileAddress(0x0c), NewPriced(Priced{Gas: g1.gas, Valid: multipleOf(blsG1MulPair), Run: Backend.BLSG1MSM}))
 	s.Set(PrecompileAddress(0x0d), NewPriced(Priced{Gas: constGas(600), Valid: exactLength(blsG2AddInput), Run: Backend.BLSG2Add}))
 	s.Set(PrecompileAddress(0x0e), NewPriced(Priced{Gas: g2.gas, Valid: multipleOf(blsG2MulPair), Run: Backend.BLSG2MSM}))
-	s.Set(PrecompileAddress(0x0f), NewPriced(Priced{Gas: blsPairingGas, Valid: multipleOf(blsPairingPair), Run: Backend.BLSPairing}))
+	s.Set(PrecompileAddress(0x0f), NewPriced(Priced{Gas: blsPairingGas, Valid: multipleOf(blsPairingPair), Run: Backend.BLSPairingCheck}))
 	s.Set(PrecompileAddress(0x10), NewPriced(Priced{Gas: constGas(5500), Valid: exactLength(blsMapFpInput), Run: Backend.BLSMapFpToG1}))
 	s.Set(PrecompileAddress(0x11), NewPriced(Priced{Gas: constGas(23800), Valid: exactLength(blsMapFp2Input), Run: Backend.BLSMapFp2ToG2}))
 }
 
 func bnPairingGas(input []byte) uint64 {
-	return 45000 + uint64(len(input)/bnPairSize)*34000
+	return bn254.PairingGas(len(input))
+}
+
+func bnAdd(input []byte) ([]byte, bool) {
+	out, err := bn254.Add(input)
+	if err != nil {
+		return nil, false
+	}
+	return out[:], true
+}
+
+func bnMul(input []byte) ([]byte, bool) {
+	out, err := bn254.ScalarMul(input)
+	if err != nil {
+		return nil, false
+	}
+	return out[:], true
+}
+
+func bnPairing(input []byte) ([]byte, bool) {
+	ok, err := bn254.PairingCheck(input)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]byte, 32)
+	if ok {
+		out[31] = 1
+	}
+	return out, true
 }
 
 func bnPairingValid(input []byte) bool {
@@ -179,6 +205,9 @@ func p256Verify(input []byte) ([]byte, bool) {
 }
 
 func modexpBig(input []byte) ([]byte, bool) {
+	if readModexpHeader(input).modLen == 0 {
+		return []byte{}, true
+	}
 	ops, ok := modexpOperands(input)
 	if !ok {
 		return nil, false

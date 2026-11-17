@@ -357,7 +357,7 @@ func (e *EVM) depositCode(f *Frame, res frameResult) frameResult {
 		res.status = StatusCodeSizeExceeded
 		return res
 	}
-	if len(code) > 0 && code[0] == 0xef {
+	if len(code) > 0 && code[0] == 0xef && e.Config.Fork >= London {
 		res.status = StatusInvalidCodePrefix
 		return res
 	}

@@ -6,17 +6,12 @@ import (
 	"hash/crc32"
 	"math"
 	"sort"
-	"sync"
 
 	goio "github.com/gakonst/goempo/internal/io"
 	"github.com/kapetan-io/tiger/assert"
 )
 
 const blockRecordsMax = 64
-
-// blockBufs holds block read buffers, so gets are safe from several
-// goroutines at once (state commits read storage tries in parallel).
-var blockBufs = sync.Pool{New: func() any { b := make([]byte, 0, 4096); return &b }}
 
 const blockBytesTarget = 4096
 
@@ -26,9 +21,17 @@ const segmentMagic = 0x676f656d706f5331
 
 const recordsMax = 1 << 40
 
+const writeBufferBytes = 1 << 20
+
+const keySlabBytes = 64 << 10
+
+const readAheadBytes = 256 << 10
+
 const _ = uint(math.MaxInt64/(segmentsMax+1) - recordsMax)
 
 const _ = uint(blockBytesTarget - blockRecordsMax)
+
+const _ = uint(readAheadBytes - blockBytesTarget)
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
@@ -47,6 +50,7 @@ type indexEntry struct {
 }
 
 type segment struct {
+	id      uint64
 	name    string
 	file    goio.File
 	size    int64
@@ -58,17 +62,25 @@ type segment struct {
 type segmentWriter struct {
 	file    goio.File
 	offset  int64
+	out     []byte
 	block   []byte
 	first   []byte
+	slab    []byte
 	inBlock int
 	records int
 	index   []indexEntry
-	keys    []uint64
+	hashes  []uint64
 	err     error
 }
 
-func newSegmentWriter(file goio.File) *segmentWriter {
-	return &segmentWriter{file: file, block: make([]byte, 0, 2*blockBytesTarget)}
+func newSegmentWriter(file goio.File, records int) *segmentWriter {
+	return &segmentWriter{
+		file:   file,
+		out:    make([]byte, 0, writeBufferBytes+2*blockBytesTarget),
+		block:  make([]byte, 0, 2*blockBytesTarget),
+		hashes: make([]uint64, 0, records),
+		index:  make([]indexEntry, 0, records/blockRecordsMax+1),
+	}
 }
 
 func appendRecord(dst []byte, r record) []byte {
@@ -89,19 +101,36 @@ func (w *segmentWriter) add(r record) {
 	w.block = appendRecord(w.block, r)
 	w.inBlock++
 	w.records++
-	w.keys = append(w.keys, keyHash(r.key))
+	w.hashes = append(w.hashes, hashKey(r.key))
 	if w.inBlock == blockRecordsMax || len(w.block) >= blockBytesTarget {
 		w.flushBlock()
 	}
 }
 
 func (w *segmentWriter) write(p []byte) {
-	if w.err != nil {
+	w.out = append(w.out, p...)
+	w.offset += int64(len(p))
+	if len(w.out) >= writeBufferBytes {
+		w.drain()
+	}
+}
+
+func (w *segmentWriter) drain() {
+	if w.err != nil || len(w.out) == 0 {
+		w.out = w.out[:0]
 		return
 	}
-	n, err := w.file.Write(p)
-	w.offset += int64(n)
-	w.err = err
+	_, w.err = w.file.Write(w.out)
+	w.out = w.out[:0]
+}
+
+func (w *segmentWriter) keepKey(k []byte) []byte {
+	if len(k) > cap(w.slab)-len(w.slab) {
+		w.slab = make([]byte, 0, max(keySlabBytes, len(k)))
+	}
+	off := len(w.slab)
+	w.slab = append(w.slab, k...)
+	return w.slab[off:len(w.slab):len(w.slab)]
 }
 
 func (w *segmentWriter) flushBlock() {
@@ -109,7 +138,7 @@ func (w *segmentWriter) flushBlock() {
 		return
 	}
 	w.index = append(w.index, indexEntry{
-		firstKey: append([]byte(nil), w.first...),
+		firstKey: w.keepKey(w.first),
 		offset:   w.offset,
 		length:   len(w.block),
 		crc:      crc32.Checksum(w.block, castagnoli),
@@ -120,12 +149,9 @@ func (w *segmentWriter) flushBlock() {
 	w.inBlock = 0
 }
 
-func (w *segmentWriter) finish() error {
-	w.flushBlock()
-	indexOffset := w.offset
-	var meta []byte
-	meta = binary.AppendUvarint(meta, uint64(len(w.index)))
-	for _, e := range w.index {
+func appendIndex(meta []byte, index []indexEntry) []byte {
+	meta = binary.AppendUvarint(meta, uint64(len(index)))
+	for _, e := range index {
 		meta = binary.AppendUvarint(meta, uint64(len(e.firstKey)))
 		meta = append(meta, e.firstKey...)
 		meta = binary.AppendUvarint(meta, uint64(e.offset))
@@ -133,29 +159,44 @@ func (w *segmentWriter) finish() error {
 		meta = binary.AppendUvarint(meta, uint64(e.records))
 		meta = binary.LittleEndian.AppendUint32(meta, e.crc)
 	}
+	return meta
+}
+
+func (w *segmentWriter) finish(name string, id uint64) (*segment, error) {
+	w.flushBlock()
+	indexOffset := w.offset
+	meta := appendIndex(nil, w.index)
 	indexLength := len(meta)
 	filter := newBloom(w.records)
-	for _, h := range w.keys {
+	for _, h := range w.hashes {
 		filter.addHash(h)
 	}
 	for _, word := range filter.words {
 		meta = binary.LittleEndian.AppendUint64(meta, word)
 	}
-	footer := []uint64{
+	footer := [footerBytes / 8]uint64{
 		uint64(indexOffset), uint64(indexLength), uint64(len(filter.words)),
-		uint64(w.records), uint64(crc32.Checksum(meta, castagnoli)), 0, segmentMagic,
+		uint64(w.records), uint64(crc32.Checksum(meta, castagnoli)), filter.version, segmentMagic,
 	}
 	for _, v := range footer {
 		meta = binary.LittleEndian.AppendUint64(meta, v)
 	}
 	w.write(meta)
+	w.drain()
 	if w.err != nil {
-		return w.err
+		return nil, w.err
 	}
-	return w.file.Sync()
+	if err := w.file.Sync(); err != nil {
+		return nil, err
+	}
+	assert.Equal(w.file.Size(), w.offset, "segment size matches what was written")
+	return &segment{
+		id: id, name: name, file: w.file, size: w.offset,
+		records: w.records, index: w.index, filter: filter,
+	}, nil
 }
 
-func openSegment(name string, file goio.File) (*segment, error) {
+func openSegment(name string, id uint64, file goio.File) (*segment, error) {
 	size := file.Size()
 	if size < footerBytes {
 		return nil, ErrCorrupt
@@ -164,16 +205,19 @@ func openSegment(name string, file goio.File) (*segment, error) {
 	if _, err := file.ReadAt(footer[:], size-footerBytes); err != nil {
 		return nil, err
 	}
-	f := make([]uint64, footerBytes/8)
+	var f [footerBytes / 8]uint64
 	for i := range f {
 		f[i] = binary.LittleEndian.Uint64(footer[8*i:])
 	}
-	if f[6] != segmentMagic {
+	if f[6] != segmentMagic || f[5] > bloomBlocked {
 		return nil, ErrCorrupt
 	}
 	indexOffset, indexLength, bloomWords := int64(f[0]), int64(f[1]), int64(f[2])
 	metaLength := indexLength + 8*bloomWords
 	if indexOffset < 0 || metaLength < 0 || indexOffset+metaLength+footerBytes != size {
+		return nil, ErrCorrupt
+	}
+	if f[5] == bloomBlocked && (bloomWords == 0 || bloomWords%bloomBlockWords != 0) {
 		return nil, ErrCorrupt
 	}
 	meta := make([]byte, metaLength)
@@ -187,8 +231,8 @@ func openSegment(name string, file goio.File) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &segment{name: name, file: file, size: size, records: int(min(f[3], recordsMax)), index: index}
-	s.filter = bloom{words: make([]uint64, bloomWords)}
+	s := &segment{id: id, name: name, file: file, size: size, records: int(min(f[3], recordsMax)), index: index}
+	s.filter = bloom{words: make([]uint64, bloomWords), version: f[5]}
 	for i := range s.filter.words {
 		s.filter.words[i] = binary.LittleEndian.Uint64(meta[indexLength+8*int64(i):])
 	}
@@ -223,7 +267,8 @@ func (r *reader) take(n uint64) []byte {
 }
 
 func parseIndex(b []byte, dataEnd int64) ([]indexEntry, error) {
-	r := reader{b: b}
+	slab := append([]byte(nil), b...)
+	r := reader{b: slab}
 	count := min(r.uvarint(), recordsMax)
 	if count > uint64(len(b)) {
 		return nil, ErrCorrupt
@@ -231,7 +276,8 @@ func parseIndex(b []byte, dataEnd int64) ([]indexEntry, error) {
 	index := make([]indexEntry, 0, count)
 	for i := uint64(0); i < count; i++ {
 		var e indexEntry
-		e.firstKey = append([]byte(nil), r.take(r.uvarint())...)
+		k := r.take(r.uvarint())
+		e.firstKey = k[:len(k):len(k)]
 		e.offset = int64(r.uvarint())
 		e.length = int(min(r.uvarint(), uint64(dataEnd)))
 		e.records = int(min(r.uvarint(), blockRecordsMax+1))
@@ -240,7 +286,7 @@ func parseIndex(b []byte, dataEnd int64) ([]indexEntry, error) {
 			return nil, r.err
 		}
 		e.crc = binary.LittleEndian.Uint32(crc)
-		if e.offset < 0 || e.offset+int64(e.length) > dataEnd || e.records > blockRecordsMax {
+		if e.offset < 0 || e.offset+int64(e.length) > dataEnd || e.records > blockRecordsMax || e.records == 0 {
 			return nil, ErrCorrupt
 		}
 		index = append(index, e)
@@ -276,6 +322,8 @@ func nextRecord(r *reader) record {
 	return record{key: key, value: r.take(tag - 1)}
 }
 
+func (s *segment) firstKey() []byte { return s.index[0].firstKey }
+
 func (s *segment) blockFor(key []byte) int {
 	return sort.Search(len(s.index), func(i int) bool {
 		return bytes.Compare(s.index[i].firstKey, key) > 0
@@ -288,37 +336,15 @@ type lookup struct {
 	deleted bool
 }
 
-func (s *segment) get(key []byte) (lookup, error) {
-	if !s.filter.mayContain(key) {
+func (s *segment) get(p *probeKey, cache *blockCache) (lookup, error) {
+	if !s.filter.mayContain(p) {
 		return lookup{}, nil
 	}
-	i := s.blockFor(key)
+	i := s.blockFor(p.key)
 	if i < 0 {
 		return lookup{}, nil
 	}
-	bp := blockBufs.Get().(*[]byte)
-	defer blockBufs.Put(bp)
-	block, err := s.readBlock(i, *bp)
-	if err != nil {
-		return lookup{}, err
-	}
-	*bp = block
-	r := reader{b: block}
-	for range s.index[i].records {
-		rec := nextRecord(&r)
-		if r.err != nil {
-			return lookup{}, r.err
-		}
-		c := bytes.Compare(rec.key, key)
-		if c == 0 {
-			// The block buffer goes back to the pool, so the value is copied out.
-			return lookup{value: append([]byte(nil), rec.value...), found: true, deleted: rec.deleted}, nil
-		}
-		if c > 0 {
-			return lookup{}, nil
-		}
-	}
-	return lookup{}, nil
+	return cache.get(s, i, p.key)
 }
 
 type segmentIterator struct {
@@ -327,17 +353,21 @@ type segmentIterator struct {
 	inBlock int
 	r       reader
 	buf     []byte
+	span    []byte
+	spanOff int64
+	spanEnd int
+	ahead   bool
 	current record
 	done    bool
 }
 
-func (s *segment) iterator(prefix []byte) (*segmentIterator, error) {
-	it := &segmentIterator{s: s, blockAt: max(s.blockFor(prefix), 0) - 1}
+func (s *segment) iterator(seek []byte, ahead bool) (*segmentIterator, error) {
+	it := &segmentIterator{s: s, blockAt: max(s.blockFor(seek), 0) - 1, ahead: ahead, spanEnd: -1}
 	if err := it.loadNextBlock(); err != nil {
 		return nil, err
 	}
 	steps := 0
-	for ; steps < blockRecordsMax+1 && !it.done && bytes.Compare(it.current.key, prefix) < 0; steps++ {
+	for ; steps < blockRecordsMax+1 && !it.done && bytes.Compare(it.current.key, seek) < 0; steps++ {
 		if err := it.next(); err != nil {
 			return nil, err
 		}
@@ -346,17 +376,57 @@ func (s *segment) iterator(prefix []byte) (*segmentIterator, error) {
 	return it, nil
 }
 
+func (it *segmentIterator) fillSpan() error {
+	idx := it.s.index
+	first := idx[it.blockAt]
+	end, last := first.offset+int64(first.length), it.blockAt
+	for last+1 < len(idx) && idx[last+1].offset == end && end-first.offset+int64(idx[last+1].length) <= readAheadBytes {
+		last++
+		end += int64(idx[last].length)
+	}
+	n := int(end - first.offset)
+	if cap(it.buf) < n {
+		it.buf = make([]byte, max(n, readAheadBytes))
+	}
+	it.span = it.buf[:n]
+	if _, err := it.s.file.ReadAt(it.span, first.offset); err != nil {
+		return err
+	}
+	it.spanEnd = last
+	it.spanOff = first.offset
+	return nil
+}
+
+func (it *segmentIterator) block() ([]byte, error) {
+	if !it.ahead {
+		block, err := it.s.readBlock(it.blockAt, it.buf)
+		it.buf = block
+		return block, err
+	}
+	if it.blockAt > it.spanEnd {
+		if err := it.fillSpan(); err != nil {
+			return nil, err
+		}
+	}
+	e := it.s.index[it.blockAt]
+	start := e.offset - it.spanOff
+	block := it.span[start : start+int64(e.length)]
+	if crc32.Checksum(block, castagnoli) != e.crc {
+		return nil, ErrCorrupt
+	}
+	return block, nil
+}
+
 func (it *segmentIterator) loadNextBlock() error {
 	it.blockAt++
 	if it.blockAt >= len(it.s.index) {
 		it.done = true
 		return nil
 	}
-	block, err := it.s.readBlock(it.blockAt, it.buf)
+	block, err := it.block()
 	if err != nil {
 		return err
 	}
-	it.buf = block
 	it.r = reader{b: block}
 	it.inBlock = 0
 	return it.advance()

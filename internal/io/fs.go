@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"sync"
 )
 
 var (
@@ -137,6 +138,7 @@ func (f *osFile) Size() int64 { return f.size }
 func (f *osFile) Close() error { return f.f.Close() }
 
 type MemFS struct {
+	mu    sync.Mutex
 	files map[string]*memData
 }
 
@@ -155,12 +157,16 @@ func NewMemFS() *MemFS {
 }
 
 func (fs *MemFS) Create(name string) (File, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	d := &memData{}
 	fs.files[name] = d
 	return &memFile{d: d}, nil
 }
 
 func (fs *MemFS) Open(name string) (File, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	d, ok := fs.files[name]
 	if !ok {
 		return nil, ErrNotExist
@@ -169,6 +175,8 @@ func (fs *MemFS) Open(name string) (File, error) {
 }
 
 func (fs *MemFS) Rename(m Move) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	d, ok := fs.files[m.From]
 	if !ok {
 		return ErrNotExist
@@ -179,6 +187,8 @@ func (fs *MemFS) Rename(m Move) error {
 }
 
 func (fs *MemFS) Remove(name string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	if _, ok := fs.files[name]; !ok {
 		return ErrNotExist
 	}
@@ -187,6 +197,8 @@ func (fs *MemFS) Remove(name string) error {
 }
 
 func (fs *MemFS) List() ([]string, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	names := make([]string, 0, len(fs.files))
 	for name := range fs.files {
 		names = append(names, name)
@@ -196,6 +208,8 @@ func (fs *MemFS) List() ([]string, error) {
 }
 
 func (fs *MemFS) Crash() {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	for _, name := range slices.Sorted(maps.Keys(fs.files)) {
 		d := fs.files[name]
 		d.data = d.data[:d.synced]

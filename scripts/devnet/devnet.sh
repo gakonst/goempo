@@ -15,6 +15,7 @@ N=${DEVNET_VALIDATORS:-4}
 BASE_PORT=${DEVNET_BASE_PORT:-21000}
 EPOCH=${DEVNET_EPOCH_LENGTH:-60}
 SEED=${DEVNET_SEED:-42}
+HARDFORK=${DEVNET_HARDFORK-T13}
 GOEMPO_SLOTS=${DEVNET_GOEMPO:-}
 LOCALNET_SECRET=tempo-localnet-signing-key-secret
 
@@ -56,7 +57,7 @@ cmd_gen() {
 	done
 	mkdir -p "$NET"
 	"$XTASK" generate-localnet -o "$NET" --force --validators "$addrs" \
-		--seed "$SEED" --epoch-length "$EPOCH" --accounts "${DEVNET_ACCOUNTS:-10}" \
+		--seed "$SEED" --epoch-length "$EPOCH" ${HARDFORK:+--hardfork "$HARDFORK"} --accounts "${DEVNET_ACCOUNTS:-10}" \
 		>"$WORK/gen.log" 2>&1 || { tail -20 "$WORK/gen.log"; die "generate-localnet failed"; }
 	for ((i = 0; i < N; i++)); do
 		local d
@@ -65,7 +66,7 @@ cmd_gen() {
 		chmod 600 "$d/signing.key.hex"
 	done
 	python3 "$HERE/nodes.py" "$NET" "$WORK/gen.log" "$N" "$BASE_PORT" "$EPOCH" >"$NET/nodes.json"
-	echo "devnet: generated $N validators, epoch length $EPOCH, seed $SEED in $NET"
+	echo "devnet: generated $N validators, epoch length $EPOCH, seed $SEED, latest fork ${HARDFORK:-all} in $NET"
 }
 
 trusted_peers() {
@@ -279,7 +280,7 @@ usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum|votes|r6e> [args]
   quorum <slot> <S>     stop one slot for S seconds and check finality continues
   r6e [S]               with DEVNET_GOEMPO set: quorum test, S-second soak (3600), votes; summary.json
   votes [--slots 1,2]   per Rust slot: votes received from each peer, latest vote view, WARNs naming it
-env: DEVNET_WORK=$WORK N=$N BASE_PORT=$BASE_PORT EPOCH=$EPOCH SEED=$SEED
+env: DEVNET_WORK=$WORK N=$N BASE_PORT=$BASE_PORT EPOCH=$EPOCH SEED=$SEED DEVNET_HARDFORK=$HARDFORK (set empty for every fork)
 EOF
 }
 

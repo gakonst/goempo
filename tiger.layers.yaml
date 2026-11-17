@@ -11,6 +11,7 @@
   - ./internal/statetest
   - os
   - net
+  - syscall
   - ./internal/version
   - ./internal/genesis
   - ./internal/primitives

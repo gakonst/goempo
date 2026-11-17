@@ -1,16 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/gakonst/goempo/internal/genesis"
-	goio "github.com/gakonst/goempo/internal/io"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/state"
 	"github.com/gakonst/goempo/internal/tempo/executor"
@@ -60,6 +62,13 @@ type replayer struct {
 
 	heal      *healer
 	firstHead uint64
+
+	store      storeConfig
+	ctx        context.Context
+	startHead  uint64
+	healedFrom *mismatch
+	healedHead uint64
+	stopped    bool
 }
 
 func defaultResultPath() string {
@@ -78,19 +87,30 @@ func runReplay(args []string) int {
 	out := fs.String("result", defaultResultPath(), "where the R3 result is written")
 	diagnose := fs.String("diagnose", "on", "on: fetch traces to diagnose the first mismatch; off: don't")
 	heals := fs.Int("heal", 0, "after a mismatch, apply the block's traced state diff and keep going, up to this many blocks")
+	datadir := fs.String("datadir", "", "keep the replay state on disk here and resume from it (empty: in memory, from genesis)")
+	every := fs.Uint64("checkpoint", checkpointDefault, "with -datadir, flush the state to disk every this many blocks (0: only at exit)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	r, err := newReplayer(*dir)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	r, err := newReplayerStore(*dir, storeConfig{datadir: *datadir, checkpoint: *every})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "replay:", err)
 		return 1
+	}
+	r.ctx = ctx
+	if r.head > 0 {
+		fmt.Fprintf(os.Stderr, "replay: resuming from block %d in %s\n", r.head, *datadir)
 	}
 	if *heals > 0 {
 		r.heal = &healer{client: newRPCClient(*rpcURL), remaining: min(*heals, healsMax), verbose: *diagnose == "on"}
 	}
 	start := time.Now()
 	runErr := r.run(*to)
+	if err := r.closeStore(); err != nil {
+		runErr = errors.Join(runErr, err)
+	}
 	r.reportHeals()
 	res := r.summary(*to, time.Since(start))
 	if err := writeResult(*out, &res); err != nil {
@@ -113,36 +133,52 @@ func runReplay(args []string) int {
 }
 
 func newReplayer(dir string) (*replayer, error) {
-	db, err := state.Open(goio.NewMemFS(), state.Options{})
+	return newReplayerStore(dir, storeConfig{})
+}
+
+func newReplayerStore(dir string, cfg storeConfig) (*replayer, error) {
+	db, err := openReplayState(cfg)
 	if err != nil {
 		return nil, err
 	}
 	g, err := genesis.Mainnet()
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
-	if _, err := db.LoadGenesis(g); err != nil {
-		return nil, err
+	if !db.Head().Loaded {
+		if _, err := db.LoadGenesis(g); err != nil {
+			return nil, errors.Join(err, db.Close())
+		}
 	}
 	var extra struct {
 		EpochLength uint64 `json:"epochLength"`
 	}
 	if err := json.Unmarshal(g.Config.Raw, &extra); err != nil {
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
 	x := &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength}
-	return &replayer{db: db, exec: x, dir: dir}, nil
+	r := &replayer{db: db, exec: x, dir: dir, store: cfg, ctx: context.Background()}
+	if err := r.resume(); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	r.startHead = r.head
+	return r, nil
 }
 
 func (r *replayer) summary(target uint64, took time.Duration) replayResult {
 	res := replayResult{Rung: "R3", Chain: "mainnet", Height: r.head, Target: target, Seconds: took.Seconds()}
+	if r.healedFrom != nil {
+		res.Height = r.healedHead
+		res.Mismatch = r.healedFrom.String()
+		return res
+	}
 	if r.heal != nil && r.heal.first != nil {
 		res.Height = r.firstHead
 		res.Mismatch = r.heal.first.String()
 		return res
 	}
 	if took > 0 {
-		res.BlocksSec = float64(r.head) / took.Seconds()
+		res.BlocksSec = float64(r.head-r.startHead) / took.Seconds()
 	}
 	if r.failed != nil {
 		res.Mismatch = r.failed.String()
@@ -160,7 +196,7 @@ func writeResult(path string, res *replayResult) error {
 
 func (r *replayer) run(to uint64) error {
 	chunks := min(to/chunkBlocks+1, chunksMax)
-	for i := uint64(0); i < chunks; i++ {
+	for i := (r.head + 1) / chunkBlocks; i < chunks; i++ {
 		start := i * chunkBlocks
 		raws, err := readChunk(r.dir, start)
 		if errors.Is(err, os.ErrNotExist) {
@@ -189,10 +225,15 @@ func (r *replayer) runChunk(raws [][]byte, span chunkSpan) (bool, error) {
 	start, to := span.start, span.to
 	for j := 0; j < len(raws); j++ {
 		number := start + uint64(j)
-		if number == 0 {
+		if number <= r.head {
 			continue
 		}
 		if number > to {
+			return true, nil
+		}
+		if stopRequested(r.ctx) {
+			r.stopped = true
+			fmt.Fprintf(os.Stderr, "replay: stopped after block %d\n", r.head)
 			return true, nil
 		}
 		if number != r.head+1 {
@@ -204,6 +245,9 @@ func (r *replayer) runChunk(raws [][]byte, span chunkSpan) (bool, error) {
 		}
 		if !r.stepOrHeal(&blk) {
 			return true, nil
+		}
+		if err := r.checkpoint(number); err != nil {
+			return false, err
 		}
 		if number%progressInterval == 0 {
 			fmt.Fprintf(os.Stderr, "replay: block %d ok\n", number)

@@ -6,3 +6,4 @@ eth_getTransactionByHash, eth_getTransactionReceipt, debug_traceTransaction with
 TestReplayMainnet loads the pre state, runs fee collection, the expiring nonce, keychain setup and each call through precompiles.Call, then checks every touched slot, every log and each 0x76 call frame's gas against mainnet.
 - testdata/frames/*.json: precompile call frames (from callTracer) replayed statelessly for exact gas and output.
 - testdata/committee/epoch1502.json: CurrentCommittee storage at mainnet block 32443199 via eth_getStorageAt.
+- testdata/mainnet/t*_{2,76}_{f8856c0f,f0122b75,63813125,81649d06}*.json: stablecoin DEX transactions (swapExactAmountIn/Out, place, cancel) found by scanning 0xdec0 logs per fork window and keeping precompile-only ones (~/wt/tools-dex/dexscan.py, pick.py), converted with the same convert.py.

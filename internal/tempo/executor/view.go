@@ -51,11 +51,19 @@ type txView struct {
 	feeToken    *Address
 	auths       []authorization
 	aa          *types.TempoTx
+	keys        *signerKeys
 	validBefore uint64
 	validAfter  uint64
 }
 
 func (v *txView) isAA() bool { return v.aa != nil }
+
+func (v *txView) keyID(tx *types.Transaction) (Address, error) {
+	if v.keys != nil {
+		return v.keys.keyID, nil
+	}
+	return v.aa.Signature.KeyID(tx.SigningHash())
+}
 
 func (v *txView) isCreate() bool {
 	return len(v.calls) > 0 && v.calls[0].to == nil
@@ -64,15 +72,43 @@ func (v *txView) isCreate() bool {
 type Sender struct {
 	Address Address
 	Err     error
+	signers *signerKeys
+}
+
+type signerKeys struct {
+	keyID    Address
+	feePayer Address
+	payerErr error
+	hasPayer bool
 }
 
 func RecoverSender(tx *types.Transaction) Sender {
+	if d, ok := tx.Data.(*types.TempoTx); ok {
+		return recoverTempoSigners(tx, d)
+	}
 	addr, err := tx.Sender()
 	return Sender{Address: addr, Err: err}
 }
 
+func recoverTempoSigners(tx *types.Transaction, d *types.TempoTx) Sender {
+	key, err := d.Signature.KeyID(tx.SigningHash())
+	if err != nil {
+		return Sender{Err: err}
+	}
+	out := Sender{Address: key, signers: &signerKeys{keyID: key}}
+	if d.Signature.Keychain != types.KeychainNone {
+		out.Address = d.Signature.UserAddress
+	}
+	if d.FeePayerSignature != nil {
+		out.signers.feePayer, out.signers.payerErr = d.FeePayer(out.Address)
+		out.signers.hasPayer = true
+	}
+	return out
+}
+
 func viewOf(tx *types.Transaction, sim *Simulation, known *Sender) (txView, error) {
 	var sender Address
+	var keys *signerKeys
 	switch {
 	case sim != nil:
 		sender = sim.Sender
@@ -81,6 +117,7 @@ func viewOf(tx *types.Transaction, sim *Simulation, known *Sender) (txView, erro
 			return txView{}, known.Err
 		}
 		sender = known.Address
+		keys = known.signers
 	default:
 		recovered, err := tx.Sender()
 		if err != nil {
@@ -88,7 +125,7 @@ func viewOf(tx *types.Transaction, sim *Simulation, known *Sender) (txView, erro
 		}
 		sender = recovered
 	}
-	v := txView{kind: tx.Type(), sender: sender, feePayer: sender}
+	v := txView{kind: tx.Type(), sender: sender, feePayer: sender, keys: keys}
 	switch d := tx.Data.(type) {
 	case *types.LegacyTx:
 		v.legacy(legacyFields{nonce: d.Nonce, gas: d.Gas, price: d.GasPrice})
@@ -163,6 +200,10 @@ func (v *txView) tempo(d *types.TempoTx) error {
 	}
 	if d.FeePayerSignature == nil {
 		return nil
+	}
+	if v.keys != nil && v.keys.hasPayer {
+		v.feePayer = v.keys.feePayer
+		return v.keys.payerErr
 	}
 	payer, err := d.FeePayer(v.sender)
 	if err != nil {

@@ -248,7 +248,7 @@ func (r *txRun) useAccessKey() error {
 		return nil
 	}
 	sig := &r.view.aa.Signature
-	key, err := sig.KeyID(r.env.Tx.SigningHash())
+	key, err := r.view.keyID(r.env.Tx)
 	if err != nil {
 		return err
 	}

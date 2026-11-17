@@ -275,10 +275,8 @@ func (r *txRun) warm() {
 	st := r.env.State
 	v := &r.view
 	st.WarmAddress(v.sender)
-	for i := 0; i < len(v.calls); i++ {
-		if v.calls[i].to != nil {
-			st.WarmAddress(*v.calls[i].to)
-		}
+	if len(v.calls) > 0 && v.calls[0].to != nil {
+		st.WarmAddress(*v.calls[0].to)
 	}
 	base := r.env.Rules.EthereumPrecompiles().Addresses()
 	for i := 0; i < len(base); i++ {
@@ -352,6 +350,7 @@ func (r *txRun) execute() execution {
 			msg.Kind = evm.KindCreate
 		} else {
 			msg.To = *c.to
+			st.WarmAddress(msg.To)
 		}
 		res := machine.Execute(msg)
 		gasLeft = res.GasLeft

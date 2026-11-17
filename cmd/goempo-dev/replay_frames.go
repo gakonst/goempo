@@ -79,7 +79,7 @@ func (r *replayer) traceOwn(blk *types.Block) ([]json.RawMessage, error) {
 	chain.Add(data)
 	view := &hashChain{MemChain: chain, r: r, number: n}
 	x := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: &replayState{r: r}, Blocks: r.exec}
-	out, err := x.TraceBlock(n, &rpc.TraceOptions{Tracer: "callTracer"})
+	out, err := x.TraceBlock(n, &rpc.TraceOptions{Tracer: "callTracer", Raw: json.RawMessage(`{"tracer":"callTracer"}`)})
 	r.db.State().Discard()
 	return out, err
 }

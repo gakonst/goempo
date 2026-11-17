@@ -1,3 +1,5 @@
 mainnet-0-40.blk: mainnet (chain 4217) blocks 0..40 from debug_getRawBlock on https://rpc.tempo.xyz, each as a 4-byte big-endian length and the raw block RLP.
 mainnet-user-3211-3857.blk: the 12 mainnet blocks in 3211..3857 that carry user transactions (the rest of that range holds only the system transaction and leaves the state unchanged), same source and format.
 intrinsic-mainnet.jsonl: one 0x76 transaction per kind from mainnet blocks 3211..5392, raw envelope from debug_getRawBlock and intrinsic gas = callTracer top-level gas minus the first call frame gas (debug_traceTransaction on a mainnet RPC node).
+mainnet-12964402.blk: mainnet block 12,964,402 (T2), same source and format. Its tx 0 is a 0x76 batch whose third call targets pathUSD after the first call touched it (gasUsed 2,087,728 in eth_getTransactionReceipt).
+mainnet-12964402-tx0-prestate.json: debug_traceTransaction prestateTracer result for that tx (0x4eb14452...6925) on a mainnet RPC node.

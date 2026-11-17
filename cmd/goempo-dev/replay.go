@@ -109,6 +109,9 @@ func runReplay(args []string) int {
 	}
 	start := time.Now()
 	runErr := r.run(*to)
+	if r.failed != nil && *diagnose == "on" {
+		r.diagnose(newRPCClient(*rpcURL))
+	}
 	if err := r.closeStore(); err != nil {
 		runErr = errors.Join(runErr, err)
 	}
@@ -120,9 +123,6 @@ func runReplay(args []string) int {
 	line, err := json.Marshal(res)
 	if err == nil {
 		fmt.Println(string(line))
-	}
-	if r.failed != nil && *diagnose == "on" {
-		r.diagnose(newRPCClient(*rpcURL))
 	}
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, "replay:", runErr)

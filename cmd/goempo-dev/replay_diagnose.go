@@ -51,10 +51,10 @@ type traceResult struct {
 func (r *replayer) diagnose(c *rpcClient) {
 	m := r.failed
 	fmt.Fprintf(os.Stderr, "diagnose: first mismatch at block %d (%s)\n", m.number, m.field)
+	r.diagnoseState(c)
 	if r.result != nil {
 		r.diagnoseReceipts(c)
 	}
-	r.diagnoseState(c)
 }
 
 func (r *replayer) diagnoseReceipts(c *rpcClient) {

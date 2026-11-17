@@ -149,6 +149,7 @@
   - ./internal/tempo/chain
   - ./internal/tempo/hardfork
   - ./internal/tempo/precompiles
+  - ./internal/tempo/dkg
   - ./internal/trie
   - ./internal/types
   - ./internal/u256

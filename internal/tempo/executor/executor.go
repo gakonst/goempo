@@ -41,7 +41,8 @@ type State interface {
 }
 
 type Executor struct {
-	ChainID hardfork.ChainID
+	ChainID     hardfork.ChainID
+	EpochLength uint64
 }
 
 type Input struct {
@@ -79,7 +80,8 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
 	cfg := rules.Config(ts.Millis(), set)
 	blk := blockContext(header, in.GetHash)
-	preBlock(st, &systemEnv{config: cfg, block: blk, header: header, rules: rules})
+	sys := &systemEnv{config: cfg, block: blk, header: header, rules: rules}
+	preBlock(st, sys)
 	txs := in.Block.Transactions
 	if len(txs) > blockTxsMax {
 		return Result{}, ErrTooManyTxs
@@ -94,6 +96,9 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 		}
 		cumulative += out.GasUsed
 		receipts = append(receipts, receiptOf(txs[i].Type(), out, cumulative))
+	}
+	if err := x.committeeCall(st, sys); err != nil {
+		return Result{}, err
 	}
 	return finish(receipts, cumulative), nil
 }

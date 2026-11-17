@@ -124,7 +124,13 @@ func newReplayer(dir string) (*replayer, error) {
 	if _, err := db.LoadGenesis(g); err != nil {
 		return nil, err
 	}
-	x := &executor.Executor{ChainID: hardfork.MainnetChainID}
+	var extra struct {
+		EpochLength uint64 `json:"epochLength"`
+	}
+	if err := json.Unmarshal(g.Config.Raw, &extra); err != nil {
+		return nil, err
+	}
+	x := &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength}
 	return &replayer{db: db, exec: x, dir: dir}, nil
 }
 

@@ -5,3 +5,4 @@
 {"date":"2026-11-17","rung":"R3","score":"3857","commit":"2529d0d","note":"fee token validation warms TIP-20 slots like tempo's ensure_tip20_usd; first mismatch block 3858: TIP-20 factory createToken not implemented"}
 {"date":"2026-11-17","rung":"R3","score":"3864","commit":"6ebe692","note":"createToken (agent 5) and CREATE match; first mismatch block 3865: keychain authorizeKey missing"}
 {"date":"2026-11-17","rung":"R3","score":"836358","commit":"752eb25","note":"key authorizations match; first mismatch block 836359 TIP-403 registry ABI"}
+{"date":"2026-11-17","rung":"R3","score":"3209999","commit":"b32dede","note":"all blocks 1..3209999 match (end of local cache); TIP-403 by agent 5"}

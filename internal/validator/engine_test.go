@@ -15,16 +15,17 @@ import (
 )
 
 const (
-	netValidators  = 4
-	netEpochLength = 20
-	netEpochs      = 3
-	netGasLimit    = 30_000_000
-	genesisSeconds = 1_700_000_000
-	millisPerSec   = 1000
-	tickStep       = 25
-	netStepsMax    = 400_000
-	netSeed        = 7
-	stepsPerBlock  = 4000
+	netValidators      = 4
+	netEpochLength     = 20
+	netEpochs          = 3
+	netGasLimit        = 30_000_000
+	genesisSeconds     = 1_700_000_000
+	millisPerSec       = 1000
+	tickStep           = 25
+	requestEveryMillis = 500
+	netStepsMax        = 400_000
+	netSeed            = 7
+	stepsPerBlock      = 4000
 )
 
 const _ = uint(netStepsMax - stepsPerBlock*(netEpochs*netEpochLength+2))
@@ -433,4 +434,46 @@ func TestEngineConcludesDKGOnNotarizedBranch(_ *testing.T) {
 		want, _ := c.chains[0].BlockByNumber(netEpochLength + 2)
 		assert.Equal(got.Hash(), want.Hash(), "same chain")
 	}
+}
+
+type requestMeter struct {
+	pubs  []validator.PeerKey
+	now   *consensus.Millis
+	count map[[3]uint64]int
+	most  int
+}
+
+func (m *requestMeter) drop(p packet) bool {
+	if p.channel != wire.ChannelMarshal {
+		return false
+	}
+	f, err := wire.DecodeFrame(p.msg)
+	if err != nil || f.Kind != wire.FrameRequest {
+		return false
+	}
+	to := p.to
+	if to == nil {
+		to = m.pubs
+	}
+	window := uint64(*m.now) / requestEveryMillis
+	for _, k := range to {
+		key := [3]uint64{uint64(p.from), uint64(k[0]), window}
+		m.count[key]++
+		m.most = max(m.most, m.count[key])
+	}
+	return false
+}
+
+func TestEngineRequestsStayUnderPeerQuota(_ *testing.T) {
+	c := newCluster()
+	m := &requestMeter{pubs: c.pubs, now: &c.now, count: map[[3]uint64]int{}}
+	c.drop = m.drop
+	c.runUntil(c.allAt(3))
+	last := netValidators - 1
+	c.down[last] = true
+	c.runUntil(c.allAt(netEpochLength + 5))
+	c.down[last] = false
+	c.runUntil(c.allAt(netEpochLength + 10))
+	assert.Ok(m.most > 0, "the restarted validator backfilled over marshal")
+	assert.Ok(m.most <= validator.PeerRequestsPerWindow, "marshal requests per peer per window stay under the Rust peer quota")
 }

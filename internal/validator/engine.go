@@ -15,18 +15,21 @@ import (
 )
 
 const (
-	blocksMax      = 8192
-	finalsKept     = 1024
-	futureMax      = 1024
-	requestEvery   = 500
-	backfillAfter  = 3000
-	backfillWindow = 16
-	settleMax      = 64
-	pendingWalkMax = 4096
-	RecoverMax     = 1 << 20
+	blocksMax             = 8192
+	finalsKept            = 1024
+	futureMax             = 1024
+	requestEvery          = 500
+	backfillAfter         = 3000
+	backfillWindow        = 16
+	PeerRequestsPerWindow = 4
+	settleMax             = 64
+	pendingWalkMax        = 4096
+	RecoverMax            = 1 << 20
 )
 
 const _ = uint(pendingWalkMax - settleMax)
+
+const _ = uint(backfillWindow - PeerRequestsPerWindow)
 
 const _ = uint(RecoverMax - blocksMax)
 
@@ -117,6 +120,8 @@ type Engine struct {
 	requested map[consensus.Digest]consensus.Millis
 	asked     map[uint64]consensus.Digest
 	backfill  map[uint64]uint64
+	spent     map[PeerKey]uint32
+	spentAt   consensus.Millis
 	progress  consensus.Millis
 	askedAt   consensus.Millis
 	syncing   bool
@@ -148,7 +153,7 @@ func New(cfg Config) (*Engine, error) {
 		cfg: cfg, me: dkg.KeyOf(cfg.Key.Private()), ns: consensus.NewNamespace(consensus.TempoNamespace),
 		blocks: map[consensus.Digest]*types.Block{}, finalOf: map[consensus.Digest]consensus.Finalized{},
 		finals: map[uint64]consensus.Finalized{}, requested: map[consensus.Digest]consensus.Millis{},
-		asked: map[uint64]consensus.Digest{}, backfill: map[uint64]uint64{}, verdicts: map[consensus.Digest]consensus.Verdict{},
+		asked: map[uint64]consensus.Digest{}, backfill: map[uint64]uint64{}, spent: map[PeerKey]uint32{}, verdicts: map[consensus.Digest]consensus.Verdict{},
 	}
 	head := cfg.Chain.Head()
 	epoch := cfg.Epocher.Epoch(head.Header.Inner.Number + 1)
@@ -270,11 +275,37 @@ func (e *Engine) requestBackfill() {
 		if outstanding[h] {
 			continue
 		}
+		p, ok := e.spendOn(peers, int(h%uint64(len(peers))))
+		if !ok {
+			return
+		}
 		e.nextID++
 		e.backfill[e.nextID] = h
 		q := wire.MarshalRequest{ID: e.nextID, Key: wire.MarshalKey{Kind: wire.KeyFinalized, Height: h}}
-		e.cfg.Net.Send(wire.ChannelMarshal, []PeerKey{peers[int(h%uint64(len(peers)))]}, q.Encode())
+		e.cfg.Net.Send(wire.ChannelMarshal, []PeerKey{p}, q.Encode())
 	}
+}
+
+func (e *Engine) spend(p PeerKey) bool {
+	if e.now >= e.spentAt+requestEvery {
+		clear(e.spent)
+		e.spentAt = e.now
+	}
+	if e.spent[p] >= PeerRequestsPerWindow {
+		return false
+	}
+	e.spent[p]++
+	return true
+}
+
+func (e *Engine) spendOn(peers []PeerKey, first int) (PeerKey, bool) {
+	for i := range peers {
+		p := peers[(first+i)%len(peers)]
+		if e.spend(p) {
+			return p, true
+		}
+	}
+	return PeerKey{}, false
 }
 
 func (e *Engine) peersExceptMe() []PeerKey {
@@ -710,10 +741,19 @@ func (e *Engine) request(d consensus.Digest) {
 		e.pending = append(e.pending, d)
 	}
 	e.requested[d] = e.now
+	var to []PeerKey
+	for _, p := range e.peersExceptMe() {
+		if e.spend(p) {
+			to = append(to, p)
+		}
+	}
+	if len(to) == 0 {
+		return
+	}
 	e.nextID++
 	e.asked[e.nextID] = d
 	q := wire.MarshalRequest{ID: e.nextID, Key: wire.MarshalKey{Kind: wire.KeyBlock, Digest: d}}
-	e.cfg.Net.Send(wire.ChannelMarshal, nil, q.Encode())
+	e.cfg.Net.Send(wire.ChannelMarshal, to, q.Encode())
 }
 
 func (e *Engine) retryRequests() {

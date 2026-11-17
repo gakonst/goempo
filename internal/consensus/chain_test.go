@@ -127,3 +127,19 @@ func BenchmarkChainVerifyBatch(b *testing.B) {
 		assert.NoError(c.Verify(items), "verify")
 	}
 }
+
+func TestModeratoNetworkIdentity(_ *testing.T) {
+	raw, err := os.ReadFile("testdata/moderato_block_37735199_extradata.hex")
+	assert.NoError(err, "read moderato extra data")
+	c := consensus.NewModeratoChain()
+	assert.Equal(c.Epocher().Length, uint64(consensus.ModeratoEpochLength), "moderato epoch length")
+	epoch, err := c.RegisterBoundary(37735199, unhex(string(raw)))
+	assert.NoError(err, "moderato epoch 1747 outcome matches the compiled testnet identity")
+	assert.Equal(epoch, uint64(consensus.ModeratoIdentityFromEpoch), "outcome installs epoch 1747")
+	network := consensus.MainnetNetworkIdentity()
+	network.FromEpoch = consensus.ModeratoIdentityFromEpoch
+	m := consensus.NewChain(network, consensus.Epocher{Length: consensus.ModeratoEpochLength})
+	_, err = m.RegisterBoundary(37735199, unhex(string(raw)))
+	assert.Ok(errors.Is(err, consensus.ErrNetworkIdentity), "the mainnet identity does not verify the moderato outcome")
+}
+

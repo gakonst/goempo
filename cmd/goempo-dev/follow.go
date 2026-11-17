@@ -46,6 +46,7 @@ type followOptions struct {
 	steps     uint64
 	batch     int
 	certify   bool
+	chain     string
 }
 
 func runFollow(args []string) int {
@@ -59,7 +60,12 @@ func runFollow(args []string) int {
 	fs.Uint64Var(&o.steps, "steps", 0, "stop after this many follower steps once the tip is reached (0: follow forever)")
 	fs.IntVar(&o.batch, "batch", followBatch, "blocks per request")
 	fs.BoolVar(&o.certify, "certify", true, "verify every block's finalization certificate (consensus_getFinalization from the upstream)")
+	fs.StringVar(&o.chain, "chain", "mainnet", "network identity and epoch length for certificates: mainnet or moderato")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if o.chain != "mainnet" && o.chain != "moderato" {
+		fmt.Fprintln(os.Stderr, "follow: -chain must be mainnet or moderato")
 		return 2
 	}
 	if err := follow(o); err != nil {
@@ -272,7 +278,7 @@ func follow(o followOptions) error {
 	}
 	exec := &checker{head: a.link, rpc: check}
 	if o.certify {
-		if exec.cert, err = newFollowCertifier(rawFetcher{rpc: newRPCClient(o.upstream)}, a.link.Number+1); err != nil {
+		if exec.cert, err = newFollowCertifier(rawFetcher{rpc: newRPCClient(o.upstream)}, certifyChain(o.chain), a.link.Number+1); err != nil {
 			return err
 		}
 		fmt.Printf("consensus anchor: %s\n", exec.cert.anchor)

@@ -1,3 +1,4 @@
 - mainnet_finalizations.jsonl: consensus_getFinalization {"height":N} from https://rpc.tempo.xyz on 2026-11-17 for blocks 42100000, 42098400 (first block of epoch 1949) and 44107200 (first block of epoch 2042), and 44107199 (last block of epoch 2041, from a private mainnet RPC node).
 - mainnet_block_42098399_extradata.hex: extraData of mainnet block 42098399 (eth_getBlockByNumber), the DKG outcome that installs epoch 1949's identity.
 - mainnet_block_44085599_extradata.hex, mainnet_block_44107199_extradata.hex: extraData of mainnet blocks 44085599 and 44107199 (debug_getRawBlock from a private mainnet RPC node), the DKG outcomes that install epoch 2041's and 2042's identities.
+- moderato_block_37735199_extradata.hex: extraData of moderato testnet block 37735199 (eth_getBlockByNumber from https://rpc.moderato.tempo.xyz on 2026-11-17), the DKG outcome that installs epoch 1747, the testnet network identity's from_epoch.

@@ -32,8 +32,15 @@ type followCertifier struct {
 	anchor      string
 }
 
-func newFollowCertifier(f rawFetcher, first uint64) (*followCertifier, error) {
-	c := &followCertifier{chain: consensus.NewMainnetChain(), fetch: f}
+func certifyChain(name string) *consensus.Chain {
+	if name == "moderato" {
+		return consensus.NewModeratoChain()
+	}
+	return consensus.NewMainnetChain()
+}
+
+func newFollowCertifier(f rawFetcher, chain *consensus.Chain, first uint64) (*followCertifier, error) {
+	c := &followCertifier{chain: chain, fetch: f}
 	ep := c.chain.Epocher()
 	epoch := ep.Epoch(first)
 	if epoch == 0 {

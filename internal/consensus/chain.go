@@ -17,6 +17,11 @@ const (
 	MainnetIdentityHex       = "8627d33753b0d90a8eae75363d6b393ab9204076545b3af6caf831903e4bedde" +
 		"4374f1106551b481fb5ea35e59d51c92165c963881c718216e3e4570a307c08885" +
 		"af55c274f19488f709afe021ca3d9e567138ab097860d9146e895407bea182"
+	ModeratoEpochLength       = 21600
+	ModeratoIdentityFromEpoch = 1747
+	ModeratoIdentityHex       = "967ae1a6d3ddbe5cb0fe5e6fc58e74249787b4a277619b549fed6609d0466054" +
+		"0dd2449cd7174def35e40f544e5ad72d15d064191a205ed6e0c49619c68f975108" +
+		"b614d0d51def9a8416a10a07c4193bea0cbbc4252ec1b33f21095a5d7aa590"
 	BatchMax      = 512
 	IdentitiesMax = 64
 )
@@ -24,6 +29,8 @@ const (
 const _ = uint(combinerIndexMax - 2*BatchMax)
 
 const _ = uint(MainnetIdentityFromEpoch - IdentitiesMax)
+
+const _ = uint(ModeratoIdentityFromEpoch - IdentitiesMax)
 
 var (
 	ErrEpoch           = errors.New("consensus: certificate epoch is not the block's epoch")
@@ -53,11 +60,19 @@ type NetworkIdentity struct {
 }
 
 func MainnetNetworkIdentity() NetworkIdentity {
-	raw, err := hex.DecodeString(MainnetIdentityHex)
-	assert.NoError(err, "consensus: mainnet identity hex")
+	return compiledIdentity(MainnetIdentityHex, MainnetIdentityFromEpoch)
+}
+
+func ModeratoNetworkIdentity() NetworkIdentity {
+	return compiledIdentity(ModeratoIdentityHex, ModeratoIdentityFromEpoch)
+}
+
+func compiledIdentity(text string, from uint64) NetworkIdentity {
+	raw, err := hex.DecodeString(text)
+	assert.NoError(err, "consensus: compiled identity hex")
 	id, err := DecodeIdentity(raw)
-	assert.NoError(err, "consensus: mainnet identity decodes")
-	return NetworkIdentity{FromEpoch: MainnetIdentityFromEpoch, Identity: id}
+	assert.NoError(err, "consensus: compiled identity decodes")
+	return NetworkIdentity{FromEpoch: from, Identity: id}
 }
 
 type Certified struct {
@@ -90,6 +105,10 @@ func NewChain(network NetworkIdentity, epocher Epocher) *Chain {
 
 func NewMainnetChain() *Chain {
 	return NewChain(MainnetNetworkIdentity(), Epocher{Length: MainnetEpochLength})
+}
+
+func NewModeratoChain() *Chain {
+	return NewChain(ModeratoNetworkIdentity(), Epocher{Length: ModeratoEpochLength})
 }
 
 func (c *Chain) Epocher() Epocher { return c.epocher }

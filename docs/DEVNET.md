@@ -19,6 +19,17 @@ ValidatorConfigV2 from genesis). It produces about 2 blocks/s, each finalized
 within the next block, and every boundary block carries a 684-byte DKG outcome
 (a reshare per epoch, 0 ceremony failures). The 4 validators propose in turn.
 
+Measured 2026-11-17 (reports/rust-only-900s.json): 900 s, finalized 292 to
+2072, all 1780 heights compared on all 4 slots with 0 forks, no stall over 15 s,
+30 of 30 boundary blocks carrying a DKG outcome, proposers 446/423/446/465.
+
+Quorum check on a second net (base port 31000): with slot 1 stopped for 60 s the
+other 3 kept finalizing (52 to 165, no stall); with slots 1 and 2 stopped,
+finality stayed at 725 for the 45 s window (2 stalls) and resumed when they
+returned. So with n = 4 any window of progress with 2 Rust validators down needs
+the third signer, which is what makes the quorum test below a proof that
+goempo's votes are counted.
+
 Seen once on the Rust-only net, under a host load of 46 on 32 cores: a 40 s
 liveness gap at height 80 (epoch 1, views 22 to 34 all nullified although each
 leader built its proposal). The monitor's stall threshold must allow for it; a

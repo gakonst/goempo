@@ -23,6 +23,8 @@ func main() {
 		os.Exit(runFetchRange(os.Args[2:]))
 	case "follow":
 		os.Exit(runFollow(os.Args[2:]))
+	case "replay":
+		os.Exit(runReplay(os.Args[2:]))
 	case "score":
 		os.Exit(runScore(os.Args[2:]))
 	}

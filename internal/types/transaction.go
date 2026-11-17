@@ -116,6 +116,15 @@ func (tx Transaction) SigningHash() primitives.Hash {
 	return hashPrefixed(byte(tx.Type()), e.Encoded())
 }
 
+func (tx Transaction) UniqueID(sender primitives.Address) primitives.Hash {
+	e := rlp.NewEncoder(txEncodeHint)
+	tx.Data.encodePayload(e, modeSigning)
+	if tx.Type() == TxTypeLegacy {
+		return keccak.Sum256Concat(e.Encoded(), sender[:])
+	}
+	return keccak.Sum256Concat([]byte{byte(tx.Type())}, e.Encoded(), sender[:])
+}
+
 func (tx Transaction) Sender() (primitives.Address, error) {
 	return tx.Data.recoverSender(tx.SigningHash())
 }

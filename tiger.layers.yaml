@@ -16,6 +16,9 @@
   - ./internal/primitives
   - ./internal/trie
   - ./internal/types
+  - ./internal/state
+  - ./internal/tempo/executor
+  - ./internal/u256
 "./internal/version": []
 "./internal/io/...":
   - net
@@ -143,6 +146,7 @@
   - ./internal/primitives
   - ./internal/tempo/chain
   - ./internal/tempo/hardfork
+  - ./internal/tempo/precompiles
   - ./internal/trie
   - ./internal/types
   - ./internal/u256

@@ -8,6 +8,7 @@ import (
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
+	"github.com/gakonst/goempo/internal/tempo/precompiles"
 	"github.com/gakonst/goempo/internal/trie"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
@@ -31,7 +32,6 @@ var (
 	ErrSystemTxPlace = errors.New("executor: system transaction is not last")
 	ErrSystemTxFork  = errors.New("executor: system transaction after T4")
 	ErrTooManyTxs    = errors.New("executor: too many transactions")
-	ErrUnsupported   = errors.New("executor: transaction kind not executed yet")
 )
 
 type State interface {
@@ -40,14 +40,8 @@ type State interface {
 	FinalizeTx()
 }
 
-type Hooks interface {
-	Precompiles(fork hardfork.Fork, base evm.PrecompileLookup) evm.PrecompileLookup
-	ApplyTx(env *TxEnv) (TxOutcome, error)
-}
-
 type Executor struct {
 	ChainID hardfork.ChainID
-	Hooks   Hooks
 }
 
 type Input struct {
@@ -81,7 +75,9 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	assert.Ok(in.Block != nil, "executor needs a block")
 	header := &in.Block.Header
 	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
-	cfg := x.config(rules, header)
+	set := precompiles.NewSet(rules.Fork, rules.EthereumPrecompiles())
+	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
+	cfg := rules.Config(ts.Millis(), set)
 	blk := blockContext(header, in.GetHash)
 	preBlock(st, &systemEnv{config: cfg, block: blk, header: header, rules: rules})
 	txs := in.Block.Transactions
@@ -92,7 +88,7 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	var cumulative uint64
 	for i := 0; i < len(txs); i++ {
 		env := &TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i}
-		out, err := x.apply(env, len(txs))
+		out, err := apply(env, set, len(txs))
 		if err != nil {
 			return Result{}, fmt.Errorf("tx %d: %w", i, err)
 		}
@@ -102,16 +98,7 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	return finish(receipts, cumulative), nil
 }
 
-func (x *Executor) config(rules chain.Rules, header *types.Header) *evm.Config {
-	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
-	var lookup evm.PrecompileLookup = rules.EthereumPrecompiles()
-	if x.Hooks != nil {
-		lookup = x.Hooks.Precompiles(rules.Fork, lookup)
-	}
-	return rules.Config(ts.Millis(), lookup)
-}
-
-func (x *Executor) apply(env *TxEnv, count int) (TxOutcome, error) {
+func apply(env *TxEnv, set *precompiles.Set, count int) (TxOutcome, error) {
 	if IsSystemTx(env.Tx) {
 		if !env.Rules.HasSystemTransaction() {
 			return TxOutcome{}, ErrSystemTxFork
@@ -121,10 +108,7 @@ func (x *Executor) apply(env *TxEnv, count int) (TxOutcome, error) {
 		}
 		return applySystemTx(env)
 	}
-	if x.Hooks == nil {
-		return TxOutcome{}, ErrUnsupported
-	}
-	return x.Hooks.ApplyTx(env)
+	return applyTx(env, set)
 }
 
 func blockContext(header *types.Header, getHash func(uint64) Hash) *evm.BlockContext {

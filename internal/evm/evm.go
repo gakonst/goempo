@@ -19,6 +19,7 @@ type Context struct {
 	Block  *BlockContext
 	Tx     *TxContext
 	Config *Config
+	Tracer Tracer
 }
 
 type EVM struct {
@@ -32,6 +33,7 @@ type EVM struct {
 	top      int
 	hasher   *keccak.Hasher
 	analysis map[Hash][]uint64
+	tracer   Tracer
 }
 
 func New(ctx Context) *EVM {
@@ -49,6 +51,7 @@ func New(ctx Context) *EVM {
 		top:      -1,
 		hasher:   keccak.New(),
 		analysis: make(map[Hash][]uint64),
+		tracer:   tracerOf(ctx),
 	}
 }
 
@@ -113,7 +116,9 @@ func (e *EVM) Execute(msg Message) Result {
 		req.codeSource = e.resolveDelegation(msg.To)
 	}
 	res, pushed := e.dispatch(req)
-	if pushed {
+	if pushed && e.tracer != nil {
+		res = e.runTraced()
+	} else if pushed {
 		res = e.run()
 	}
 	assert.Equal(e.top, -1, "every frame finished")
@@ -195,6 +200,9 @@ func (e *EVM) pushFrame() *Frame {
 }
 
 func (e *EVM) dispatch(req callRequest) (frameResult, bool) {
+	if e.tracer != nil {
+		return e.dispatchTraced(req)
+	}
 	if req.kind.IsCreate() {
 		return e.dispatchCreate(req)
 	}

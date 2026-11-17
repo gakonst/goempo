@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strconv"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/types"
@@ -55,6 +57,7 @@ type Executor interface {
 	Call(block uint64, req *CallRequest, gasCap uint64) (CallResult, error)
 	EstimateGas(block uint64, req *CallRequest, gasCap uint64) (uint64, error)
 	TraceBlock(block uint64, opts *TraceOptions) ([]json.RawMessage, error)
+	TraceBlockParity(block uint64) ([]json.RawMessage, error)
 	TraceCall(block uint64, req *CallRequest, opts *TraceOptions) (json.RawMessage, error)
 }
 
@@ -385,11 +388,14 @@ const (
 	tracerCall
 	tracerPrestate
 	tracerPrestateDiff
+	tracerFourByte
+	tracerNoop
+	tracerMux
 	tracerOther
 )
 
-func tracerOf(opts *TraceOptions) tracerKind {
-	switch opts.Tracer {
+func tracerNamed(name string, config json.RawMessage) tracerKind {
+	switch name {
 	case "":
 		return tracerStruct
 	case "callTracer":
@@ -398,15 +404,32 @@ func tracerOf(opts *TraceOptions) tracerKind {
 		var cfg struct {
 			DiffMode bool `json:"diffMode"`
 		}
-		if len(opts.Config) > 0 && json.Unmarshal(opts.Config, &cfg) == nil && cfg.DiffMode {
+		if len(config) > 0 && json.Unmarshal(config, &cfg) == nil && cfg.DiffMode {
 			return tracerPrestateDiff
 		}
 		return tracerPrestate
+	case "4byteTracer":
+		return tracerFourByte
+	case "noopTracer":
+		return tracerNoop
+	case "muxTracer":
+		return tracerMux
 	}
 	return tracerOther
 }
 
-func systemTrace(tx types.Transaction, kind tracerKind) ([]byte, bool) {
+func tracerOf(opts *TraceOptions) tracerKind {
+	return tracerNamed(opts.Tracer, opts.Config)
+}
+
+func systemTrace(tx types.Transaction, kind tracerKind, opts *TraceOptions) ([]byte, bool) {
+	if kind == tracerMux {
+		return systemMux(tx, opts)
+	}
+	return systemTraceOne(tx, kind)
+}
+
+func systemTraceOne(tx types.Transaction, kind tracerKind) ([]byte, bool) {
 	d, ok := tx.Data.(*types.LegacyTx)
 	if !ok {
 		return nil, false
@@ -418,6 +441,17 @@ func systemTrace(tx types.Transaction, kind tracerKind) ([]byte, bool) {
 		return []byte("{}"), true
 	case tracerPrestateDiff:
 		return []byte(`{"post":{},"pre":{}}`), true
+	case tracerNoop:
+		return []byte("{}"), true
+	case tracerFourByte:
+		return encode(func(w *writer) {
+			w.objOpen()
+			if len(d.Data) >= selectorBytes {
+				w.key(field(hexSelector(d.Data)))
+				w.integer(1)
+			}
+			w.objClose()
+		}), true
 	case tracerCall:
 		return encode(func(w *writer) {
 			w.objOpen()
@@ -431,7 +465,7 @@ func systemTrace(tx types.Transaction, kind tracerKind) ([]byte, bool) {
 			w.kStr("type", "CALL")
 			w.objClose()
 		}), true
-	case tracerOther:
+	case tracerMux, tracerOther:
 		return nil, false
 	default:
 		assert.Unreachable("tracerKind: unhandled value")
@@ -439,17 +473,55 @@ func systemTrace(tx types.Transaction, kind tracerKind) ([]byte, bool) {
 	return nil, false
 }
 
-func systemTo(d *types.LegacyTx) primitives.Address {
-	if d.To == nil {
-		return primitives.Address{}
+const selectorBytes = 4
+
+func hexSelector(data []byte) string {
+	const digits = "0123456789abcdef"
+	out := []byte("0x")
+	for _, c := range data[:selectorBytes] {
+		out = append(out, digits[c>>4], digits[c&0xf])
 	}
-	return *d.To
+	out = append(out, '-')
+	out = strconv.AppendInt(out, int64(len(data)-selectorBytes), 10)
+	return string(out)
 }
 
-func systemTraces(b *BlockData, kind tracerKind) ([]json.RawMessage, bool) {
+func systemMux(tx types.Transaction, opts *TraceOptions) ([]byte, bool) {
+	var subs map[string]json.RawMessage
+	if json.Unmarshal(opts.Config, &subs) != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(subs))
+	for n := range subs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([][]byte, len(names))
+	for i, n := range names {
+		k := tracerNamed(n, subs[n])
+		if k == tracerMux || k == tracerStruct {
+			return nil, false
+		}
+		t, ok := systemTraceOne(tx, k)
+		if !ok {
+			return nil, false
+		}
+		parts[i] = t
+	}
+	return encode(func(w *writer) {
+		w.objOpen()
+		for i, n := range names {
+			w.key(field(n))
+			w.raw(parts[i])
+		}
+		w.objClose()
+	}), true
+}
+
+func systemTraces(b *BlockData, kind tracerKind, opts *TraceOptions) ([]json.RawMessage, bool) {
 	out := make([]json.RawMessage, 0, len(b.Block.Transactions))
 	for _, tx := range b.Block.Transactions {
-		t, ok := systemTrace(tx, kind)
+		t, ok := systemTrace(tx, kind, opts)
 		if !ok {
 			return nil, false
 		}
@@ -459,8 +531,9 @@ func systemTraces(b *BlockData, kind tracerKind) ([]json.RawMessage, bool) {
 }
 
 func (s *Server) blockTraces(b *BlockData, opts *TraceOptions) ([]json.RawMessage, error) {
+	kind := tracerOf(opts)
 	if systemOnly(b) {
-		if traces, ok := systemTraces(b, tracerOf(opts)); ok {
+		if traces, ok := systemTraces(b, kind, opts); ok {
 			return traces, nil
 		}
 	}
@@ -470,6 +543,16 @@ func (s *Server) blockTraces(b *BlockData, opts *TraceOptions) ([]json.RawMessag
 	traces, err := s.exec.TraceBlock(b.Number(), opts)
 	if err != nil {
 		return nil, executionError(err)
+	}
+	for i, tx := range b.Block.Transactions {
+		if i >= len(traces) || traces[i] != nil || !isSystemTx(tx) {
+			continue
+		}
+		t, ok := systemTrace(tx, kind, opts)
+		if !ok {
+			return nil, internalError("unsupported tracer for a system transaction")
+		}
+		traces[i] = t
 	}
 	return traces, nil
 }
@@ -487,16 +570,41 @@ func traceBlockParity(s *Server, p *params) ([]byte, error) {
 	if b == nil {
 		return resultNull, nil
 	}
+	var user []json.RawMessage
 	if !systemOnly(b) {
-		return nil, internalError("trace_block is not served by goempo yet")
+		if s.exec == nil {
+			return nil, internalError("unimplemented")
+		}
+		user, err = s.exec.TraceBlockParity(b.Number())
+		if err != nil {
+			return nil, executionError(err)
+		}
 	}
 	return encode(func(w *writer) {
 		w.arrOpen()
 		for i, tx := range b.Block.Transactions {
-			writeParityCall(w, b, i, tx.Data.(*types.LegacyTx))
+			if isSystemTx(tx) {
+				writeParityCall(w, b, i, tx.Data.(*types.LegacyTx))
+				continue
+			}
+			if i < len(user) {
+				writeFlattened(w, user[i])
+			}
 		}
 		w.arrClose()
 	}), nil
+}
+
+func writeFlattened(w *writer, arr json.RawMessage) {
+	inner := bytes.TrimSpace(arr)
+	if len(inner) < 2 {
+		return
+	}
+	inner = bytes.TrimSpace(inner[1 : len(inner)-1])
+	if len(inner) == 0 {
+		return
+	}
+	w.raw(inner)
 }
 
 func writeParityCall(w *writer, b *BlockData, i int, d *types.LegacyTx) {
@@ -527,4 +635,11 @@ func writeParityCall(w *writer, b *BlockData, i int, d *types.LegacyTx) {
 	w.integer(int64(i))
 	w.kStr("type", "call")
 	w.objClose()
+}
+
+func systemTo(d *types.LegacyTx) primitives.Address {
+	if d.To == nil {
+		return primitives.Address{}
+	}
+	return *d.To
 }

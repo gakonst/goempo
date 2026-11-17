@@ -77,7 +77,7 @@ type sourceState struct {
 	tracer evm.Tracer
 }
 
-func (s sourceState) EVMTracer() evm.Tracer { return s.tracer }
+func (s sourceState) EVMTracer(*evm.TxContext) evm.Tracer { return s.tracer }
 
 func TestTracerFromState(t *testing.T) {
 	st := memstate.New()

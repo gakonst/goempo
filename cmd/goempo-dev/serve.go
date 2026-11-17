@@ -68,6 +68,6 @@ func buildServer(paths servePaths, to uint64) (*rpc.Server, error) {
 		return nil, err
 	}
 	states := &replayState{r: r}
-	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states}
+	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec}
 	return rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, states, exec), nil
 }

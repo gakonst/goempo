@@ -27,6 +27,8 @@ const (
 	extraCorpusFileName     = "corpus-d.jsonl"
 	auxCorpusFileName       = "corpus-e.jsonl"
 	userTraceCorpusFileName = "corpus-f.jsonl"
+	tracerCorpusFileName    = "corpus-g.jsonl"
+	aaTraceCorpusFileName   = "corpus-h.jsonl"
 	statusForbidden         = 403
 	corpusEntriesMax        = 1 << 20
 	corpusBytesMax          = 1 << 34
@@ -76,6 +78,13 @@ type r5Result struct {
 	ReplayHeight     uint64                  `json:"replay_height"`
 	Score            string                  `json:"score"`
 	PerMethod        map[string]*methodScore `json:"per_method"`
+	Mismatches       []mismatchCase          `json:"-"`
+}
+
+type mismatchCase struct {
+	Request string          `json:"request"`
+	Want    json.RawMessage `json:"want"`
+	Got     json.RawMessage `json:"got"`
 }
 
 func defaultCorpusPath() string {
@@ -89,6 +98,8 @@ func defaultCorpusPath() string {
 		filepath.Join(dir, extraCorpusFileName),
 		filepath.Join(dir, auxCorpusFileName),
 		filepath.Join(dir, userTraceCorpusFileName),
+		filepath.Join(dir, tracerCorpusFileName),
+		filepath.Join(dir, aaTraceCorpusFileName),
 	}, ",")
 }
 
@@ -98,6 +109,7 @@ func runRPCDiff(args []string) int {
 	blocks := fs.String("blocks", defaultBlockDir(), "fetched blocks with receipts (fetch)")
 	chunks := fs.String("chunks", defaultChunkDir(), "raw block chunks for replay (fetch-range)")
 	verbose := fs.Bool("v", false, "print the first difference of every method")
+	dump := fs.String("dump", "", "write every mismatching case to this JSONL file")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -108,6 +120,12 @@ func runRPCDiff(args []string) int {
 	}
 	if *verbose {
 		printDiffs(res)
+	}
+	if *dump != "" {
+		if err := writeMismatches(*dump, res.Mismatches); err != nil {
+			fmt.Fprintln(os.Stderr, "rpcdiff:", err)
+			return 1
+		}
 	}
 	line, err := json.Marshal(struct {
 		Rung             string `json:"rung"`
@@ -230,7 +248,7 @@ func rpcDiff(paths diffPaths) (*r5Result, error) {
 		return nil, err
 	}
 	states := &replayState{r: r}
-	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states}
+	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec}
 	srv := rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, states, exec)
 	res := &r5Result{Rung: "R5", PerMethod: map[string]*methodScore{}}
 	for _, e := range scoreOrder(entries) {
@@ -397,6 +415,7 @@ func (res *r5Result) score(srv *rpc.Server, e *corpusEntry) {
 		m.Identical++
 		return
 	}
+	res.Mismatches = append(res.Mismatches, mismatchCase{Request: e.Request, Want: jsonOrString(e.Response), Got: jsonOrString(string(got.Body))})
 	if m.FirstDiff == "" {
 		m.FirstDiff = fmt.Sprintf("req %s\n     want %d %s\n     got  %d %s", clip(e.Request), e.Status, clip(e.Response), got.Status, clip(string(got.Body)))
 	}
@@ -583,4 +602,27 @@ func addAuxBlock(chain *rpc.MemChain, e *corpusEntry, receipts map[uint64][]type
 	}
 	chain.Add(data)
 	return nil
+}
+
+func jsonOrString(s string) json.RawMessage {
+	if json.Valid([]byte(s)) {
+		return json.RawMessage(s)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return b
+}
+
+func writeMismatches(path string, cases []mismatchCase) error {
+	var buf []byte
+	for _, c := range cases {
+		line, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		buf = append(append(buf, line...), '\n')
+	}
+	return os.WriteFile(path, buf, 0o644)
 }

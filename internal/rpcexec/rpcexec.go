@@ -1,8 +1,11 @@
 package rpcexec
 
 import (
+	"sync"
+
 	"encoding/json"
 	"errors"
+	"github.com/gakonst/goempo/internal/tempo/executor"
 
 	"github.com/gakonst/goempo/internal/evm"
 	"github.com/gakonst/goempo/internal/primitives"
@@ -56,6 +59,8 @@ type Executor struct {
 	ChainID hardfork.ChainID
 	Chain   rpc.Chain
 	States  StateSource
+	Blocks  *executor.Executor
+	mu      sync.Mutex
 }
 
 type env struct {
@@ -284,10 +289,6 @@ func failure(out outcome) error {
 		return rpc.RevertError(out.res.Output)
 	}
 	return errors.New(haltText(out.res.Status))
-}
-
-func (x *Executor) TraceBlock(uint64, *rpc.TraceOptions) ([]json.RawMessage, error) {
-	return nil, ErrNoTracer
 }
 
 func (x *Executor) TraceCall(uint64, *rpc.CallRequest, *rpc.TraceOptions) (json.RawMessage, error) {

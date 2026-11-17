@@ -22,6 +22,10 @@
   - ./internal/rpc
   - ./internal/rpcexec
 "./internal/version": []
+"./internal/tracing":
+  - ./internal/evm
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert
 "./internal/io/...":
   - net
   - os
@@ -174,6 +178,8 @@
   - ./internal/io
   - github.com/kapetan-io/tiger/assert
 "./internal/rpcexec":
+  - ./internal/tempo/executor
+  - ./internal/tracing
   - ./internal/genesis
   - ./internal/io
   - ./internal/state

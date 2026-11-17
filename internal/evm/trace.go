@@ -13,12 +13,13 @@ type Tracer interface {
 }
 
 type TracerSource interface {
-	EVMTracer() Tracer
+	EVMTracer(tx *TxContext) Tracer
 }
 
 type TraceCall struct {
 	Kind   CallKind
 	From   Address
+	Target Address
 	To     Address
 	Input  []byte
 	Value  u256.Int
@@ -48,7 +49,7 @@ func tracerOf(ctx Context) Tracer {
 		return ctx.Tracer
 	}
 	if src, ok := ctx.State.(TracerSource); ok {
-		return src.EVMTracer()
+		return src.EVMTracer(ctx.Tx)
 	}
 	return nil
 }
@@ -57,6 +58,7 @@ func (e *EVM) dispatchTraced(req callRequest) (frameResult, bool) {
 	ev := TraceCall{
 		Kind:   req.kind,
 		From:   req.caller,
+		Target: req.address,
 		To:     req.codeAddress,
 		Input:  req.input,
 		Value:  req.value,

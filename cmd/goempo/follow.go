@@ -32,19 +32,21 @@ const _ = uint(tipRefresh - backoffMax)
 const _ = uint(1<<62 - stepsMax)
 
 type follower struct {
-	o         *options
-	n         *node.Node
-	up        *node.Upstream
-	transport *rpc.Transport
-	serving   sync.WaitGroup
-	listener  *goio.TCPListener
-	tip       uint64
-	tipAt     time.Time
-	began     time.Time
-	lastLog   time.Time
-	flushed   uint64
-	flushedAt time.Time
-	retries   int
+	o                             *options
+	n                             *node.Node
+	up                            *node.Upstream
+	transport                     *rpc.Transport
+	serving                       sync.WaitGroup
+	listener                      *goio.TCPListener
+	tip                           uint64
+	tipAt                         time.Time
+	began                         time.Time
+	lastLog                       time.Time
+	prevExec, prevCommit, prevGas uint64
+	perfAt                        time.Time
+	flushed                       uint64
+	flushedAt                     time.Time
+	retries                       int
 }
 
 func (f *follower) serve() error {
@@ -148,9 +150,25 @@ func (f *follower) report(b *rpc.BlockData) {
 		}
 	}
 	n := b.Number()
+	st := f.n.Stats()
+	execNs, commitNs := st.ExecNanos-f.prevExec, st.CommitNanos-f.prevCommit
+	f.prevExec, f.prevCommit = st.ExecNanos, st.CommitNanos
+	if time.Since(f.perfAt) >= logEvery {
+		f.perfAt = time.Now()
+		mgas := func(gas, ns uint64) float64 {
+			if ns == 0 {
+				return 0
+			}
+			return float64(gas) / float64(ns) * 1e3
+		}
+		fmt.Fprintf(os.Stderr, "perf: blocks %d gas %d exec %.3fs commit %.3fs | exec %.1f Mgas/s, exec+commit %.1f Mgas/s, %.0fus/block exec, %.0fus/block commit\n",
+			st.Blocks, st.Gas, float64(st.ExecNanos)/1e9, float64(st.CommitNanos)/1e9,
+			mgas(st.Gas, st.ExecNanos), mgas(st.Gas, st.ExecNanos+st.CommitNanos),
+			float64(st.ExecNanos)/1e3/float64(max(st.Blocks, 1)), float64(st.CommitNanos)/1e3/float64(max(st.Blocks, 1)))
+	}
 	if f.tip-min(f.tip, n) < nearTip {
 		h := &b.Block.Header.Inner
-		fmt.Fprintf(os.Stderr, "block %d %s txs=%d gas=%d stateRoot=%s ok\n", n, b.Hash, len(b.Block.Transactions), h.GasUsed, h.StateRoot)
+		fmt.Fprintf(os.Stderr, "block %d %s txs=%d gas=%d exec=%dus commit=%dus stateRoot=%s ok\n", n, b.Hash, len(b.Block.Transactions), h.GasUsed, execNs/1000, commitNs/1000, h.StateRoot)
 		return
 	}
 	if time.Since(f.lastLog) >= logEvery {

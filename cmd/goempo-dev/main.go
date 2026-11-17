@@ -31,6 +31,8 @@ func main() {
 		os.Exit(runServe(os.Args[2:]))
 	case "rpcdiff":
 		os.Exit(runRPCDiff(os.Args[2:]))
+	case "import":
+		os.Exit(runImport(os.Args[2:]))
 	case "score":
 		os.Exit(runScore(os.Args[2:]))
 	}

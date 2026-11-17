@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/gakonst/goempo/internal/consensus"
 	"github.com/gakonst/goempo/internal/genesis"
@@ -69,10 +70,13 @@ type Config struct {
 }
 
 type Stats struct {
-	Blocks  uint64
-	Txs     uint64
-	Gas     uint64
-	Certify CertifyStats
+	Blocks uint64
+	Txs    uint64
+	Gas    uint64
+	// Time spent in Execute and in Commit (trie update and state root), summed.
+	ExecNanos   uint64
+	CommitNanos uint64
+	Certify     CertifyStats
 }
 
 type Target struct {
@@ -427,7 +431,9 @@ func (n *Node) execute(blk *types.Block, raw []byte, senders []executor.Sender) 
 	defer n.mu.Unlock()
 	h := &blk.Header.Inner
 	st := n.db.State()
+	t0 := time.Now()
 	res, err := n.exec.Execute(st, executor.Input{Block: blk, GetHash: n.getHash, Senders: senders})
+	t1 := time.Now()
 	if err != nil {
 		st.Discard()
 		return nil, &BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"}
@@ -436,7 +442,10 @@ func (n *Node) execute(blk *types.Block, raw []byte, senders []executor.Sender) 
 		st.Discard()
 		return nil, e
 	}
+	t2 := time.Now()
 	root, err := st.Commit(h.Number)
+	n.stats.ExecNanos += uint64(t1.Sub(t0))
+	n.stats.CommitNanos += uint64(time.Since(t2))
 	if err != nil {
 		n.tainted = true
 		return nil, &BlockError{Number: h.Number, Field: "commit", Got: err.Error(), Want: "ok"}

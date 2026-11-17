@@ -190,7 +190,9 @@ func (s *Server) callArgs(p *params) (callTarget, error) {
 
 func RevertError(ret []byte) *Error {
 	msg := "execution reverted"
-	if reason, ok := decodeErrorString(ret); ok {
+	if reason, ok := decodeTempoError(ret); ok {
+		msg += ": " + reason
+	} else if reason, ok := decodeErrorString(ret); ok {
 		msg += ": " + reason
 	}
 	return &Error{Code: CodeExecution, Message: msg, Data: dataResult(ret)}

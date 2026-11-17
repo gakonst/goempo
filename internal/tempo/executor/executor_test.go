@@ -16,19 +16,30 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
-const fixtureBlocksMax = 1 << 10
+const (
+	fixtureBlocksMax = 1 << 10
+	blockBytesMax    = 1 << 22
+)
+
+const _ = uint(blockBytesMax - fixtureBlocksMax)
 
 func readBlocks(t *testing.T, path string) []types.Block {
 	data, err := os.ReadFile(path)
 	assert.NoError(err, "read fixture")
 	blocks := make([]types.Block, 0, fixtureBlocksMax)
-	for i := 0; i < fixtureBlocksMax && len(data) > 0; i++ {
+	count := 0
+	for count = 0; count < fixtureBlocksMax; count++ {
+		if len(data) == 0 {
+			break
+		}
 		n := int(binary.BigEndian.Uint32(data))
+		assert.Ok(n <= blockBytesMax, "block size is bounded")
 		b, err := types.DecodeBlock(data[4 : 4+n])
 		assert.NoError(err, "decode block")
 		blocks = append(blocks, b)
 		data = data[4+n:]
 	}
+	assert.Equal(len(data), 0, "fixture read to its end")
 	return blocks
 }
 

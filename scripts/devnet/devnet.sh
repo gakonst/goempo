@@ -227,9 +227,48 @@ cmd_quorum() {
 	start_slot "$slot"
 }
 
+cmd_r6e() {
+	[ -n "$GOEMPO_SLOTS" ] || die "r6e needs DEVNET_GOEMPO=<goempo slots>"
+	local secs=${1:-3600} out rust="" i
+	out="$WORK/reports/r6e-$(date -u +%Y%m%dT%H%M%S)"
+	mkdir -p "$out"
+	for ((i = 0; i < N; i++)); do is_goempo $i || rust+="${rust:+ }$i"; done
+	set -- $rust
+	echo "devnet: r6e goempo slots $GOEMPO_SLOTS, rust slots $rust, reports in $out"
+	python3 "$HERE/monitor.py" --nodes "$NET/nodes.json" --duration 120 --stall 30 --report "$out/warmup.json" >"$out/warmup.log" 2>&1 || true
+	stop_slot "$1"
+	python3 "$HERE/monitor.py" --nodes "$NET/nodes.json" --duration 120 --stall 20 --skip "$1" --report "$out/quorum.json" >"$out/quorum.log" 2>&1 || true
+	start_slot "$1"
+	python3 "$HERE/monitor.py" --nodes "$NET/nodes.json" --duration "$secs" --stall 30 --report "$out/long.json" >"$out/long.log" 2>&1 || true
+	python3 "$HERE/votes.py" --nodes "$NET/nodes.json" --json "$out/votes.json" >"$out/votes.log" 2>&1 || true
+	python3 - "$out" "$GOEMPO_SLOTS" <<'EOF'
+import json, sys
+out, g = sys.argv[1], [x for x in sys.argv[2].split(",") if x]
+q = json.load(open(out + "/quorum.json"))
+l = json.load(open(out + "/long.json"))
+res = {
+    "votes_counted": q["end_finalized"] is not None and q["start_finalized"] is not None and q["end_finalized"] > q["start_finalized"] and not q["stalls"],
+    "quorum_window": [q["start_finalized"], q["end_finalized"]],
+    "goempo_proposed_finalized": sum(l["proposers"].get(s, 0) for s in g),
+    "proposers": l["proposers"],
+    "ceremonies": l["ceremonies"],
+    "boundaries": len(l["boundaries"]),
+    "forks": len(l["forks"]),
+    "stalls": len(l["stalls"]),
+    "lagging": l["lagging"],
+    "finalized": [l["start_finalized"], l["end_finalized"]],
+    "duration_s": l["duration_s"],
+}
+res["pass"] = (res["votes_counted"] and res["goempo_proposed_finalized"] > 0 and res["forks"] == 0
+               and res["stalls"] == 0 and not res["lagging"] and res["ceremonies"] == res["boundaries"] > 0)
+json.dump(res, open(out + "/summary.json", "w"), indent=1)
+print(json.dumps(res))
+EOF
+}
+
 usage() {
 	cat <<EOF
-usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum|votes> [args]
+usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum|votes|r6e> [args]
   build                 clone tempoxyz/tempo at TEMPO_REV and build tempo, tempo-xtask
   gen                   fresh genesis + DKG for N validators into NET (stops the net)
   start [slot...]       start all (or the given) slots; DEVNET_GOEMPO=0,1 runs those slots as goempo
@@ -238,6 +277,7 @@ usage: $0 <build|gen|start|stop|wipe|status|monitor|quorum|votes> [args]
   status                head and finalized height per slot
   monitor [--duration S] [--report FILE]   forks, stalls, proposers, DKG epochs
   quorum <slot> <S>     stop one slot for S seconds and check finality continues
+  r6e [S]               with DEVNET_GOEMPO set: quorum test, S-second soak (3600), votes; summary.json
   votes [--slots 1,2]   per Rust slot: votes received from each peer, latest vote view, WARNs naming it
 env: DEVNET_WORK=$WORK N=$N BASE_PORT=$BASE_PORT EPOCH=$EPOCH SEED=$SEED
 EOF
@@ -256,6 +296,7 @@ main() {
 	monitor) cmd_monitor "$@" ;;
 	quorum) cmd_quorum "$@" ;;
 	votes) cmd_votes "$@" ;;
+	r6e) cmd_r6e "$@" ;;
 	*) usage; exit 2 ;;
 	esac
 }

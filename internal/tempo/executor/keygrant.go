@@ -1,6 +1,9 @@
 package executor
 
 import (
+	"errors"
+
+	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/tempo/precompiles"
 	"github.com/gakonst/goempo/internal/types"
 )
@@ -37,21 +40,41 @@ func keyGrant(account Address, a *types.KeyAuthorization) precompiles.KeyGrant {
 	return g
 }
 
+func (r *txRun) keyAuthMetered() bool {
+	return r.env.Rules.AtLeast(hardfork.T1) && !r.env.Rules.AtLeast(hardfork.T1B)
+}
+
 func (r *txRun) applyKeyAuthorization() error {
 	if !r.view.isAA() || r.view.aa.KeyAuthorization == nil {
 		return nil
 	}
 	a := &r.view.aa.KeyAuthorization.Authorization
 	precompiles.SetTxOrigin(r.ctx, r.view.sender)
-	k := precompiles.NewContext(r.env.State, r.env.Rules.Fork, protocolCallGas)
+	budget := uint64(protocolCallGas)
+	metered := r.keyAuthMetered()
+	if metered {
+		budget = r.view.gasLimit - r.need.gas
+	}
+	snapshot := r.env.State.Snapshot()
+	k := precompiles.NewContext(r.env.State, r.env.Rules.Fork, budget)
+	k.KeyAuthGas = metered
 	k.Block = r.ctx.Block
 	k.Tx = r.ctx.Tx
 	k.Env = r.ctx.Env
 	k.ChainID = r.ctx.ChainID
 	k.Caller = r.view.sender
 	k.SkipStorageCredits = true
-	if err := precompiles.AuthorizeKey(k, keyGrant(r.view.sender, a)); err != nil {
+	err := precompiles.AuthorizeKey(k, keyGrant(r.view.sender, a))
+	if metered && errors.Is(err, precompiles.ErrOutOfGas) {
+		r.env.State.RevertToSnapshot(snapshot)
+		r.keyAuthOOG = true
+		return nil
+	}
+	if err != nil {
 		return err
+	}
+	if metered {
+		r.need.gas += k.GasUsed()
 	}
 	if r.keyID != a.KeyID || r.view.aa.Signature.Keychain == types.KeychainNone {
 		return nil

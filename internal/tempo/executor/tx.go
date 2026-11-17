@@ -20,16 +20,17 @@ var (
 )
 
 type txRun struct {
-	env     *TxEnv
-	set     *precompiles.Set
-	view    txView
-	price   u256.Int
-	need    intrinsicGas
-	ctx     *precompiles.Context
-	token   Address
-	maxFee  u256.Int
-	keyID   Address
-	machine *evm.EVM
+	env        *TxEnv
+	set        *precompiles.Set
+	view       txView
+	price      u256.Int
+	need       intrinsicGas
+	ctx        *precompiles.Context
+	token      Address
+	maxFee     u256.Int
+	keyID      Address
+	keyAuthOOG bool
+	machine    *evm.EVM
 }
 
 func feeAmount(gas uint64, price u256.Int) u256.Int {
@@ -55,6 +56,9 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 	if err := r.applyKeyAuthorization(); err != nil {
 		return TxOutcome{}, fmt.Errorf("key authorization: %w", err)
 	}
+	if r.keyAuthOOG {
+		return r.finishOutOfGas()
+	}
 	r.warm()
 	r.applyAuthorizations()
 	ran := r.execute()
@@ -72,6 +76,16 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 	logs := env.State.Logs()
 	env.State.FinalizeTx()
 	return TxOutcome{GasUsed: gasUsed, Success: ran.success, Logs: logs}, nil
+}
+
+func (r *txRun) finishOutOfGas() (TxOutcome, error) {
+	gasUsed := r.view.gasLimit
+	if err := r.refundFee(gasUsed); err != nil {
+		return TxOutcome{}, fmt.Errorf("fee refund: %w", err)
+	}
+	logs := r.env.State.Logs()
+	r.env.State.FinalizeTx()
+	return TxOutcome{GasUsed: gasUsed, Success: false, Logs: logs}, nil
 }
 
 func (r *txRun) validate() error {

@@ -92,6 +92,9 @@ func addDebugStubs(t map[string]handler) {
 	t["debug_traceBadBlock"] = debugTraceBadBlock
 	t["debug_getRawTransactions"] = debugGetRawTransactions
 	t["rpc_modules"] = rpcModules
+	t["eth_fillTransaction"] = ethFillTransaction
+	t["eth_callBundle"] = ethCallBundle
+	t["tempo_simulateV1"] = tempoSimulateV1
 	t["consensus_subscribe"] = consensusSubscribe
 	t["operator_peers"] = operatorPeers
 	t["debug_setGCPercent"] = debugSetGCPercent

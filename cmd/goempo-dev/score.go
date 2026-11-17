@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gakonst/goempo/internal/primitives"
@@ -64,8 +65,14 @@ type r1Result struct {
 func runScore(args []string) int {
 	fs := flag.NewFlagSet("score", flag.ContinueOnError)
 	dir := fs.String("dir", defaultBlockDir(), "cache directory with fetched blocks")
+	rung := fs.String("rung", "R1", "rung to score: R1 (decode) or R3 (replay from genesis)")
+	chunks := fs.String("chunks", defaultChunkDir(), "R3: directory of block chunk files (fetch-range)")
+	to := fs.Uint64("to", replayBlocksMax, "R3: last block to execute")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *rung == "R3" {
+		return runReplay([]string{"-dir", *chunks, "-to", strconv.FormatUint(*to, 10), "-diagnose", "off"})
 	}
 	res, err := scoreR1(*dir)
 	if err != nil {

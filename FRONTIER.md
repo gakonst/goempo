@@ -5,7 +5,7 @@
 | R0 Gate | scaffold | - | 2026-11-17 |
 | R1 Decode | 100% (632/632 mainnet blocks) | a5aa2d9 | 2026-11-17 |
 | R2 Genesis | yes | d1c1553 | 2026-11-17 |
-| R3 Replay | 0 | - | - |
+| R3 Replay | 3662 | 033b5e0 | 2026-11-17 |
 | R4 Follow | headers+bodies (no execution) | dc3d3d3 | 2026-11-17 |
 | R5 RPC | 0% | - | - |
 | R6 Validator | no | - | - |
@@ -19,3 +19,6 @@ R1 passes (a5aa2d9, 2026-11-17): `go run ./cmd/goempo-dev fetch` samples mainnet
 R3 EVM statetests: 61903/61903 (100%) of execution-spec-tests v5.4.0 fixtures_develop state_tests for Istanbul..Osaka (Osaka 19517/19517), run by go run ./cmd/goempo-dev statetest <dir> with internal/evm and an in-memory state; pre-Istanbul fork cases (1653) are skipped (not supported).
 
 R4 (partial, 2026-11-17): go run ./cmd/goempo-dev follow -last 1000 starts at an anchor 1000 blocks below the mainnet tip (hash from https://rpc.tempo.xyz), downloads blocks from the RPC upstream (debug_getRawBlock), links every header to its parent hash, checks each body against its header (transactions root, ommers hash, withdrawals root), checks that the chain reaches the upstream's tip hash, hands each block in order to an executor interface (internal/sync Executor), and compares every block hash with eth_getBlockByNumber on the check node. Mainnet run: 1082 blocks (684 txs) from 49392468 to the tip in 44 s, all 1082 hashes equal, then followed the tip for another ~840 blocks. The devp2p path (internal/p2p/rlpx: EIP-8 ECIES handshake and frames matching the EIP-8 vectors; internal/p2p: Hello, eth/68-69 Status with Tempo fork id matching eth_config's forkId for T11..T13, GetBlockHeaders and GetBlockBodies) is tested against real mainnet blocks over the in-memory network only: the hosted Hand cannot reach mainnet devp2p ports (egress allows 443 only; the tailnet route to tempo-mainnet-stable-rpc-service:30004 accepted TCP but never answered the auth). Not done yet: executing the followed blocks (needs state at the anchor: a snapshot, or replay from genesis), consensus finalization certificates (BLS), discovery (discv4/discv5).
+
+R3 replay (033b5e0, 2026-11-17): "go run ./cmd/goempo-dev fetch-range -to 9999" caches mainnet blocks (debug_getRawBlock, 10k-block flate chunks under ~/cache/mainnet), then "go run ./cmd/goempo-dev replay" (or "score -rung R3") executes blocks 1..N from the embedded genesis with internal/tempo/executor over internal/state, checking each block's gas used, receipts root, logs bloom and state root. Height 3662: blocks 1..3210 are system-transaction-only; 3211..3662 include the first 0x76 and legacy user transactions with TIP-20 fees through the fee manager. First mismatch: block 3663 tx 0, FeeManager setUserToken runs out of gas inside the precompile (sent to agent 5).
+

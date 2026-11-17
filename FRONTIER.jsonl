@@ -21,3 +21,4 @@
 {"date":"2026-11-17","rung":"precompiles-oracle","score":"4986/4992","commit":"b9f3ffb","note":"zempo reference-oracle corpus T0..T14; 6 T14 diffs follow newer tempo c8b89f9; T1C window 10,129,394..10,400,000 replays with 0 heals"}
 {"date":"2026-11-17","rung":"R3","score":"15150000","commit":"c780ea9","note":"datadir replay from genesis, no heals, past T2; AA batch call targets warmed when their call starts"}
 {"date":"2026-11-17","rung":"R5","score":"111/111 methods, 3378/3378 cases; 121/121 reference methods served","commit":"ab9f4ae","note":"block access lists, multiproof, opcode gas, traceCallMany, traceBlock, tempo_simulateV1, callBundle, fillTransaction, eth_config, debug stubs; corpus-j (267 cases from the mainnet node). Command: go run ./cmd/goempo-dev rpcdiff -v"}
+{"date":"2026-11-17","rung":"R3","score":"23100000","commit":"db91ca0","note":"datadir replay from genesis, no heals, past T3 and T4; T3 call-scope check and 2D-nonce CREATE new-account gas"}

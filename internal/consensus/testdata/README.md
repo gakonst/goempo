@@ -1,0 +1,2 @@
+- mainnet_finalizations.jsonl: consensus_getFinalization {"height":N} from https://rpc.tempo.xyz on 2026-11-17 for blocks 42100000, 42098400 (first block of epoch 1949) and 44107200 (first block of epoch 2042).
+- mainnet_block_42098399_extradata.hex: extraData of mainnet block 42098399 (eth_getBlockByNumber), the DKG outcome that installs epoch 1949's identity.

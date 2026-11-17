@@ -26,7 +26,7 @@ const (
 	KindPing Kind = prefixPing
 )
 
-type Message struct {
+type WireMessage struct {
 	Kind    Kind
 	Channel uint64
 	Data    []byte
@@ -44,42 +44,42 @@ func EncodePing() []byte {
 	return []byte{prefixPing}
 }
 
-func DecodeMessage(b []byte, maxData uint32) (Message, error) {
+func DecodeMessage(b []byte, maxData uint32) (WireMessage, error) {
 	if len(b) == 0 {
-		return Message{}, ErrMessage
+		return WireMessage{}, ErrMessage
 	}
 	switch b[0] {
 	case prefixPing:
 		if len(b) != 1 {
-			return Message{}, ErrMessage
+			return WireMessage{}, ErrMessage
 		}
-		return Message{Kind: KindPing}, nil
+		return WireMessage{Kind: KindPing}, nil
 	case prefixData:
 		return decodeData(b[1:], maxData)
 	default:
-		return Message{}, ErrMessage
+		return WireMessage{}, ErrMessage
 	}
 }
 
-func decodeData(b []byte, maxData uint32) (Message, error) {
+func decodeData(b []byte, maxData uint32) (WireMessage, error) {
 	ch, err := ReadVarint(b)
 	if err != nil {
-		return Message{}, err
+		return WireMessage{}, err
 	}
 	b = b[ch.Len:]
 	n, err := ReadVarint(b)
 	if err != nil {
-		return Message{}, err
+		return WireMessage{}, err
 	}
 	if n.Len > varintU32Max {
-		return Message{}, ErrVarint
+		return WireMessage{}, ErrVarint
 	}
 	if n.Value > uint64(maxData) {
-		return Message{}, ErrMessageTooLarge
+		return WireMessage{}, ErrMessageTooLarge
 	}
 	b = b[n.Len:]
 	if uint64(len(b)) != n.Value {
-		return Message{}, ErrMessage
+		return WireMessage{}, ErrMessage
 	}
-	return Message{Kind: KindData, Channel: ch.Value, Data: b}, nil
+	return WireMessage{Kind: KindData, Channel: ch.Value, Data: b}, nil
 }

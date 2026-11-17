@@ -135,56 +135,31 @@ func scalarMontR2() scalar {
 	return z
 }
 
-// montMul returns a*b/2^256 mod n for a, b below n.
+// montMulGeneric returns a*b/2^256 mod n for a, b below n: the full
+// product, then four word-by-word reductions into a nine-word accumulator.
 func montMulGeneric(a, b scalar) scalar {
-	var t0, t1, t2, t3, t4 uint64
+	w := a.mulWide(b)
+	var top uint64
 	for i := 0; i < scalarLimbs; i++ {
-		ai := a[i]
-		var c, hi, lo, cc uint64
-		hi, lo = bits.Mul64(ai, b[0])
-		t0, cc = bits.Add64(t0, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(ai, b[1])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t1, cc = bits.Add64(t1, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(ai, b[2])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t2, cc = bits.Add64(t2, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(ai, b[3])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t3, cc = bits.Add64(t3, lo, 0)
-		c = hi + cc
-		t4 += c
-
-		m := t0 * montInv
-		hi, lo = bits.Mul64(m, scalarN[0])
-		_, cc = bits.Add64(t0, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(m, scalarN[1])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t0, cc = bits.Add64(t1, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(m, scalarN[2])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t1, cc = bits.Add64(t2, lo, 0)
-		c = hi + cc
-		hi, lo = bits.Mul64(m, scalarN[3])
-		lo, cc = bits.Add64(lo, c, 0)
-		hi += cc
-		t2, cc = bits.Add64(t3, lo, 0)
-		c = hi + cc
-		t3, cc = bits.Add64(t4, c, 0)
-		t4 = cc
+		m := w[i] * montInv
+		var carry uint64
+		for j := 0; j < scalarLimbs; j++ {
+			hi, lo := bits.Mul64(m, scalarN[j])
+			var c uint64
+			lo, c = bits.Add64(lo, w[i+j], 0)
+			hi += c
+			lo, c = bits.Add64(lo, carry, 0)
+			hi += c
+			w[i+j] = lo
+			carry = hi
+		}
+		for k := i + scalarLimbs; k < len(w) && carry != 0; k++ {
+			w[k], carry = bits.Add64(w[k], carry, 0)
+		}
+		top += carry
 	}
-	z := scalar{t0, t1, t2, t3}
-	if t4 != 0 {
+	z := scalar{w[4], w[5], w[6], w[7]}
+	if top != 0 {
 		z, _ = z.rawSub(scalarN)
 		return z
 	}
@@ -192,6 +167,13 @@ func montMulGeneric(a, b scalar) scalar {
 }
 
 func (a scalar) sqr() scalar { return a.mul(a) }
+
+func montSqrNGeneric(a scalar, n int) scalar {
+	for range n {
+		a = montMulGeneric(a, a)
+	}
+	return a
+}
 
 const invWindowBits = 4
 
@@ -211,9 +193,7 @@ func (a scalar) inv() scalar {
 	z := montOne
 	for limb := scalarLimbs - 1; limb >= 0; limb-- {
 		for shift := 64 - invWindowBits; shift >= 0; shift -= invWindowBits {
-			for range invWindowBits {
-				z = montMul(z, z)
-			}
+			z = montSqrN(z, invWindowBits)
 			if w := (scalarNMinus2[limb] >> uint(shift)) & (invWindowSize - 1); w != 0 {
 				z = montMul(z, table[w])
 			}

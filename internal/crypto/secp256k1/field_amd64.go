@@ -8,6 +8,28 @@ func feMulADX(z, a, b *fe)
 //go:noescape
 func scalarMontMulADX(z, a, b *scalar)
 
+//go:noescape
+func feSqrNADX(z *fe, n int)
+
+//go:noescape
+func scalarMontSqrNADX(z *scalar, n int)
+
+func (a fe) sqrN(n int) fe {
+	if !useADX || n < 1 {
+		return a.sqrNGeneric(n)
+	}
+	feSqrNADX(&a, n)
+	return a
+}
+
+func montSqrN(a scalar, n int) scalar {
+	if !useADX || n < 1 {
+		return montSqrNGeneric(a, n)
+	}
+	scalarMontSqrNADX(&a, n)
+	return a
+}
+
 func montMul(a, b scalar) scalar {
 	if !useADX {
 		return montMulGeneric(a, b)

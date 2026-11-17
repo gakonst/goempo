@@ -258,7 +258,7 @@ func (a fe) sqrGeneric() fe {
 	return reduceWide(wide{l00, t1, t2, t3, t4, t5, t6, t7})
 }
 
-func (a fe) sqrN(n int) fe {
+func (a fe) sqrNGeneric(n int) fe {
 	z := a
 	for i := 0; i < n; i++ {
 		z = z.sqr()

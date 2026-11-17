@@ -111,8 +111,21 @@ func TestScalarArithmeticMatchesBig(t *testing.T) {
 		bv := new(big.Int).Mod(limbsBig(inputs[(i*7+3)%len(inputs)]), bigN)
 		a, b := scalar(bigLimbs(t, av)), scalar(bigLimbs(t, bv))
 		mul := bigLimbs(t, new(big.Int).Mod(new(big.Int).Mul(av, bv), bigN))
+		if got, want := a.mul(a), scalar(bigLimbs(t, new(big.Int).Mod(new(big.Int).Mul(av, av), bigN))); got != want {
+			t.Fatalf("mul %x squared = %x, want %x", a, got, want)
+		}
+		if montMul(a, a) != montMulGeneric(a, a) {
+			t.Fatalf("montMul %x squared differs from generic", a)
+		}
 		if montMul(a, b) != montMulGeneric(a, b) {
 			t.Fatalf("montMul %x %x differs from generic", a, b)
+		}
+		if n := 1 + i%9; montSqrN(a, n) != montSqrNGeneric(a, n) {
+			t.Fatalf("montSqrN %x %d differs from generic", a, n)
+		}
+		fa := fe{l0: a[0], l1: a[1], l2: a[2], l3: a[3] >> 1}
+		if n := 1 + i%23; fa.sqrN(n) != fa.sqrNGeneric(n) {
+			t.Fatalf("sqrN %x %d differs from generic", a, n)
 		}
 		if got := a.mul(b); got != scalar(mul) {
 			t.Fatalf("mul %x %x = %x, want %x", a, b, got, mul)

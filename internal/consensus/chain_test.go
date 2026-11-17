@@ -142,4 +142,3 @@ func TestModeratoNetworkIdentity(_ *testing.T) {
 	_, err = m.RegisterBoundary(37735199, unhex(string(raw)))
 	assert.Ok(errors.Is(err, consensus.ErrNetworkIdentity), "the mainnet identity does not verify the moderato outcome")
 }
-

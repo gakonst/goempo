@@ -84,3 +84,5 @@
   - github.com/kapetan-io/tiger/assert
 "./internal/crypto/bls12381":
   - github.com/kapetan-io/tiger/assert
+"./internal/tempo/hardfork":
+  - github.com/kapetan-io/tiger/assert

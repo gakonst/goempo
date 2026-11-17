@@ -153,6 +153,23 @@ All times UTC on 2026-11-17, from commit timestamps (203 commits in phase one: 1
 | 08:21 | last commit of phase one |
 | 18:01 | phase two starts: a validator swarm for R6 against the Rust tempo validators |
 
+## R7 head-to-head with the Rust node
+
+The question was whether goempo is faster than tempoxyz/tempo on the same blocks and cores. Scripts are in scripts/bench (README there); numbers and exact commands are in docs/METRICS.md under "Head-to-head with the Rust node".
+
+- Harness. The first Rust baseline, `tempo import` over an exported RLP file, "failed" with exit 1 after 11 s. It hadn't failed: tempo 1.18.4 compares the file's decoded transaction count with the transaction numbers it assigned, Tempo's system transactions count on one side only, and it exits 1 after a complete import ("Imported 41084/41084 blocks, 88187/19243 transactions"). The harness now judges a run from the log, by whether the Finish stage reached its target (rust-stages.py), and starts each range at the datadir's head + 1. run-exec.py interleaves the two nodes on the same pinned 8 threads, alternating which goes first, each round from a fresh copy of its starting datadir. goempo-dev serve learned -datadir, so both nodes serve the same height from disk for the RPC comparison.
+- First result (goempo 5faaace). goempo was faster on light blocks: early 1..1M, 9.4x wall; recent 49.41M..49.45M, 2.4x wall. It lost on transaction-heavy blocks (busy 9.89M..9.91M, 659k txs): 60.6 s against Rust's 30.9 s. On RPC goempo answered single requests 1.1-2.0x faster and tied or trailed under 16-64 clients. eth_call stopped scaling because the first concurrent load test crashed `serve` with concurrent map writes, and the fix was a state lock (5faaace).
+- Profiling where goempo lost, then landing fixes. Each fix was A/B timed on the same cores and kept only when a replay over the range with datadir checks passed (gas, receipts root, bloom and state root after every block):
+  - P-384 attestation chains were verified again in every block (40% of recent CPU). d88983d memoizes verified signatures: recent 19.9 s to 14.5 s.
+  - The keychain key and the fee payer were recovered serially in execution. ad93652 recovers them in the parallel sender pass: 14.3 s to 12.9 s.
+  - Jumpdest analysis was redone for every transaction. dca9c3e shares it across transactions by code hash: 13.9 s to 12.9 s.
+  - GLV endomorphism with 8-bit generator windows in secp256k1 recovery (425c3d7): 117 to 95 us per recovery.
+  - Replay waited for a whole 10,000-block chunk to decode before it executed anything. 1adfd56 streams the blocks and skips senders below the head: busy -8 to -13%.
+  - Cached mapping-slot hashes in the precompiles (efd955d): busy 49.2 s to 47.2 s.
+  - ModInverse through math/big's Lehmer GCD instead of a binary loop (a01c695): 23 us to 1.8 us, so recovery went from 95 to 75 us.
+- Tried and dropped. Parallel trie subtree hashing was slower at 4 cores, since replay already uses every core. A dedicated field squaring didn't inline its reduction and ran slower.
+- Where it stands (a01c695): goempo is still 1.6x slower than Rust on the busy range. One reason is that it computes the state root after every one of the 20,000 blocks, where Rust's import computes it once. The other is that pure-Go secp256k1 recovery remains about half of its CPU there, against Rust's libsecp256k1.
+
 ## Constraints
 
 These held for every line, and they shaped the code as much as the reference did.

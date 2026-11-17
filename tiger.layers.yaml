@@ -236,15 +236,20 @@
   - ./internal/state
 "./internal/node":
   - ./internal/consensus
+  - ./internal/crypto/keccak
+  - ./internal/dkg
   - ./internal/genesis
   - ./internal/io
   - ./internal/primitives
+  - ./internal/rlp
   - ./internal/rpc
   - ./internal/rpcexec
   - ./internal/state
   - ./internal/sync
   - ./internal/tempo/executor
   - ./internal/tempo/hardfork
+  - ./internal/tempo/precompiles
+  - ./internal/trie
   - ./internal/types
   - ./internal/u256
 "./internal/validator":

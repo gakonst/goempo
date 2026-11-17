@@ -205,12 +205,12 @@ func (l *Local) GetHash(n uint64) primitives.Hash {
 	return l.getHash(n)
 }
 
-func (l *Local) WithHead(fn func(st *state.State, head *types.Block) error) error {
+func (l *Local) WithHead(fn func(st *state.State, head *types.Block, getHash func(uint64) primitives.Hash) error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	st := l.db.State()
 	defer st.Discard()
-	return fn(st, l.head)
+	return fn(st, l.head, l.getHash)
 }
 
 func (l *Local) run(b *types.Block) (*state.State, error) {

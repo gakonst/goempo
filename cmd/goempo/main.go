@@ -108,6 +108,14 @@ func openNode(o *options, up *node.Upstream) (*node.Node, error) {
 }
 
 func run(args []string) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "validator":
+			return runValidator(args[1:])
+		case "keys":
+			return runKeys(args[1:])
+		}
+	}
 	o, err := parse(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

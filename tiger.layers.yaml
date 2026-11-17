@@ -58,3 +58,6 @@
   - ./internal/rlp
   - ./internal/trie
   - ./internal/crypto/keccak
+"./internal/storage":
+  - ./internal/io
+  - github.com/kapetan-io/tiger/assert

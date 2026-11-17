@@ -65,7 +65,7 @@ type keyLookup struct {
 func (c *Context) activeKey(rk recoveredKey) (keyLookup, error) {
 	key, err := ValidateKeychainAuthorization(c, KeyUse{Account: rk.account, KeyID: rk.keyID, SigType: uint8(rk.kind), Check: c.at(hardfork.T14)})
 	if err != nil {
-		if isRevert(err) {
+		if !isSystemError(err) {
 			return keyLookup{}, nil
 		}
 		return keyLookup{}, err

@@ -89,7 +89,7 @@ func (c *Context) isAdminKey(k keyRef) (bool, error) {
 	}
 	key, err := c.loadActiveKey(k)
 	if err != nil {
-		if isRevert(err) {
+		if !isSystemError(err) {
 			return false, nil
 		}
 		return false, err
@@ -114,11 +114,10 @@ func (c *Context) checkGrant(g KeyGrant) error {
 	if g.Restrictions.Expiry <= c.timestamp() {
 		return errSel("ExpiryInPast()")
 	}
-	w, err := c.sload(AccountKeychainAddress, c.keySlot(keyRef{account: g.Account, keyID: g.KeyID}))
+	existing, err := c.readAuthorizedKey(keyRef{account: g.Account, keyID: g.KeyID})
 	if err != nil {
 		return err
 	}
-	existing := decodeAuthorizedKey(w)
 	if existing.expiry > 0 {
 		return errSel("KeyAlreadyExists()")
 	}

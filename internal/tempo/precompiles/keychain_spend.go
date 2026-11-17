@@ -34,6 +34,20 @@ type authorizedKey struct {
 	admin         bool
 }
 
+const maxStoredSigType = SigConfigurableAccount
+
+func (c *Context) readAuthorizedKey(k keyRef) (authorizedKey, error) {
+	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
+	if err != nil {
+		return authorizedKey{}, err
+	}
+	key := decodeAuthorizedKey(w)
+	if fKeySigType.u64(w) > uint64(maxStoredSigType) {
+		return authorizedKey{}, revert(abiError(selPanic, wordOfU64(panicEnumConversion)))
+	}
+	return key, nil
+}
+
 func decodeAuthorizedKey(w Word) authorizedKey {
 	return authorizedKey{
 		sigType:       uint8(fKeySigType.u64(w)),
@@ -124,11 +138,10 @@ func SetTxOrigin(c *Context, origin Address) {
 }
 
 func (c *Context) loadActiveKey(k keyRef) (authorizedKey, error) {
-	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
+	key, err := c.readAuthorizedKey(k)
 	if err != nil {
 		return authorizedKey{}, err
 	}
-	key := decodeAuthorizedKey(w)
 	if key.revoked {
 		return key, errSel("KeyAlreadyRevoked()")
 	}
@@ -269,7 +282,7 @@ func (c *Context) refundSpendingLimit(f tokenFlow) error {
 	}
 	key, err := c.loadActiveKey(k)
 	if err != nil {
-		if isRevert(err) {
+		if !isSystemError(err) {
 			return nil
 		}
 		return err

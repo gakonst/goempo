@@ -68,11 +68,11 @@ func (c *Context) revokeKey(k keyRef) error {
 	if err := c.ensureAdminCaller(k.account); err != nil {
 		return err
 	}
-	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
+	stored, err := c.readAuthorizedKey(k)
 	if err != nil {
 		return err
 	}
-	if decodeAuthorizedKey(w).expiry == 0 {
+	if stored.expiry == 0 {
 		return errSel("KeyNotFound()")
 	}
 	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(authorizedKey{revoked: true})); err != nil {
@@ -152,11 +152,10 @@ func (c *Context) effectiveLimit(k keyRef, token Address) (limitView, error) {
 	if k.keyID == (Address{}) && c.at(hardfork.T3) {
 		return limitView{}, nil
 	}
-	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
+	key, err := c.readAuthorizedKey(k)
 	if err != nil {
 		return limitView{}, err
 	}
-	key := decodeAuthorizedKey(w)
 	if key.revoked || key.expiry == 0 {
 		return limitView{}, nil
 	}
@@ -228,8 +227,10 @@ var keychainTable = register(AccountKeychainAddress, newTable(
 	}).from(hardfork.T3),
 	view("getKey(address,address)", []abiType{tAddress, tAddress}, func(c *Context, a []abiValue) ([]byte, error) {
 		k := viewKeyArgs(a)
-		w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
-		key := decodeAuthorizedKey(w)
+		key, err := c.readAuthorizedKey(k)
+		if err != nil {
+			return nil, err
+		}
 		if key.expiry == 0 || key.revoked {
 			return encodeWords(Hash{}, Hash{}, Hash{}, Hash{}, flag(key.revoked).hash()), err
 		}

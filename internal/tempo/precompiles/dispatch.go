@@ -60,7 +60,10 @@ var (
 	selPanic             = selector("Panic(uint256)")
 )
 
-const panicUnderOverflow = 0x11
+const (
+	panicUnderOverflow  = 0x11
+	panicEnumConversion = 0x21
+)
 
 func underOverflow() error { return revert(abiError(selPanic, wordOfU64(panicUnderOverflow))) }
 

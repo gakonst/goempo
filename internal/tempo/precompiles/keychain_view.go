@@ -19,11 +19,10 @@ func (c *Context) allowedCalls(k keyRef) (allowedCallsView, error) {
 	if k.keyID == (Address{}) {
 		return allowedCallsView{}, nil
 	}
-	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
+	key, err := c.readAuthorizedKey(k)
 	if err != nil {
 		return allowedCallsView{}, err
 	}
-	key := decodeAuthorizedKey(w)
 	if key.expiry == 0 || key.revoked || c.timestamp() >= key.expiry {
 		return allowedCallsView{scoped: true}, nil
 	}

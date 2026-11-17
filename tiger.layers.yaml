@@ -91,3 +91,14 @@
 "./internal/crypto/kzg":
   - ./internal/crypto/bls12381
   - ./internal/u256
+"./internal/state":
+  - ./internal/crypto/keccak
+  - ./internal/evm
+  - ./internal/genesis
+  - ./internal/io
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/storage
+  - ./internal/trie
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert

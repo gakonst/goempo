@@ -230,14 +230,14 @@ func (r *replayer) run(to uint64) error {
 		if i+1 < chunks {
 			next = prefetchChunk(r.ctx, r.dir, start+chunkBlocks)
 		}
-		raws, err := got.raws, got.err
+		blocks, err := got.blocks, got.err
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("cache ends before block %d", start)
 		}
 		if err != nil {
 			return err
 		}
-		done, err := r.runChunk(raws, chunkSpan{start: start, to: to})
+		done, err := r.runChunk(blocks, chunkSpan{start: start, to: to})
 		if err != nil {
 			return err
 		}
@@ -253,9 +253,9 @@ type chunkSpan struct {
 	to    uint64
 }
 
-func (r *replayer) runChunk(raws [][]byte, span chunkSpan) (bool, error) {
+func (r *replayer) runChunk(blocks []decodedBlock, span chunkSpan) (bool, error) {
 	start, to := span.start, span.to
-	for j := 0; j < len(raws); j++ {
+	for j := 0; j < len(blocks); j++ {
 		number := start + uint64(j)
 		if number <= r.head {
 			continue
@@ -271,11 +271,10 @@ func (r *replayer) runChunk(raws [][]byte, span chunkSpan) (bool, error) {
 		if number != r.head+1 {
 			return false, errCacheGap
 		}
-		blk, err := types.DecodeBlock(raws[j])
-		if err != nil {
+		if err := blocks[j].err; err != nil {
 			return false, fmt.Errorf("block %d: %w", number, err)
 		}
-		if !r.stepOrHeal(&blk) {
+		if !r.stepOrHeal(&blocks[j].blk) {
 			return true, nil
 		}
 		if err := r.checkpoint(number); err != nil {

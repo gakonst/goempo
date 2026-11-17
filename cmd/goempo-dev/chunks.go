@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/gakonst/goempo/internal/types"
 )
 
 const (
@@ -197,8 +199,13 @@ func readChunkBytes(dir string, start uint64) ([]byte, error) {
 }
 
 type chunkRead struct {
-	raws [][]byte
-	err  error
+	blocks []decodedBlock
+	err    error
+}
+
+type decodedBlock struct {
+	blk types.Block
+	err error
 }
 
 type chunkPrefetch struct {
@@ -210,8 +217,9 @@ func prefetchChunk(ctx context.Context, dir string, start uint64) *chunkPrefetch
 	p := &chunkPrefetch{out: make(chan chunkRead, 1)}
 	p.wg.Go(func() {
 		raws, err := readChunk(dir, start)
+		got := chunkRead{blocks: decodeChunk(raws), err: err}
 		select {
-		case p.out <- chunkRead{raws: raws, err: err}:
+		case p.out <- got:
 		case <-ctx.Done():
 		}
 	})
@@ -229,6 +237,14 @@ func (p *chunkPrefetch) take(ctx context.Context) chunkRead {
 
 func (p *chunkPrefetch) Wait() {
 	p.wg.Wait()
+}
+
+func decodeChunk(raws [][]byte) []decodedBlock {
+	out := make([]decodedBlock, len(raws))
+	for i := range raws {
+		out[i].blk, out[i].err = types.DecodeBlock(raws[i])
+	}
+	return out
 }
 
 func readChunk(dir string, start uint64) ([][]byte, error) {

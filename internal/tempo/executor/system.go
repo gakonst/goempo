@@ -46,6 +46,7 @@ func preBlock(st State, env *systemEnv) {
 		})
 	}
 	deployBoundaryPrecompiles(st, env.rules)
+	deployZones(st, env.rules)
 }
 
 func historyCall(st State, env *systemEnv, call systemCall) {

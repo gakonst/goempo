@@ -70,6 +70,44 @@ R6 sub-rungs (R6a p2p interop, R6b wire vectors, R6c builder, R6d validator wiri
 
 `goempo-dev replay -result <file>` writes a JSON object with the height reached, wall seconds, blocks/s and a `bench` object (blocks, gas, txs, gas/s, txs/s, CPU seconds, peak RSS, GOMAXPROCS, host). The script reads every such file in the results directories and lists the longest runs. Keep the range in mind when comparing: early mainnet is almost all system-transaction-only blocks (hundreds of thousands of blocks/s), while recent blocks carry real payment traffic (thousands of blocks/s at hundreds of Mgas/s). Mgas/s is the fairer number across ranges.
 
+### Head-to-head with the Rust node (R7)
+
+Measured 2026-11-17 on a 32-core build machine (AMD EPYC 4585PX, 16 cores / 32 threads, shared: host load 20-60 during the runs, sometimes spiking past 150), with goempo and tempoxyz/tempo 1.18.4 (cf561ef16654) pinned to the same 8 hardware threads (`taskset -c 4-7,20-23`, 4 cores with their SMT siblings), runs interleaved and alternating which node goes first, 5 rounds, each from a fresh copy of its starting datadir. Scripts and method: scripts/bench/README.md. Both nodes execute byte-identical mainnet blocks (debug_getRawBlock bytes; scripts/bench/export-rlp.py feeds them to `tempo import`).
+
+- Rust: `tempo import --datadir <copy> --chain mainnet range.rlp` (staged pipeline; state root once for the range). "exec s" is its Execution + MerkleExecute stages.
+- goempo: `goempo-dev replay -datadir <copy> -dir <chunks> -to LAST -diagnose off` (gas, receipts root, bloom and state root checked after every block). "exec s" is replay's own wall time.
+
+Ranges: early 1..1,000,000 from genesis (1.0M txs, nearly all system transactions, 0.14 Ggas); busy 9,890,000..9,909,999 (20k blocks, 659k txs, 31.5 Ggas: the largest block chunks in the cache) from a datadir at 9,889,999; recent 49,408,916..49,449,999 (41k blocks, 19k txs, 3.9 Ggas) from a datadir at 49,408,915.
+
+goempo 5faaace (before this round's speedups), medians of 5 (min-max):
+
+| range | node | wall s | exec s | CPU s | peak RSS MB | blocks/s (exec) | Mgas/s (exec) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| early | goempo | 3.58 (3.37-3.75) | 3.57 | 8.8 | 120 | 280k | 37.9 |
+| early | Rust | 33.55 (31.36-35.17) | 11.06 | 37.9 | 6,891 | 90k | 12.2 |
+| busy | goempo | 60.63 (59.88-62.42) | 60.41 | 111.2 | 1,992 | 331 | 521 |
+| busy | Rust | 30.91 (29.95-31.46) | 13.95 | 55.7 | 3,121 | 1,434 | 2,258 |
+| recent | goempo | 6.96 (6.80-11.42) | 6.66 | 10.9 | 444 | 6,169 | 582 |
+| recent | Rust | 16.87 (16.43-17.97) | 7.90 | 15.4 | 4,388 | 5,201 | 490 |
+
+Rust's stage medians, busy: Headers 2.0 s, Bodies 1.9, SenderRecovery 3.8, Execution 11.4, MerkleExecute 2.6, TransactionLookup 0.6, IndexStorageHistory 4.7; recent: Headers 1.8, Execution 6.3, MerkleExecute 1.6, IndexStorageHistory 3.0, IndexAccountHistory 2.9. So goempo wins wall time where blocks are light (early: 9.4x; recent: 2.4x, and exec alone 1.2x), and loses on transaction-heavy blocks (busy: 2.0x slower wall, 4.3x slower than Rust's execution plus one Merkle pass). Part of the busy gap is the work split: goempo computes the state root after each of the 20,000 blocks (state commit was 15% of the busy profile), Rust once for the range; the rest is sender recovery in pure Go (secp256k1 recovery was 52% of goempo's busy CPU) and execution.
+
+RPC, both nodes serving height 49,449,999 from their datadirs on the same 8 threads (`taskset -c 0-3,16-19`; Rust `tempo node` with networking off and `--follow` pointed at nothing; goempo `goempo-dev serve -datadir`), scripts/bench/rpc-load.py from 8 other threads, 3 interleaved rounds, a corpus of 400 requests per method over blocks 49,449,000..49,449,999 (eth_call is TIP-20 balanceOf at a random recent block; eth_getLogs over one block). Answers compared first (rpc-load.py diff). Medians, req/s and p50/p99 ms:
+
+| method | conc | goempo req/s | Rust req/s | goempo/Rust | goempo p50/p99 | Rust p50/p99 |
+| --- | --- | --- | --- | --- | --- | --- |
+| eth_call | 1 | 9,478 | 7,418 | 1.28 | 0.104/0.157 | 0.127/0.261 |
+| eth_call | 16 | 28,402 | 44,088 | 0.64 | 0.553/1.049 | 0.264/0.632 |
+| eth_call | 64 | 25,950 | 45,394 | 0.57 | 1.666/8.608 | 0.860/2.783 |
+| eth_getBalance | 1 | 17,289 | 13,049 | 1.32 | 0.056/0.087 | 0.068/0.133 |
+| eth_getBalance | 64 | 49,216 | 53,904 | 0.91 | 0.309/2.057 | 0.276/1.580 |
+| eth_getBlockByNumber | 1 | 10,845 | 9,761 | 1.11 | 0.087/0.228 | 0.095/0.166 |
+| eth_getBlockByNumber | 64 | 45,116 | 48,128 | 0.94 | 0.447/3.742 | 0.632/2.419 |
+| eth_getLogs | 1 | 10,503 | 5,232 | 2.01 | 0.090/0.159 | 0.179/0.346 |
+| eth_getLogs | 64 | 39,759 | 37,280 | 1.07 | 0.397/2.729 | 0.922/3.340 |
+
+goempo answers single requests faster on every method; under concurrency it ties or trails, and eth_call stops scaling past 4 clients because goempo serializes calls on one state lock (the first load test crashed `serve` with concurrent map writes; 5faaace added the lock). The load generator is Python and tops out near 50k req/s, so the 64-client rows bound both nodes from below rather than measuring their ceilings.
+
 ### Measured now (`--run`)
 
 The script builds `cmd/goempo-dev` into a temporary directory and runs, all from local caches:

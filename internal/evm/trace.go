@@ -142,9 +142,6 @@ func (e *EVM) step(f *Frame, o *Operation) Status {
 	if need > StackLimit {
 		return StatusStackOverflow
 	}
-	if need > len(f.stack) {
-		f.growStack(need)
-	}
 	if f.gas < o.Gas {
 		return StatusOutOfGas
 	}

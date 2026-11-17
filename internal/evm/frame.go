@@ -1,10 +1,11 @@
 package evm
 
-import "github.com/gakonst/goempo/internal/u256"
+import (
+	"github.com/gakonst/goempo/internal/u256"
+	"github.com/kapetan-io/tiger/assert"
+)
 
 const StackLimit = 1024
-
-const stackInitial = 64
 
 const CallDepthLimit = 1024
 
@@ -89,14 +90,11 @@ func (f *Frame) UseGas(amount uint64) bool {
 
 func (f *Frame) Memory() []byte { return f.memory }
 
-func (f *Frame) growStack(need int) {
-	size := min(max(need, 2*len(f.stack), stackInitial), StackLimit)
-	grown := make([]u256.Int, size)
-	copy(grown, f.stack[:f.sp])
-	f.stack = grown
-}
-
+// reset readies a reused frame. Every frame owns a StackLimit-word stack
+// from its creation, so the interpreter's overflow check is the only bound
+// pushes need.
 func (f *Frame) reset() {
+	assert.Equal(len(f.stack), StackLimit, "a frame's stack is preallocated")
 	f.sp = 0
 	f.memory = f.memory[:0]
 	f.returnData = nil

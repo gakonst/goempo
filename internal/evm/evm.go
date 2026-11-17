@@ -50,23 +50,82 @@ type EVM struct {
 	storage  StorageHook
 }
 
+const analysisMax = 1 << 12
+
+const framesInitial = 4
+
+const _ = uint(CallDepthLimit - framesInitial)
+
 func New(ctx Context) *EVM {
+	e := &EVM{
+		top:      -1,
+		hasher:   keccak.New(),
+		analysis: make(map[Hash][]uint64),
+		frames:   make([]*Frame, 0, framesInitial),
+	}
+	e.Reset(ctx)
+	return e
+}
+
+func (e *EVM) Reset(ctx Context) {
 	assert.Ok(ctx.State != nil, "evm needs a state")
 	assert.Ok(ctx.Config != nil, "evm needs a config")
 	assert.Ok(ctx.Block != nil, "evm needs a block context")
 	assert.Ok(ctx.Tx != nil, "evm needs a tx context")
-	return &EVM{
-		State:    ctx.State,
-		Block:    ctx.Block,
-		Tx:       ctx.Tx,
-		Config:   ctx.Config,
-		gas:      ctx.Config.Gas,
-		table:    ctx.Config.Table,
-		top:      -1,
-		hasher:   keccak.New(),
-		analysis: make(map[Hash][]uint64),
-		tracer:   tracerOf(ctx),
-		storage:  ctx.Storage,
+	assert.Equal(e.top, -1, "an evm resets between messages")
+	e.State = ctx.State
+	e.Block = ctx.Block
+	e.Tx = ctx.Tx
+	e.Config = ctx.Config
+	e.gas = ctx.Config.Gas
+	e.table = ctx.Config.Table
+	e.tracer = tracerOf(ctx)
+	e.storage = ctx.Storage
+	if len(e.analysis) > analysisMax {
+		clear(e.analysis)
+	}
+}
+
+// memoryRetainMax caps the memory a released frame keeps for the next
+// message, so one memory-hungry transaction does not pin it.
+const memoryRetainMax = 1 << 20
+
+// framesRetainMax caps the call frames (each with a 32 KiB stack) a released
+// EVM keeps; deeper call chains allocate their extra frames again.
+const framesRetainMax = 64
+
+const _ = uint(CallDepthLimit - framesRetainMax)
+
+// Release drops the EVM's references to the message's state and data, so it
+// can wait in a pool; Reset readies it again. Its frames, stacks, hasher and
+// jumpdest analysis stay allocated for the next message.
+func (e *EVM) Release() {
+	assert.Ok(e.top >= -1 && e.top < len(e.frames), "an evm's frame index is in range")
+	// A message that panicked leaves frames pushed; pushFrame resets each
+	// frame it hands out, so dropping them here is enough.
+	e.top = -1
+	e.State = nil
+	e.Block = nil
+	e.Tx = nil
+	e.Config = nil
+	e.gas = nil
+	e.table = nil
+	e.tracer = nil
+	e.storage = nil
+	if len(e.frames) > framesRetainMax {
+		clear(e.frames[framesRetainMax:])
+		e.frames = e.frames[:framesRetainMax]
+	}
+	for i := 0; i < len(e.frames); i++ {
+		f := e.frames[i]
+		f.code = nil
+		f.jumpdests = nil
+		f.input = nil
+		f.returnData = nil
+		f.output = nil
+		if cap(f.memory) > memoryRetainMax {
+			f.memory = nil
+		}
 	}
 }
 
@@ -191,9 +250,6 @@ func (e *EVM) interpret(f *Frame) Status {
 		if need > StackLimit {
 			return StatusStackOverflow
 		}
-		if need > len(f.stack) {
-			f.growStack(need)
-		}
 		if f.gas < o.Gas {
 			return StatusOutOfGas
 		}
@@ -211,7 +267,7 @@ func (e *EVM) interpret(f *Frame) Status {
 func (e *EVM) pushFrame() *Frame {
 	e.top++
 	if e.top == len(e.frames) {
-		e.frames = append(e.frames, new(Frame))
+		e.frames = append(e.frames, &Frame{stack: make([]u256.Int, StackLimit)})
 	}
 	f := e.frames[e.top]
 	f.reset()

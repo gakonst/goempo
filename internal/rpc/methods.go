@@ -109,7 +109,7 @@ func methodTable() map[string]handler {
 		"eth_callMany":                               notServed("eth_callMany"),
 		"consensus_getLatest":                        consensusGetLatest,
 		"consensus_getFinalization":                  notServed("consensus_getFinalization"),
-		"trace_block":                                notServed("trace_block"),
+		"trace_block":                                traceBlockParity,
 		"trace_transaction":                          notServed("trace_transaction"),
 		"trace_filter":                               notServed("trace_filter"),
 		"trace_replayBlockTransactions":              notServed("trace_replayBlockTransactions"),

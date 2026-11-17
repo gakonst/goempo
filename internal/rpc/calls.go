@@ -8,12 +8,15 @@ import (
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
 	revertSelectorLength = 4
 	abiWord              = 32
 )
+
+const systemCallGasLimit = 250_000_000
 
 const _ = uint(abiWord - revertSelectorLength)
 
@@ -280,12 +283,9 @@ func (s *Server) traceBlock(b *BlockData, ref blockRef, p *params) ([]byte, erro
 	if b == nil {
 		return nil, blockNotFound(ref.describe())
 	}
-	if s.exec == nil {
-		return nil, internalError("unimplemented")
-	}
-	traces, err := s.exec.TraceBlock(b.Number(), opts)
+	traces, err := s.blockTraces(b, opts)
 	if err != nil {
-		return nil, executionError(err)
+		return nil, err
 	}
 	n := min(len(traces), len(b.Block.Transactions))
 	return encode(func(w *writer) {
@@ -338,12 +338,9 @@ func debugTraceTransaction(s *Server, p *params) ([]byte, error) {
 	if t.b == nil {
 		return nil, newError(CodeServer, "transaction not found")
 	}
-	if s.exec == nil {
-		return nil, internalError("unimplemented")
-	}
-	traces, err := s.exec.TraceBlock(t.b.Number(), opts)
+	traces, err := s.blockTraces(t.b, opts)
 	if err != nil {
-		return nil, executionError(err)
+		return nil, err
 	}
 	if t.i >= len(traces) {
 		return nil, internalError("trace missing for transaction")
@@ -365,4 +362,169 @@ func debugTraceCall(s *Server, p *params) ([]byte, error) {
 		return nil, executionError(err)
 	}
 	return out, nil
+}
+
+func isSystemTx(tx types.Transaction) bool {
+	legacy, ok := tx.Data.(*types.LegacyTx)
+	return ok && legacy.IsSystem()
+}
+
+func systemOnly(b *BlockData) bool {
+	for _, tx := range b.Block.Transactions {
+		if !isSystemTx(tx) {
+			return false
+		}
+	}
+	return true
+}
+
+type tracerKind int
+
+const (
+	tracerStruct tracerKind = iota
+	tracerCall
+	tracerPrestate
+	tracerPrestateDiff
+	tracerOther
+)
+
+func tracerOf(opts *TraceOptions) tracerKind {
+	switch opts.Tracer {
+	case "":
+		return tracerStruct
+	case "callTracer":
+		return tracerCall
+	case "prestateTracer":
+		var cfg struct {
+			DiffMode bool `json:"diffMode"`
+		}
+		if len(opts.Config) > 0 && json.Unmarshal(opts.Config, &cfg) == nil && cfg.DiffMode {
+			return tracerPrestateDiff
+		}
+		return tracerPrestate
+	}
+	return tracerOther
+}
+
+func systemTrace(tx types.Transaction, kind tracerKind) ([]byte, bool) {
+	d, ok := tx.Data.(*types.LegacyTx)
+	if !ok {
+		return nil, false
+	}
+	switch kind {
+	case tracerStruct:
+		return []byte(`{"failed":false,"gas":0,"returnValue":"0x","structLogs":[]}`), true
+	case tracerPrestate:
+		return []byte("{}"), true
+	case tracerPrestateDiff:
+		return []byte(`{"post":{},"pre":{}}`), true
+	case tracerCall:
+		return encode(func(w *writer) {
+			w.objOpen()
+			w.kAddress("from", primitives.Address{})
+			w.kQuantity("gas", 0)
+			w.kQuantity("gasUsed", 0)
+			w.key("to")
+			w.address(systemTo(d))
+			w.kData("input", d.Data)
+			w.kQuantity256("value", d.Value)
+			w.kStr("type", "CALL")
+			w.objClose()
+		}), true
+	case tracerOther:
+		return nil, false
+	default:
+		assert.Unreachable("tracerKind: unhandled value")
+	}
+	return nil, false
+}
+
+func systemTo(d *types.LegacyTx) primitives.Address {
+	if d.To == nil {
+		return primitives.Address{}
+	}
+	return *d.To
+}
+
+func systemTraces(b *BlockData, kind tracerKind) ([]json.RawMessage, bool) {
+	out := make([]json.RawMessage, 0, len(b.Block.Transactions))
+	for _, tx := range b.Block.Transactions {
+		t, ok := systemTrace(tx, kind)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	return out, true
+}
+
+func (s *Server) blockTraces(b *BlockData, opts *TraceOptions) ([]json.RawMessage, error) {
+	if systemOnly(b) {
+		if traces, ok := systemTraces(b, tracerOf(opts)); ok {
+			return traces, nil
+		}
+	}
+	if s.exec == nil {
+		return nil, internalError("unimplemented")
+	}
+	traces, err := s.exec.TraceBlock(b.Number(), opts)
+	if err != nil {
+		return nil, executionError(err)
+	}
+	return traces, nil
+}
+
+func traceBlockParity(s *Server, p *params) ([]byte, error) {
+	raw, err := p.required("block")
+	if err != nil {
+		return nil, err
+	}
+	ref, err := blockIDParam(raw)
+	if err != nil {
+		return nil, err
+	}
+	b := s.blockFor(ref)
+	if b == nil {
+		return resultNull, nil
+	}
+	if !systemOnly(b) {
+		return nil, internalError("trace_block is not served by goempo yet")
+	}
+	return encode(func(w *writer) {
+		w.arrOpen()
+		for i, tx := range b.Block.Transactions {
+			writeParityCall(w, b, i, tx.Data.(*types.LegacyTx))
+		}
+		w.arrClose()
+	}), nil
+}
+
+func writeParityCall(w *writer, b *BlockData, i int, d *types.LegacyTx) {
+	w.objOpen()
+	w.key("action")
+	w.objOpen()
+	w.kAddress("from", primitives.Address{})
+	w.kStr("callType", "call")
+	w.kQuantity("gas", systemCallGasLimit)
+	w.kData("input", d.Data)
+	w.kAddress("to", systemTo(d))
+	w.kQuantity256("value", d.Value)
+	w.objClose()
+	w.kHash("blockHash", b.Hash)
+	w.key("blockNumber")
+	w.integer(int64(b.Number()))
+	w.key("result")
+	w.objOpen()
+	w.kQuantity("gasUsed", 0)
+	w.kData("output", nil)
+	w.objClose()
+	w.key("subtraces")
+	w.integer(0)
+	w.key("traceAddress")
+	w.raw(resultEmpty)
+	w.kHash("transactionHash", b.TxHash(i))
+	w.key("transactionPosition")
+	w.integer(int64(i))
+	w.kStr("type", "call")
+	w.objClose()
 }

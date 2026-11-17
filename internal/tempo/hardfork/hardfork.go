@@ -1,6 +1,12 @@
 package hardfork
 
-import "github.com/kapetan-io/tiger/assert"
+import (
+	"errors"
+	"strings"
+	"sync"
+
+	"github.com/kapetan-io/tiger/assert"
+)
 
 type Fork uint8
 
@@ -97,6 +103,40 @@ func (f Fork) AtLeast(g Fork) bool { return f >= g }
 
 func Latest() Fork { return forkCount - 1 }
 
+type Schedule [forkCount]uint64
+
+var ErrBuiltinChain = errors.New("hardfork: mainnet and moderato schedules are built in")
+
+var custom struct {
+	mu     sync.Mutex
+	chains map[ChainID]*[forkCount]uint64
+}
+
+func NewSchedule() Schedule {
+	var s Schedule
+	for f := range s {
+		s[f] = unscheduled
+	}
+	s[Genesis] = 0
+	return s
+}
+
+func GenesisKey(f Fork) string { return strings.ToLower(names[f]) + "Time" }
+
+func Register(chainID ChainID, s Schedule) error {
+	if chainID == MainnetChainID || chainID == ModeratoChainID {
+		return ErrBuiltinChain
+	}
+	t := [forkCount]uint64(s)
+	custom.mu.Lock()
+	defer custom.mu.Unlock()
+	if custom.chains == nil {
+		custom.chains = map[ChainID]*[forkCount]uint64{}
+	}
+	custom.chains[chainID] = &t
+	return nil
+}
+
 func schedule(chainID ChainID) (*[forkCount]uint64, bool) {
 	if chainID == MainnetChainID {
 		return &mainnet, true
@@ -104,7 +144,10 @@ func schedule(chainID ChainID) (*[forkCount]uint64, bool) {
 	if chainID == ModeratoChainID {
 		return &moderato, true
 	}
-	return nil, false
+	custom.mu.Lock()
+	defer custom.mu.Unlock()
+	t, ok := custom.chains[chainID]
+	return t, ok
 }
 
 func Activation(chainID ChainID, f Fork) (uint64, bool) {

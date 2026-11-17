@@ -86,10 +86,44 @@ func epochLength(g *genesis.Genesis) (uint64, error) {
 	return extra.EpochLength, err
 }
 
+func forkSchedule(g *genesis.Genesis) (hardfork.Schedule, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(g.Config.Raw, &fields); err != nil {
+		return hardfork.Schedule{}, err
+	}
+	s := hardfork.NewSchedule()
+	for i := int(hardfork.T0); i < len(s); i++ {
+		f := hardfork.Fork(i)
+		raw, ok := fields[hardfork.GenesisKey(f)]
+		if !ok || string(raw) == "null" {
+			continue
+		}
+		if err := json.Unmarshal(raw, &s[f]); err != nil {
+			return hardfork.Schedule{}, err
+		}
+	}
+	return s, nil
+}
+
+func registerForks(g *genesis.Genesis) error {
+	id := hardfork.ChainID(g.Config.ChainID)
+	if id == hardfork.MainnetChainID || id == hardfork.ModeratoChainID {
+		return nil
+	}
+	s, err := forkSchedule(g)
+	if err != nil {
+		return err
+	}
+	return hardfork.Register(id, s)
+}
+
 func openLocal(db *state.DB, cfg LocalConfig) (*Local, error) {
 	g := cfg.Genesis
 	length, err := epochLength(g)
 	if err != nil {
+		return nil, err
+	}
+	if err := registerForks(g); err != nil {
 		return nil, err
 	}
 	l := &Local{db: db, blocks: cfg.Blocks, exec: &executor.Executor{ChainID: hardfork.ChainID(g.Config.ChainID), EpochLength: length}}

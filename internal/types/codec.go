@@ -129,6 +129,13 @@ func (b rlpBool) uint64() uint64 {
 	return 0
 }
 
+// readBytesOwned returns the item's bytes without copying them: every decoder
+// that uses it runs on input the decoded value owns (an exported entry point
+// clones its argument first, and BlockDecoder's caller hands its buffer over).
+func readBytesOwned(s *rlp.Stream) ([]byte, error) {
+	return s.Bytes()
+}
+
 func readBytesCopy(s *rlp.Stream) ([]byte, error) {
 	b, err := s.Bytes()
 	if err != nil {

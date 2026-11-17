@@ -62,7 +62,7 @@ func decodeCall(s *rlp.Stream) (Call, error) {
 	if c.Value, err = readU256(&list); err != nil {
 		return c, err
 	}
-	if c.Input, err = readBytesCopy(&list); err != nil {
+	if c.Input, err = readBytesOwned(&list); err != nil {
 		return c, err
 	}
 	return c, list.Finish()

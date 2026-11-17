@@ -1,6 +1,8 @@
 package types
 
 import (
+	"bytes"
+
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
@@ -48,7 +50,7 @@ func decodeLog(s *rlp.Stream) (Log, error) {
 	if len(l.Topics) > topicsPerLogMax {
 		return l, ErrReceipt
 	}
-	if l.Data, err = readBytesCopy(&list); err != nil {
+	if l.Data, err = readBytesOwned(&list); err != nil {
 		return l, err
 	}
 	return l, list.Finish()
@@ -62,6 +64,7 @@ func DecodeReceipt(envelope []byte) (Receipt, error) {
 	if len(envelope) > encodedBytesMax {
 		return r, ErrTooLarge
 	}
+	envelope = bytes.Clone(envelope)
 	body := envelope
 	if envelope[0] < listPrefix {
 		r.Type = TxType(envelope[0])
@@ -98,6 +101,13 @@ func (r *Receipt) decodeFields(list *rlp.Stream) error {
 
 func (r *Receipt) Encode() []byte {
 	e := rlp.NewEncoder(receiptHint)
+	r.EncodeTo(e)
+	return e.Encoded()
+}
+
+// EncodeTo appends the receipt's consensus encoding (type byte, then list)
+// to e, which must have no open list.
+func (r *Receipt) EncodeTo(e *rlp.Encoder) {
 	if r.Type != TxTypeLegacy {
 		e.WriteRaw([]byte{byte(r.Type)})
 	}
@@ -120,7 +130,6 @@ func (r *Receipt) Encode() []byte {
 	}
 	e.ListEnd()
 	e.ListEnd()
-	return e.Encoded()
 }
 
 func (b *Bloom) Add(item []byte) {

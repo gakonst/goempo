@@ -1,6 +1,8 @@
 package types
 
 import (
+	"bytes"
+
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
 )
@@ -28,7 +30,16 @@ type Block struct {
 	Withdrawals    []Withdrawal
 }
 
+// DecodeBlock decodes a copy of b, so the block never aliases the caller's
+// buffer. BlockDecoder decodes in place.
 func DecodeBlock(b []byte) (Block, error) {
+	if len(b) > encodedBytesMax {
+		return Block{}, ErrTooLarge
+	}
+	return (*BlockDecoder)(nil).decodeBlock(bytes.Clone(b))
+}
+
+func (d *BlockDecoder) decodeBlock(b []byte) (Block, error) {
 	var blk Block
 	if len(b) > encodedBytesMax {
 		return blk, ErrTooLarge
@@ -48,7 +59,7 @@ func DecodeBlock(b []byte) (Block, error) {
 	if n > blockFieldsMax {
 		return blk, ErrBlockFields
 	}
-	if err = blk.decodeFields(&list, n); err != nil {
+	if err = blk.decodeFields(&list, n, d); err != nil {
 		return blk, err
 	}
 	if err = list.Finish(); err != nil {
@@ -57,20 +68,20 @@ func DecodeBlock(b []byte) (Block, error) {
 	return blk, s.Finish()
 }
 
-func (blk *Block) decodeFields(list *rlp.Stream, fields int) error {
+func (blk *Block) decodeFields(list *rlp.Stream, fields int, d *BlockDecoder) error {
 	var err error
 	if blk.Header, err = decodeHeader(list); err != nil {
 		return err
 	}
-	if blk.Transactions, err = decodeList(list, decodeBodyTransaction); err != nil {
+	if blk.Transactions, err = d.decodeTransactions(list); err != nil {
 		return err
 	}
-	if blk.Ommers, err = decodeList(list, decodeHeader); err != nil {
+	if blk.Ommers, err = decodeOmmers(list); err != nil {
 		return err
 	}
 	if fields == blockFieldsMax {
 		blk.HasWithdrawals = true
-		blk.Withdrawals, err = decodeList(list, decodeWithdrawal)
+		blk.Withdrawals, err = decodeWithdrawals(list)
 	}
 	return err
 }
@@ -137,4 +148,53 @@ func (blk *Block) TransactionEnvelopes() [][]byte {
 		out[i] = blk.Transactions[i].Encode()
 	}
 	return out
+}
+
+// decodeOmmers and decodeWithdrawals are decodeList with a direct call, so
+// their list stream stays on the stack: blocks decode millions of them and
+// nearly all are empty.
+func decodeOmmers(s *rlp.Stream) ([]Header, error) {
+	list, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	n, err := list.Count()
+	if err != nil {
+		return nil, err
+	}
+	if n > listItemsMax {
+		return nil, ErrTooManyItems
+	}
+	out := make([]Header, 0, n)
+	for i := 0; i < n; i++ {
+		h, err := decodeHeader(&list)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, list.Finish()
+}
+
+func decodeWithdrawals(s *rlp.Stream) ([]Withdrawal, error) {
+	list, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	n, err := list.Count()
+	if err != nil {
+		return nil, err
+	}
+	if n > listItemsMax {
+		return nil, ErrTooManyItems
+	}
+	out := make([]Withdrawal, 0, n)
+	for i := 0; i < n; i++ {
+		w, err := decodeWithdrawal(&list)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, list.Finish()
 }

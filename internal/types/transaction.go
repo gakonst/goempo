@@ -1,9 +1,13 @@
 package types
 
 import (
+	"bytes"
+	"sync"
+
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const txEncodeHint = 512
@@ -18,7 +22,20 @@ type Transaction struct {
 	Data TxData
 }
 
+// DecodeTransaction decodes a copy of envelope, so the transaction never
+// aliases the caller's buffer.
 func DecodeTransaction(envelope []byte) (Transaction, error) {
+	if len(envelope) == 0 {
+		return Transaction{}, ErrEmptyTx
+	}
+	if len(envelope) > encodedBytesMax {
+		return Transaction{}, ErrTooLarge
+	}
+	return decodeTransaction(bytes.Clone(envelope))
+}
+
+// decodeTransaction decodes envelope in place: byte fields alias it.
+func decodeTransaction(envelope []byte) (Transaction, error) {
 	if len(envelope) == 0 {
 		return Transaction{}, ErrEmptyTx
 	}
@@ -57,13 +74,17 @@ func decodeTyped(kind TxType, s *rlp.Stream) (TxData, error) {
 }
 
 func decodeBodyTransaction(s *rlp.Stream) (Transaction, error) {
+	return (*BlockDecoder)(nil).decodeBodyTransaction(s)
+}
+
+func (d *BlockDecoder) decodeBodyTransaction(s *rlp.Stream) (Transaction, error) {
 	kind, err := s.Kind()
 	if err != nil {
 		return Transaction{}, err
 	}
 	if kind == rlp.KindList {
-		tx, err := decodeLegacy(s)
-		if err != nil {
+		tx := d.newLegacy()
+		if err := tx.decode(s, d); err != nil {
 			return Transaction{}, err
 		}
 		return Transaction{Data: tx}, nil
@@ -78,7 +99,7 @@ func decodeBodyTransaction(s *rlp.Stream) (Transaction, error) {
 	if envelope[0] >= listPrefix {
 		return Transaction{}, ErrTxType
 	}
-	return DecodeTransaction(envelope)
+	return decodeTransaction(envelope)
 }
 
 func (tx Transaction) Type() TxType { return tx.Data.Type() }
@@ -104,11 +125,18 @@ func (tx Transaction) encodeInBody(e *rlp.Encoder) {
 }
 
 func (tx Transaction) Hash() primitives.Hash {
-	return keccak.Sum256(tx.Encode())
+	e := borrowEncoder()
+	defer returnEncoder(e)
+	tx.Data.encodePayload(e, modeSigned)
+	if tx.Type() == TxTypeLegacy {
+		return keccak.Sum256(e.Encoded())
+	}
+	return hashPrefixed(byte(tx.Type()), e.Encoded())
 }
 
 func (tx Transaction) SigningHash() primitives.Hash {
-	e := rlp.NewEncoder(txEncodeHint)
+	e := borrowEncoder()
+	defer returnEncoder(e)
 	tx.Data.encodePayload(e, modeSigning)
 	if tx.Type() == TxTypeLegacy {
 		return keccak.Sum256(e.Encoded())
@@ -117,12 +145,37 @@ func (tx Transaction) SigningHash() primitives.Hash {
 }
 
 func (tx Transaction) UniqueID(sender primitives.Address) primitives.Hash {
-	e := rlp.NewEncoder(txEncodeHint)
+	e := borrowEncoder()
+	defer returnEncoder(e)
 	tx.Data.encodePayload(e, modeSigning)
 	if tx.Type() == TxTypeLegacy {
 		return keccak.Sum256Concat(e.Encoded(), sender[:])
 	}
 	return keccak.Sum256Concat([]byte{byte(tx.Type())}, e.Encoded(), sender[:])
+}
+
+// encoderRetainMax caps the buffer a pooled encoder keeps, so one huge
+// transaction does not pin its encoding in the pool.
+const encoderRetainMax = 1 << 20
+
+const _ = uint(encoderRetainMax - txEncodeHint)
+
+var encoders = sync.Pool{New: func() any { return rlp.NewEncoder(txEncodeHint) }}
+
+// borrowEncoder returns an empty encoder whose output is only valid until
+// returnEncoder: callers hash it and never keep it.
+func borrowEncoder() *rlp.Encoder {
+	e, ok := encoders.Get().(*rlp.Encoder)
+	assert.Ok(ok, "encoder pool holds encoders")
+	e.Reset()
+	return e
+}
+
+func returnEncoder(e *rlp.Encoder) {
+	if e.Cap() > encoderRetainMax {
+		return
+	}
+	encoders.Put(e)
 }
 
 func (tx Transaction) Sender() (primitives.Address, error) {

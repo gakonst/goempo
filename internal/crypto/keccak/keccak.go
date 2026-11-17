@@ -1,13 +1,14 @@
 // Package keccak computes Keccak-256, the pre-standard SHA-3 variant Ethereum
 // and Tempo hash with (padding byte 0x01, not FIPS 202's 0x06).
 //
-// Sum256 allocates one hashing state per call. A Hasher owns its state and
+// Sum256 and Sum256Concat borrow a hashing state from a pool. A Hasher owns its state and
 // computes any number of hashes with no allocation: Reset, Write, then Sum or
 // SumInto; Hash does all three for one input.
 package keccak
 
 import (
 	"hash"
+	"sync"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/kapetan-io/tiger/assert"
@@ -62,13 +63,27 @@ func (h *Hasher) Hash(b []byte) primitives.Hash {
 }
 
 func Sum256(b []byte) primitives.Hash {
-	return New().Hash(b)
+	h := pooled()
+	out := h.Hash(b)
+	hashers.Put(h)
+	return out
 }
 
 func Sum256Concat(parts ...[]byte) primitives.Hash {
-	h := New()
+	h := pooled()
+	h.Reset()
 	for i := 0; i < len(parts); i++ {
 		h.Write(parts[i])
 	}
-	return h.Sum()
+	out := h.Sum()
+	hashers.Put(h)
+	return out
+}
+
+var hashers = sync.Pool{New: func() any { return New() }}
+
+func pooled() *Hasher {
+	h, ok := hashers.Get().(*Hasher)
+	assert.Ok(ok, "keccak pool holds hashers")
+	return h
 }

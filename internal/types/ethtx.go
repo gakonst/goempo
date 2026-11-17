@@ -181,32 +181,41 @@ func (sig *Signature) encodeTo(e *rlp.Encoder) {
 
 func decodeLegacy(s *rlp.Stream) (*LegacyTx, error) {
 	tx := &LegacyTx{}
+	if err := tx.decode(s, nil); err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// decode fills tx, which must be zero; d, when not nil, supplies the To
+// address from its slab instead of the heap.
+func (tx *LegacyTx) decode(s *rlp.Stream, d *BlockDecoder) error {
 	list, err := s.List()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if tx.Nonce, err = list.Uint64(); err != nil {
-		return nil, err
+		return err
 	}
 	if tx.GasPrice, err = readU128(&list); err != nil {
-		return nil, err
+		return err
 	}
 	if tx.Gas, err = list.Uint64(); err != nil {
-		return nil, err
+		return err
 	}
-	if tx.To, err = decodeTo(&list); err != nil {
-		return nil, err
+	if tx.To, err = d.decodeTo(&list); err != nil {
+		return err
 	}
 	if tx.Value, err = readU256(&list); err != nil {
-		return nil, err
+		return err
 	}
-	if tx.Data, err = readBytesCopy(&list); err != nil {
-		return nil, err
+	if tx.Data, err = readBytesOwned(&list); err != nil {
+		return err
 	}
 	if err = tx.decodeVRS(&list); err != nil {
-		return nil, err
+		return err
 	}
-	return tx, list.Finish()
+	return list.Finish()
 }
 
 func (tx *LegacyTx) decodeVRS(list *rlp.Stream) error {
@@ -308,7 +317,7 @@ func decodeAccessListTx(s *rlp.Stream) (*AccessListTx, error) {
 	if tx.Value, err = readU256(&list); err != nil {
 		return nil, err
 	}
-	if tx.Data, err = readBytesCopy(&list); err != nil {
+	if tx.Data, err = readBytesOwned(&list); err != nil {
 		return nil, err
 	}
 	if tx.AccessList, err = decodeAccessList(&list); err != nil {
@@ -365,7 +374,7 @@ func decodeDynamicFeeFields(list *rlp.Stream, tx *DynamicFeeTx) error {
 	if tx.Value, err = readU256(list); err != nil {
 		return err
 	}
-	if tx.Data, err = readBytesCopy(list); err != nil {
+	if tx.Data, err = readBytesOwned(list); err != nil {
 		return err
 	}
 	tx.AccessList, err = decodeAccessList(list)

@@ -28,6 +28,18 @@ func (e *Encoder) Len() int {
 	return len(e.buf)
 }
 
+// Cap is the capacity of the encoder's buffer, for pools that bound what
+// they retain.
+func (e *Encoder) Cap() int {
+	return cap(e.buf)
+}
+
+// Bytes returns the encoder's whole buffer, including any open list's
+// content; for callers that slice several items out of one encoder.
+func (e *Encoder) Bytes() []byte {
+	return e.buf
+}
+
 func (e *Encoder) WriteBytes(b []byte) {
 	if len(b) == 1 {
 		if b[0] < offsetString {

@@ -36,6 +36,7 @@ const (
 	kindNoop
 	kindMux
 	kindFlatCall
+	kindOpcodeGas
 )
 
 type traceConfig struct {
@@ -102,6 +103,9 @@ func parseOne(name string, cfgRaw json.RawMessage, raw rawOptions) (traceConfig,
 }
 
 func parseOptions(opts *rpc.TraceOptions) (traceConfig, error) {
+	if opts != nil && opts.OpcodeGas {
+		return traceConfig{kind: kindOpcodeGas, steps: tracing.StepOptions{Enabled: true}}, nil
+	}
 	var raw rawOptions
 	if opts != nil && len(opts.Raw) > 0 {
 		if err := json.Unmarshal(opts.Raw, &raw); err != nil {
@@ -263,6 +267,8 @@ func renderOne(cfg traceConfig, t *tracing.TxTrace, info tracing.TxInfo) []byte 
 		return []byte("{}")
 	case kindFlatCall:
 		return tracing.ParityJSON(t.Recorder, info, tracing.Locator{})
+	case kindOpcodeGas:
+		return tracing.OpcodeGasJSON(t.Recorder)
 	default:
 		assert.Unreachable("tracerKind: unhandled value")
 	}

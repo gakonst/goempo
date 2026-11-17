@@ -256,3 +256,16 @@ func storageNodePrefix(addr Address) []byte {
 	p = append(p, prefixStorageNode)
 	return append(p, addr[:]...)
 }
+
+var ErrCodeNotFound = errors.New("state: code not found")
+
+func (db *DB) CodeByHash(h Hash) ([]byte, error) {
+	if h == emptyCodeHash {
+		return nil, nil
+	}
+	c, err := db.code(h)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrCodeNotFound
+	}
+	return c, err
+}

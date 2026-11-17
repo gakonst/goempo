@@ -48,9 +48,10 @@ type CallResult struct {
 }
 
 type TraceOptions struct {
-	Tracer string
-	Config json.RawMessage
-	Raw    json.RawMessage
+	Tracer    string
+	Config    json.RawMessage
+	Raw       json.RawMessage
+	OpcodeGas bool
 }
 
 type Executor interface {

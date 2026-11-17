@@ -75,3 +75,42 @@ func debugGetRawTransactions(s *Server, p *params) ([]byte, error) {
 		w.arrClose()
 	}), nil
 }
+
+type CodeLookup struct {
+	Code  []byte
+	Found bool
+}
+
+type CodeSource interface {
+	CodeByHash(hash primitives.Hash) (CodeLookup, error)
+}
+
+func debugCodeByHash(s *Server, p *params) ([]byte, error) {
+	raw, err := p.required("hash")
+	if err != nil {
+		return nil, err
+	}
+	h, err := hashParam(raw)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := blockIDParam(p.optional("block_id"))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.stateBlock(ref); err != nil {
+		return nil, err
+	}
+	src, ok := s.state.(CodeSource)
+	if !ok {
+		return resultNull, nil
+	}
+	code, err := src.CodeByHash(h)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	if !code.Found {
+		return resultNull, nil
+	}
+	return dataResult(code.Code), nil
+}

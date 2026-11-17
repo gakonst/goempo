@@ -18,6 +18,7 @@ import (
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rpc"
 	"github.com/gakonst/goempo/internal/rpcexec"
+	"github.com/gakonst/goempo/internal/state"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
@@ -501,7 +502,31 @@ func sameJSON(got []byte, want string) bool {
 	if dx.Decode(&x) != nil || dy.Decode(&y) != nil {
 		return string(bytes.TrimSpace(got)) == strings.TrimSpace(want)
 	}
-	return reflect.DeepEqual(x, y)
+	return reflect.DeepEqual(unorderedSets(x), unorderedSets(y))
+}
+
+func unorderedSets(v any) any {
+	resp, _ := v.(map[string]any)
+	result, _ := resp["result"].(map[string]any)
+	sortOpcodeGas(result)
+	txs, _ := result["transactions"].([]any)
+	for _, tx := range txs {
+		m, _ := tx.(map[string]any)
+		sortOpcodeGas(m)
+	}
+	return v
+}
+
+func sortOpcodeGas(m map[string]any) {
+	if list, ok := m["opcodeGas"].([]any); ok {
+		slices.SortFunc(list, func(a, b any) int { return strings.Compare(opcodeName(a), opcodeName(b)) })
+	}
+}
+
+func opcodeName(v any) string {
+	m, _ := v.(map[string]any)
+	name, _ := m["opcode"].(string)
+	return name
 }
 
 func (res *r5Result) finish() {
@@ -688,4 +713,17 @@ func writeMismatches(path string, cases []mismatchCase) error {
 		buf = append(append(buf, line...), '\n')
 	}
 	return os.WriteFile(path, buf, 0o644)
+}
+
+func (s *replayState) CodeByHash(h primitives.Hash) (rpc.CodeLookup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	code, err := s.r.db.CodeByHash(h)
+	if errors.Is(err, state.ErrCodeNotFound) {
+		return rpc.CodeLookup{}, nil
+	}
+	if err != nil {
+		return rpc.CodeLookup{}, err
+	}
+	return rpc.CodeLookup{Code: code, Found: true}, nil
 }

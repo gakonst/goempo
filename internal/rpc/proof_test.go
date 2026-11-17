@@ -54,3 +54,40 @@ func TestGetProofAndAccount(t *testing.T) {
 	missing := call(t, srv, `{"jsonrpc":"2.0","id":3,"method":"eth_getAccount","params":["0xee00000000000000000000000000000000000000","latest"]}`)
 	assert.Equal(missing["result"], any(nil), "absent account is null")
 }
+
+func TestGetMultiProofMatchesGetProof(t *testing.T) {
+	srv := rpc.NewServer(rpc.Config{ProofWindow: 1 << 40}, loadChain(), &proofState{}, nil)
+	key := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	multi := call(t, srv, `{"jsonrpc":"2.0","id":1,"method":"eth_getMultiProof","params":[[["0x0100000000000000000000000000000000000000",["`+key+`"]],["0xee00000000000000000000000000000000000000",[]]],"latest"]}`)
+	list, ok := multi["result"].([]any)
+	assert.Ok(ok, "multiproof result is a list")
+	assert.Equal(len(list), 2, "one proof per target")
+	single := call(t, srv, `{"jsonrpc":"2.0","id":2,"method":"eth_getProof","params":["0x0100000000000000000000000000000000000000",["`+key+`"],"latest"]}`)
+	a, err := json.Marshal(list[0])
+	assert.NoError(err, "encode multiproof entry")
+	b, err := json.Marshal(single["result"])
+	assert.NoError(err, "encode single proof")
+	assert.Equal(string(a), string(b), "first target proof equals eth_getProof")
+	absent := list[1].(map[string]any)
+	assert.Equal(absent["address"], any("0xee00000000000000000000000000000000000000"), "absent account echoed")
+	assert.Equal(len(absent["storageProof"].([]any)), 0, "no storage keys asked")
+}
+
+type codeState struct{ proofState }
+
+func (codeState) CodeByHash(h primitives.Hash) (rpc.CodeLookup, error) {
+	if h == (primitives.Hash{7}) {
+		return rpc.CodeLookup{Code: []byte{0x60, 0x00}, Found: true}, nil
+	}
+	return rpc.CodeLookup{}, nil
+}
+
+func TestDebugCodeByHash(t *testing.T) {
+	srv := rpc.NewServer(rpc.Config{}, loadChain(), &codeState{}, nil)
+	found := call(t, srv, `{"jsonrpc":"2.0","id":1,"method":"debug_codeByHash","params":["`+primitives.Hash{7}.Hex()+`"]}`)
+	assert.Equal(found["result"], any("0x6000"), "stored code returned")
+	missing := call(t, srv, `{"jsonrpc":"2.0","id":2,"method":"debug_codeByHash","params":["`+primitives.Hash{8}.Hex()+`","latest"]}`)
+	assert.Equal(missing["result"], any(nil), "unknown hash is null")
+	gone := call(t, srv, `{"jsonrpc":"2.0","id":3,"method":"debug_codeByHash","params":["`+primitives.Hash{7}.Hex()+`","0xffffffff"]}`)
+	assert.Equal(gone["error"].(map[string]any)["message"], any("block not found: 0xffffffff"), "missing block")
+}

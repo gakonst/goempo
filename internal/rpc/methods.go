@@ -845,28 +845,30 @@ func ethGetProof(s *Server, p *params) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encode(func(w *writer) {
+	return encode(func(w *writer) { writeAccountProof(w, addr, &proof) }), nil
+}
+
+func writeAccountProof(w *writer, addr primitives.Address, proof *AccountProof) {
+	w.objOpen()
+	w.kAddress("address", addr)
+	w.kQuantity256("balance", proof.Balance)
+	w.kHash("codeHash", proof.CodeHash)
+	w.kQuantity("nonce", proof.Nonce)
+	w.kHash("storageHash", proof.StorageRoot)
+	w.key("accountProof")
+	writeProofNodes(w, proof.Proof)
+	w.key("storageProof")
+	w.arrOpen()
+	for _, sp := range proof.Storage {
 		w.objOpen()
-		w.kAddress("address", addr)
-		w.kQuantity256("balance", proof.Balance)
-		w.kHash("codeHash", proof.CodeHash)
-		w.kQuantity("nonce", proof.Nonce)
-		w.kHash("storageHash", proof.StorageRoot)
-		w.key("accountProof")
-		writeProofNodes(w, proof.Proof)
-		w.key("storageProof")
-		w.arrOpen()
-		for _, sp := range proof.Storage {
-			w.objOpen()
-			w.kStr("key", sp.Key)
-			w.kQuantity256("value", sp.Value)
-			w.key("proof")
-			writeProofNodes(w, sp.Proof)
-			w.objClose()
-		}
-		w.arrClose()
+		w.kStr("key", sp.Key)
+		w.kQuantity256("value", sp.Value)
+		w.key("proof")
+		writeProofNodes(w, sp.Proof)
 		w.objClose()
-	}), nil
+	}
+	w.arrClose()
+	w.objClose()
 }
 
 func writeProofNodes(w *writer, nodes [][]byte) {

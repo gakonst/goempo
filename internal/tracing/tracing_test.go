@@ -210,3 +210,31 @@ func TestFlatTraces(t *testing.T) {
 	same(localized["blockNumber"], "9", "localized block")
 	same(localized["transactionPosition"], "2", "localized index")
 }
+
+func TestOpcodeGas(t *testing.T) {
+	tr := runTraced(t, tracing.StepOptions{Enabled: true}).trace
+	var list []struct {
+		Opcode  string `json:"opcode"`
+		Count   int    `json:"count"`
+		GasUsed uint64 `json:"gasUsed"`
+	}
+	assert.NoError(json.Unmarshal(tracing.OpcodeGasJSON(tr.Recorder), &list), "valid json")
+	counts := map[string]int{}
+	gas := map[string]uint64{}
+	for _, e := range list {
+		_, dup := counts[e.Opcode]
+		assert.Ok(!dup, "each opcode listed once")
+		counts[e.Opcode] = e.Count
+		gas[e.Opcode] = e.GasUsed
+	}
+	assert.Equal(list[0].Opcode, "PUSH1", "first executed opcode comes first")
+	assert.Equal(counts["PUSH1"], 13, "push1 across caller and callee")
+	assert.Equal(gas["PUSH1"], uint64(39), "three gas per push1")
+	assert.Equal(counts["CALL"], 1, "one call")
+	assert.Equal(counts["RETURN"], 1, "callee returns once")
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	assert.Equal(total, 22, "every step counted once")
+}

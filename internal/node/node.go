@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/gakonst/goempo/internal/consensus"
@@ -26,7 +27,11 @@ const (
 	deepMarginBlock = BatchMax
 )
 
+const recoverWorkersMax = 64
+
 const _ = uint(512 - BatchMax)
+
+const _ = uint(BatchMax - recoverWorkersMax)
 
 var (
 	ErrNoSource   = errors.New("node: no block source")
@@ -275,6 +280,9 @@ func (n *Node) Flush() error {
 func (n *Node) Close() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.tainted {
+		return ErrTainted
+	}
 	return n.db.Close()
 }
 
@@ -308,8 +316,9 @@ func (n *Node) Advance(t Target) (Progress, error) {
 		return p, n.latch(err)
 	}
 	admitted = min(admitted, len(blocks))
+	senders := recoverSenders(blocks[:admitted])
 	for i := range admitted {
-		data, err := n.execute(&blocks[i], raws[i])
+		data, err := n.execute(&blocks[i], raws[i], senders[i])
 		if err != nil {
 			return p, n.latch(err)
 		}
@@ -386,12 +395,39 @@ func (n *Node) hashAt(number uint64, blk *types.Block) primitives.Hash {
 	return blk.Hash()
 }
 
-func (n *Node) execute(blk *types.Block, raw []byte) (*rpc.BlockData, error) {
+func recoverSenders(blocks []types.Block) [][]executor.Sender {
+	out := make([][]executor.Sender, len(blocks))
+	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), recoverWorkersMax)
+	per := (len(blocks) + workers - 1) / workers
+	var wg sync.WaitGroup
+	for w := range workers {
+		lo, hi := min(w*per, len(blocks)), min((w+1)*per, len(blocks))
+		wg.Go(func() {
+			for i := lo; i < hi; i++ {
+				out[i] = blockSenders(&blocks[i])
+			}
+		})
+	}
+	wg.Wait()
+	return out
+}
+
+func blockSenders(blk *types.Block) []executor.Sender {
+	senders := make([]executor.Sender, len(blk.Transactions))
+	for i := range blk.Transactions {
+		if !executor.IsSystemTx(&blk.Transactions[i]) {
+			senders[i] = executor.RecoverSender(&blk.Transactions[i])
+		}
+	}
+	return senders
+}
+
+func (n *Node) execute(blk *types.Block, raw []byte, senders []executor.Sender) (*rpc.BlockData, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	h := &blk.Header.Inner
 	st := n.db.State()
-	res, err := n.exec.Execute(st, executor.Input{Block: blk, GetHash: n.getHash})
+	res, err := n.exec.Execute(st, executor.Input{Block: blk, GetHash: n.getHash, Senders: senders})
 	if err != nil {
 		st.Discard()
 		return nil, &BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"}

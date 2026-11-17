@@ -237,6 +237,10 @@ func (f *follower) Shutdown() error {
 	if err := f.n.Flush(); err != nil && !errors.Is(err, node.ErrTainted) {
 		errs = append(errs, err)
 	}
-	errs = append(errs, f.n.Close())
+	if err := f.n.Close(); errors.Is(err, node.ErrTainted) {
+		fmt.Fprintln(os.Stderr, "goempo: not flushing: the last block's state is wrong; the datadir stays at its last flush")
+	} else {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }

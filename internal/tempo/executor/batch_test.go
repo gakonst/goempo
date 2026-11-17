@@ -3,7 +3,9 @@ package executor_test
 import (
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -43,10 +45,11 @@ func loadPrestate(t *testing.T, path string) *memstate.State {
 	var accounts map[string]prestateAccount
 	assert.NoError(json.Unmarshal(data, &accounts), "decode prestate")
 	st := memstate.New()
-	for addr, a := range accounts {
+	for _, addr := range slices.Sorted(maps.Keys(accounts)) {
+		a := accounts[addr]
 		storage := make(map[primitives.Hash]u256.Int, len(a.Storage))
-		for k, v := range a.Storage {
-			storage[primitives.Hash(hexBytes(t, k))] = hexWord(t, v)
+		for _, k := range slices.Sorted(maps.Keys(a.Storage)) {
+			storage[primitives.Hash(hexBytes(t, k))] = hexWord(t, a.Storage[k])
 		}
 		st.Put(primitives.Address(hexBytes(t, addr)), memstate.Account{
 			Balance: hexWord(t, a.Balance),

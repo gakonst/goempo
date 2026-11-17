@@ -237,3 +237,11 @@
   - ./internal/tempo/hardfork
   - ./internal/types
   - ./internal/u256
+"./internal/validator":
+  - net
+  - os
+  - ./internal/crypto/bls12381
+  - ./internal/crypto/keccak
+  - ./internal/dkg
+  - ./internal/primitives
+  - github.com/kapetan-io/tiger/assert

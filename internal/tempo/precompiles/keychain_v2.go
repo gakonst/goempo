@@ -251,7 +251,7 @@ func (c *Context) setAllowedCalls(k keyRef, scopes []CallScope) error {
 	if err := c.writeCallScopes(base, scopes); err != nil {
 		return err
 	}
-	return c.storeField(AccountKeychainAddress, base, fScoped, flag(true).word())
+	return c.sstore(AccountKeychainAddress, base, flag(true).word())
 }
 
 var tRaw = abiType{kind: argRaw}

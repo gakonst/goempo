@@ -137,6 +137,17 @@ func (c *Context) storeRun(addr Address, s slot, lanes ...lane) error {
 
 func (c *Context) dexLoad(s slot) (Word, error) { return c.sload(StablecoinDEXAddress, s) }
 
+func (c *Context) loadUint(addr Address, s slot, bytes uint) (Word, error) {
+	w, err := c.sload(addr, s)
+	if err != nil {
+		return Word{}, err
+	}
+	if w.Gt(fieldMask(bytes)) {
+		return Word{}, underOverflow()
+	}
+	return w, nil
+}
+
 func (c *Context) dexLoadUint(s slot, bytes uint) (Word, error) {
 	w, err := c.dexLoad(s)
 	if err != nil {

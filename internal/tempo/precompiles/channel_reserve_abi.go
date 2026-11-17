@@ -96,7 +96,7 @@ var channelReserveTable = register(ChannelReserveAddress, newTable(
 		return encodeWords(c.reserveDomainSeparator()), nil
 	}),
 	view("storageCredits(address)", []abiType{tAddress}, func(c *Context, a []abiValue) ([]byte, error) {
-		w, err := c.sload(ChannelReserveAddress, c.reserveCreditSlot(a[0].addr()))
+		w, err := c.loadUint(ChannelReserveAddress, c.reserveCreditSlot(a[0].addr()), 8)
 		return retWord(w), err
 	}).from(hardfork.T7),
 ))

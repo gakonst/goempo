@@ -107,7 +107,7 @@ func (t Token) creditDelegate(delegate Address, reward Word) error {
 	return t.writeRewardInfo(delegate, d)
 }
 
-func (t Token) optedInSupply() (Word, error) { return t.c.loadField(t.addr, slotOptedInSupply, fU128) }
+func (t Token) optedInSupply() (Word, error) { return t.c.loadUint(t.addr, slotOptedInSupply, 16) }
 
 func (t Token) adjustOptedIn(amount Word, dir optDir) error {
 	cur, err := t.optedInSupply()

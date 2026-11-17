@@ -66,12 +66,7 @@ aacc/upgradeAccount-committed-no-marker/T14
 aacc/upgradeAccount-marker-no-commitment/T14
 aacc/upgradeAccount-invalid-config/T14
 aacc/upgradeAccount-low-gas/T14
-t13/exec-tip20-optedInSupply-over-u128
-t13/exec-nonce-getNonce-over-u64
 t13/exec-tip403-receivePolicy-mode-3
 t13/exec-tip20-name-short-invalid-utf8
 t13/exec-tip20-name-long-invalid-utf8
 t13/exec-fee-setUserToken-invalid-utf8-currency
-store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T12/gas+101
-store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T13/gas+101
-T7-10/reserve/storageCredits-above-u64/T7

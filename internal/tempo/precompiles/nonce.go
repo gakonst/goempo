@@ -21,7 +21,7 @@ func GetNonce(c *Context, account Address, key Word) (uint64, error) {
 	if key.IsZero() {
 		return 0, errSel("ProtocolNonceNotSupported()")
 	}
-	w, err := c.loadField(NonceManagerAddress, c.nonceSlot(account, key), fU64At0)
+	w, err := c.loadUint(NonceManagerAddress, c.nonceSlot(account, key), 8)
 	return w.Uint64(), err
 }
 
@@ -30,7 +30,7 @@ func IncrementNonce(c *Context, account Address, key Word) (uint64, error) {
 		return 0, errSel("InvalidNonceKey()")
 	}
 	s := c.nonceSlot(account, key)
-	w, err := c.loadField(NonceManagerAddress, s, fU64At0)
+	w, err := c.loadUint(NonceManagerAddress, s, 8)
 	if err != nil {
 		return 0, err
 	}

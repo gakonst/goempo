@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
@@ -72,6 +73,7 @@ func (c *rpcClient) batch(reqs []rpcRequest) ([]json.RawMessage, error) {
 			return out, nil
 		}
 		lastErr = err
+		fmt.Fprintf(os.Stderr, "rpc: attempt %d: %v\n", attempt, err)
 		time.Sleep(min(rpcRetryBackoff<<attempt, rpcBackoffMax))
 	}
 	return nil, lastErr

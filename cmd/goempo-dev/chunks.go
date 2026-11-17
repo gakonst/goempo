@@ -18,7 +18,7 @@ const (
 	chunkBlockBytes   = 1 << 22
 	chunkBytesMax     = 1 << 36
 	chunkLengthPrefix = 4
-	chunkRequestsMax  = rpcBatchMax
+	chunkRequestsMax  = 20
 	chunkSuffix       = ".blkz"
 	chunkRawSuffix    = ".blk"
 	chunksMax         = 1 << 20
@@ -28,6 +28,8 @@ const (
 const _ = uint(chunkBytesMax - chunkBlocks*chunkBlockBytes)
 
 const _ = uint(chunkBlocks - chunkRequestsMax)
+
+const _ = uint(rpcBatchMax - chunkRequestsMax)
 
 const _ = uint(chunkBlocks % chunkRequestsMax)
 

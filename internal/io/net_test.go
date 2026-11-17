@@ -18,7 +18,7 @@ func TestPipeCarriesBytesBothWays(t *testing.T) {
 	}
 	got := make([]byte, 0, 11)
 	buf := make([]byte, 4)
-	for i := 0; i < 8 && len(got) < 11; i++ {
+	for range 4 {
 		n, err := pair.B.Read(buf)
 		if err != nil {
 			t.Fatal(err)

@@ -82,3 +82,5 @@
   - ./internal/crypto/secp256k1
   - ./internal/crypto/p256
   - github.com/kapetan-io/tiger/assert
+"./internal/crypto/bls12381":
+  - github.com/kapetan-io/tiger/assert

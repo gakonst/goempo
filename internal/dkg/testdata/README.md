@@ -1,0 +1,1 @@
+- mainnet_block_44085599_extradata.hex, mainnet_block_44107199_extradata.hex: extraData of mainnet blocks 44085599 and 44107199 (debug_getRawBlock from the tailnet mainnet node, copied from internal/consensus/testdata), the on-chain DKG outcomes for epochs 2041 and 2042.

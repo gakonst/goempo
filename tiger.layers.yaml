@@ -198,7 +198,11 @@
   - ./internal/u256
 "./internal/tempo/dkg":
   - github.com/kapetan-io/tiger/assert
+"./internal/dkg":
+  - ./internal/crypto/bls12381
+  - github.com/kapetan-io/tiger/assert
 "./internal/consensus":
   - ./internal/crypto/bls12381
+  - ./internal/dkg
   - ./internal/tempo/dkg
   - github.com/kapetan-io/tiger/assert

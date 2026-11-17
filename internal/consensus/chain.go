@@ -159,7 +159,7 @@ func (c *Chain) Verify(items []Certified) error {
 		if f.Proposal.Payload != it.Hash {
 			return &HeightError{Height: it.Height, Err: ErrDigest}
 		}
-		if err := it.checkContext(f.Proposal); err != nil {
+		if err := it.checkContext(proposalCheck{proposal: f.Proposal, boundary: c.epocher.IsLast(it.Height)}); err != nil {
 			return &HeightError{Height: it.Height, Err: err}
 		}
 		groups[epoch] = append(groups[epoch], finalizationEntries(c.ns, f)...)
@@ -188,8 +188,17 @@ func (c *Chain) Verify(items []Certified) error {
 	return nil
 }
 
-func (c Certified) checkContext(p Proposal) error {
+type proposalCheck struct {
+	proposal Proposal
+	boundary bool
+}
+
+func (c Certified) checkContext(chk proposalCheck) error {
+	p := chk.proposal
 	if c.Context == nil {
+		return nil
+	}
+	if chk.boundary && c.Context.Round.Epoch == p.Round.Epoch && p.Round.View > c.Context.Round.View {
 		return nil
 	}
 	if c.Context.Round != p.Round {

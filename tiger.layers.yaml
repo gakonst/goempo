@@ -198,6 +198,15 @@
   - ./internal/u256
 "./internal/tempo/dkg":
   - github.com/kapetan-io/tiger/assert
+"./internal/sim":
+  - ./internal/consensus
+  - ./internal/crypto/bls12381
+  - ./internal/dkg
+  - ./internal/primitives
+  - ./internal/tempo/dkg
+  - ./internal/types
+  - math/rand
+  - github.com/kapetan-io/tiger/assert
 "./internal/dkg":
   - ./internal/crypto/bls12381
   - github.com/kapetan-io/tiger/assert

@@ -143,6 +143,8 @@ type Network struct {
 	blocked  map[PublicKey]uint64
 	lastDial map[PublicKey]uint64
 	shakes   int
+	pending  map[uint64]gio.Conn
+	nextConn uint64
 }
 
 type lockedReader struct {
@@ -209,6 +211,7 @@ func New(cfg Config) (*Network, error) {
 		rates:    make(map[uint64]uint32, len(cfg.Channels)),
 		conns:    make(map[PublicKey]*peerConn),
 		reserved: make(map[PublicKey]bool),
+		pending:  make(map[uint64]gio.Conn),
 		blocked:  make(map[PublicKey]uint64),
 		lastDial: make(map[PublicKey]uint64),
 	}
@@ -334,7 +337,29 @@ func closeQuietly(c gio.Conn) {
 	}
 }
 
+func (n *Network) hold(conn gio.Conn) (uint64, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		return 0, false
+	}
+	n.nextConn++
+	n.pending[n.nextConn] = conn
+	return n.nextConn, true
+}
+
+func (n *Network) unhold(id uint64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.pending, id)
+}
+
 func (n *Network) accept(conn gio.Conn) {
+	id, ok := n.hold(conn)
+	if !ok {
+		closeQuietly(conn)
+		return
+	}
 	var reserved PublicKey
 	var held bool
 	s, err := AcceptStream(conn, n.streamConfig(), func(key PublicKey) bool {
@@ -342,6 +367,7 @@ func (n *Network) accept(conn gio.Conn) {
 		reserved = key
 		return held
 	})
+	n.unhold(id)
 	if err != nil {
 		if held {
 			n.release(reserved)
@@ -358,7 +384,14 @@ func (n *Network) dial(peer Peer) {
 		n.release(peer.Key)
 		return
 	}
+	id, ok := n.hold(conn)
+	if !ok {
+		n.release(peer.Key)
+		closeQuietly(conn)
+		return
+	}
 	s, err := DialStream(conn, n.streamConfig(), peer.Key)
+	n.unhold(id)
 	if err != nil {
 		n.release(peer.Key)
 		closeQuietly(conn)
@@ -660,6 +693,9 @@ func (n *Network) Close() error {
 	}
 	n.closed = true
 	n.cancel()
+	for _, id := range slices.Sorted(maps.Keys(n.pending)) {
+		closeQuietly(n.pending[id])
+	}
 	n.mu.Unlock()
 	var err error
 	if n.cfg.Listener != nil {

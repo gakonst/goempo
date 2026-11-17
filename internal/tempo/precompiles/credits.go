@@ -61,6 +61,7 @@ func (c *Context) storageCredits(owner Address, key slot, v sstoreValues) error 
 		if err != nil {
 			return err
 		}
+		c.noteCreditOwner(owner)
 		spend, err := c.creationCredit(&state, credit)
 		if err != nil {
 			return err
@@ -95,4 +96,59 @@ func (c *Context) creationCredit(state *creditState, credit uint64) (bool, error
 		state.pending = uint64(sat(state.pending).add(1))
 	}
 	return false, nil
+}
+
+type FeeSlots struct {
+	FeePayer Address
+	FeeToken Address
+	KeyID    Address
+}
+
+func MarkFeeSlotsNonCreditable(c *Context, f FeeSlots) {
+	refs := []SlotRef{{Address: f.FeeToken, Key: Hash(TIP20(c, f.FeeToken).balanceSlot(f.FeePayer))}}
+	if f.KeyID != (Address{}) {
+		limit := c.limitSlot(keyRef{account: f.FeePayer, keyID: f.KeyID}, f.FeeToken)
+		refs = append(refs, SlotRef{Address: AccountKeychainAddress, Key: Hash(limit)})
+	}
+	c.Env.NonCreditable = refs
+}
+
+const maxCreditOwners = 1 << 12
+
+func (c *Context) noteCreditOwner(owner Address) {
+	for _, o := range c.Env.CreditOwners {
+		if o == owner {
+			return
+		}
+	}
+	if len(c.Env.CreditOwners) < maxCreditOwners {
+		c.Env.CreditOwners = append(c.Env.CreditOwners, owner)
+	}
+}
+
+func SettleStorageCreditRefunds(c *Context) (int64, error) {
+	settled := int64(0)
+	for _, owner := range c.Env.CreditOwners {
+		s := creditSlot(owner)
+		state, err := decodeCreditState(c.State.TransientStorage(StorageCreditsAddress, Hash(s)))
+		if err != nil {
+			return 0, err
+		}
+		c.State.SetTransientStorage(StorageCreditsAddress, Hash(s), Word{})
+		if state.pending == 0 {
+			continue
+		}
+		raw := c.State.Storage(StorageCreditsAddress, Hash(s))
+		if !raw.IsUint64() {
+			return 0, errFatal
+		}
+		credits := min(state.pending, raw.Uint64())
+		if credits == 0 {
+			continue
+		}
+		c.journalWrite(StorageCreditsAddress, s, u256.FromUint64(raw.Uint64()-credits))
+		settled += int64(credits)
+	}
+	c.Env.CreditOwners = nil
+	return settled * int64(gasStorageCredit), nil
 }

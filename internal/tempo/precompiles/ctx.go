@@ -60,6 +60,7 @@ type TxEnv struct {
 	FeePayer      Address
 	FeeToken      Address
 	NonCreditable []SlotRef
+	CreditOwners  []Address
 }
 
 type SlotRef struct {

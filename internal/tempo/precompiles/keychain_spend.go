@@ -185,8 +185,8 @@ func (c *Context) verifyAndUpdateSpending(sp spend) error {
 	if err != nil {
 		return err
 	}
-	return c.emit(AccountKeychainAddress, []Hash{evAccessKeySpend, addressWord(sp.key.account), addressWord(sp.key.keyID)},
-		encodeWords(addressWord(sp.token), toHash(sp.amount), toHash(next)))
+	return c.emit(AccountKeychainAddress, []Hash{evAccessKeySpend, addressWord(sp.key.account), addressWord(sp.key.keyID), addressWord(sp.token)},
+		encodeWords(toHash(sp.amount), toHash(next)))
 }
 
 func (c *Context) consumeLimit(limit *spendingLimit, amount Word) (Word, error) {
@@ -298,4 +298,28 @@ func (c *Context) refundSpendingLimit(f tokenFlow) error {
 	}
 	limit.remaining = refunded
 	return c.writeLimit(s, limit)
+}
+
+type KeyUse struct {
+	Account Address
+	KeyID   Address
+	SigType uint8
+	Check   bool
+}
+
+type ActiveKey struct {
+	Expiry        uint64
+	EnforceLimits bool
+	Admin         bool
+}
+
+func ValidateKeychainAuthorization(c *Context, u KeyUse) (ActiveKey, error) {
+	key, err := c.loadActiveKey(keyRef{account: u.Account, keyID: u.KeyID})
+	if err != nil {
+		return ActiveKey{}, err
+	}
+	if u.Check && key.sigType != u.SigType {
+		return ActiveKey{}, revert(abiError(selector("SignatureTypeMismatch(uint8,uint8)"), wordOfU64(uint64(key.sigType)), wordOfU64(uint64(u.SigType))))
+	}
+	return ActiveKey{Expiry: key.expiry, EnforceLimits: key.enforceLimits, Admin: key.admin}, nil
 }

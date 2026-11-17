@@ -35,9 +35,14 @@ type run struct {
 
 func execute(t *testing.T, p program) run {
 	t.Helper()
+	return executeWith(t, p, nil)
+}
+
+func executeWith(t *testing.T, p program, storage map[primitives.Hash]u256.Int) run {
+	t.Helper()
 	st := memstate.New()
 	st.Put(sender, memstate.Account{Balance: u256.FromUint64(1 << 40)})
-	st.Put(contract, memstate.Account{Code: p.code, Nonce: 1})
+	st.Put(contract, memstate.Account{Code: p.code, Nonce: 1, Storage: storage})
 	for i := 0; i < len(p.extra); i++ {
 		st.Put(p.extra[i].addr, memstate.Account{Code: p.extra[i].code, Nonce: 1})
 	}

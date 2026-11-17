@@ -316,17 +316,24 @@ func (e *EVM) collides(addr Address) bool {
 
 func (e *EVM) createAddress(req callRequest, nonce uint64) Address {
 	if req.kind == KindCreate2 {
-		codeHash := e.hasher.Hash(req.input)
-		salt := req.salt.Bytes32()
-		e.hasher.Reset()
-		e.hasher.Write([]byte{0xff})
-		e.hasher.Write(req.caller[:])
-		e.hasher.Write(salt[:])
-		e.hasher.Write(codeHash[:])
-		sum := e.hasher.Sum()
-		return Address(sum[12:])
+		return Create2Address(req.caller, Create2Input{Salt: req.salt.Bytes32(), CodeHash: e.hasher.Hash(req.input)})
 	}
 	return CreateAddress(req.caller, nonce)
+}
+
+type Create2Input struct {
+	Salt     [32]byte
+	CodeHash Hash
+}
+
+func Create2Address(caller Address, in Create2Input) Address {
+	var buf [1 + 20 + 32 + 32]byte
+	buf[0] = 0xff
+	copy(buf[1:21], caller[:])
+	copy(buf[21:53], in.Salt[:])
+	copy(buf[53:], in.CodeHash[:])
+	sum := keccak.Sum256(buf[:])
+	return Address(sum[12:])
 }
 
 func (e *EVM) finish(f *Frame, status Status) frameResult {

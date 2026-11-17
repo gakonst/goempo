@@ -19,3 +19,4 @@
 {"date":"2026-11-17","rung":"R4","score":"certificates","commit":"c22fe5a","note":"follow verified 15310/15310 mainnet finalization certificates to tip 49411705 incl. live epoch 2287 transition from certified block 49399199"}
 {"date":"2026-11-17","rung":"R6","score":"sim","commit":"625567f","note":"simplex+DKG reshare sim, 4/5/7 validators with drops and outages, every certificate and epoch transition accepted by consensus.Chain"}
 {"date":"2026-11-17","rung":"precompiles-oracle","score":"4986/4992","commit":"b9f3ffb","note":"zempo reference-oracle corpus T0..T14; 6 T14 diffs follow newer tempo c8b89f9; T1C window 10,129,394..10,400,000 replays with 0 heals"}
+{"date":"2026-11-17","rung":"R3","score":"15150000","commit":"c780ea9","note":"datadir replay from genesis, no heals, past T2; AA batch call targets warmed when their call starts"}

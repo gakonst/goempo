@@ -65,7 +65,7 @@ type r1Result struct {
 func runScore(args []string) int {
 	fs := flag.NewFlagSet("score", flag.ContinueOnError)
 	dir := fs.String("dir", defaultBlockDir(), "cache directory with fetched blocks")
-	rung := fs.String("rung", "R1", "rung to score: R1 (decode) or R3 (replay from genesis)")
+	rung := fs.String("rung", "R1", "rung to score: R1 (decode), R3 (replay from genesis) or R5 (RPC answers against the recorded corpus)")
 	chunks := fs.String("chunks", defaultChunkDir(), "R3: directory of block chunk files (fetch-range)")
 	to := fs.Uint64("to", replayBlocksMax, "R3: last block to execute")
 	if err := fs.Parse(args); err != nil {
@@ -73,6 +73,9 @@ func runScore(args []string) int {
 	}
 	if *rung == "R3" {
 		return runReplay([]string{"-dir", *chunks, "-to", strconv.FormatUint(*to, 10), "-diagnose", "off"})
+	}
+	if *rung == "R5" {
+		return runRPCDiff([]string{"-blocks", *dir, "-chunks", *chunks})
 	}
 	res, err := scoreR1(*dir)
 	if err != nil {

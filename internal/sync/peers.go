@@ -10,6 +10,10 @@ import (
 
 const peersMax = 64
 
+const probeMax = 128
+
+var emptyBody = []byte{0xc2, 0xc0, 0xc0}
+
 var (
 	ErrNoPeers = errors.New("sync: no peer holds the blocks")
 	ErrTooMany = errors.New("sync: too many peers")
@@ -23,23 +27,29 @@ type Peer interface {
 }
 
 type Peers struct {
-	peers []Peer
-	next  int
-	Drop  func(p Peer, err error)
+	peers  []Peer
+	latest []Link
+	next   int
+	Drop   func(p Peer, err error)
 }
 
 func NewPeers(peers []Peer) (*Peers, error) {
-	if len(peers) > peersMax {
-		return nil, ErrTooMany
+	s := &Peers{}
+	for _, p := range peers {
+		if err := s.Add(p); err != nil {
+			return nil, err
+		}
 	}
-	return &Peers{peers: append([]Peer(nil), peers...)}, nil
+	return s, nil
 }
 
 func (s *Peers) Add(p Peer) error {
 	if len(s.peers) >= peersMax {
 		return ErrTooMany
 	}
+	r := p.Blocks()
 	s.peers = append(s.peers, p)
+	s.latest = append(s.latest, Link{Number: r.Latest, Hash: r.LatestHash})
 	return nil
 }
 
@@ -48,29 +58,54 @@ func (s *Peers) Len() int { return len(s.peers) }
 func (s *Peers) remove(i int, err error) {
 	p := s.peers[i]
 	s.peers = append(s.peers[:i], s.peers[i+1:]...)
+	s.latest = append(s.latest[:i], s.latest[i+1:]...)
 	closeErr := p.Close()
 	if s.Drop != nil {
 		s.Drop(p, errors.Join(err, closeErr))
 	}
 }
 
+func (s *Peers) refresh(i int) error {
+	if r := s.peers[i].Blocks(); r.Latest > s.latest[i].Number {
+		s.latest[i] = Link{Number: r.Latest, Hash: r.LatestHash}
+	}
+	headers, err := s.peers[i].Headers(p2p.HeadersRequest{Number: s.latest[i].Number + 1, Amount: probeMax})
+	if err != nil {
+		return err
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	last := headers[len(headers)-1]
+	block, err := Assemble(Raw{Header: last, Body: emptyBody})
+	if err != nil {
+		return err
+	}
+	s.latest[i] = Link{Number: block.Header.Inner.Number, Hash: headerHash(last)}
+	return nil
+}
+
 func (s *Peers) Tip() (Link, error) {
-	var best p2p.BlockRange
-	for _, p := range s.peers {
-		if r := p.Blocks(); r.Latest > best.Latest {
-			best = r
+	var best Link
+	for i := len(s.peers) - 1; i >= 0; i-- {
+		if err := s.refresh(i); err != nil {
+			s.remove(i, err)
+			continue
+		}
+		if s.latest[i].Number > best.Number {
+			best = s.latest[i]
 		}
 	}
-	if best.Latest == 0 {
+	if best.Number == 0 {
 		return Link{}, ErrNoPeers
 	}
-	return Link{Number: best.Latest, Hash: best.LatestHash}, nil
+	return best, nil
 }
 
 func (s *Peers) pick(last uint64) int {
 	for i := range len(s.peers) {
 		j := (s.next + i) % len(s.peers)
-		if s.peers[j].Blocks().Latest >= last {
+		if s.latest[j].Number >= last {
 			s.next = j + 1
 			return j
 		}

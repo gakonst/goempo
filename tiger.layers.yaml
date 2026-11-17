@@ -2,6 +2,12 @@
   - os
   - ./internal/version
 "./cmd/goempo-dev":
+  - ./internal/io
+  - ./internal/p2p
+  - ./internal/p2p/rlpx
+  - ./internal/sync
+  - ./internal/tempo/hardfork
+  - crypto/rand
   - ./internal/statetest
   - os
   - net

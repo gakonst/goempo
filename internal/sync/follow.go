@@ -113,3 +113,5 @@ const _ = uint(peersMax - sourceTryMax)
 const _ = uint(withdrawalsMax - p2p.ItemsMax)
 
 const _ = uint(BatchMax - peersMax)
+
+const _ = uint(p2p.ItemsMax - probeMax)

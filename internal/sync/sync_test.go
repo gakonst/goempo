@@ -333,7 +333,7 @@ func TestFollowerOverSimulatedPeers(t *testing.T) {
 			serveErr = err
 			return
 		}
-		serveErr = server.Serve(4)
+		serveErr = server.Serve(6)
 	})
 	conn, err := network.Dial("server:30303")
 	if err != nil {

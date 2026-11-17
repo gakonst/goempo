@@ -201,15 +201,15 @@ func legacyLimits(v abiValue) []TokenLimit {
 }
 
 var keychainTable = register(AccountKeychainAddress, newTable(
-	mutate("authorizeKey(address,uint8,uint64,bool,(address,uint256)[])", []abiType{tAddress, tU8, tU64, tBool, tTupleArray(tAddress.scalar, tU256.scalar)}, func(c *Context, a []abiValue) ([]byte, error) {
+	mutate("authorizeKey(address,uint8,uint64,bool,(address,uint256)[])", []abiType{tAddress, tSigType, tU64, tBool, tTupleArray(tAddress.scalar, tU256.scalar)}, func(c *Context, a []abiValue) ([]byte, error) {
+		if configurableTypeRefused(c, a[1].u8()) {
+			return nil, revert(nil)
+		}
 		if c.at(hardfork.T3) {
 			var w Hash
 			sel := selector("authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[]))")
 			copy(w[:], sel[:])
 			return nil, revert(abiError(selector("LegacyAuthorizeKeySelectorChanged(bytes4)"), w))
-		}
-		if c.at(hardfork.T11) && !c.at(hardfork.T14) && a[1].u8() == SigConfigurableAccount {
-			return nil, revert(nil)
 		}
 		r := KeyRestrictions{Expiry: a[2].u64(), EnforceLimits: a[3].boolean(), Limits: legacyLimits(a[4]), AllowAnyCalls: true}
 		return nil, AuthorizeKey(c, KeyGrant{Account: c.Caller, KeyID: a[0].addr(), SigType: a[1].u8(), Restrictions: r})

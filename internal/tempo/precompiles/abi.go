@@ -19,6 +19,7 @@ const (
 	kUint
 	kInt
 	kBytesN
+	kEnum
 )
 
 type scalar struct {
@@ -50,6 +51,9 @@ var (
 	tAddress = scalarArg(kAddress, 160)
 	tBool    = scalarArg(kBool, 8)
 	tU8      = scalarArg(kUint, 8)
+	tSigType = scalarArg(kEnum, 4)
+	tPolType = scalarArg(kEnum, 3)
+	tCredit  = scalarArg(kEnum, 3)
 	tU32     = scalarArg(kUint, 32)
 	tU64     = scalarArg(kUint, 64)
 	tU128    = scalarArg(kUint, 128)
@@ -219,6 +223,9 @@ func decodeScalar(h Hash, t scalar, mode decodeMode) (Hash, error) {
 	if mode.strict && canon != h {
 		return Hash{}, errABI
 	}
+	if mode.strict && t.kind == kEnum && int(canon[31]) >= t.size {
+		return Hash{}, errABI
+	}
 	return canon, nil
 }
 
@@ -232,6 +239,9 @@ func canonicalWord(h Hash, t scalar) Hash {
 	}
 	if t.kind == kUint {
 		return toHash(w.And(fieldMask(uint(t.size / 8))))
+	}
+	if t.kind == kEnum {
+		return toHash(w.And(fieldMask(1)))
 	}
 	if t.kind == kInt {
 		return toHash(w.SignExtend(u256.FromUint64(uint64(t.size/8 - 1))))

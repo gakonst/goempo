@@ -197,6 +197,10 @@ func rawCursor(c *Context, a []abiValue) abiCursor {
 	return abiCursor{data: a[0].data, strict: flag(c.at(hardfork.T11))}
 }
 
+func configurableTypeRefused(c *Context, sigType uint8) bool {
+	return c.at(hardfork.T11) && !c.at(hardfork.T14) && sigType == SigConfigurableAccount
+}
+
 func decodeOrRevert(err error) error {
 	if err == errABI {
 		return revert(nil)
@@ -210,8 +214,8 @@ func authorizeKeyV2(c *Context, a []abiValue, withWitness flag) error {
 	if err != nil {
 		return revert(nil)
 	}
-	sigType, err := cur.scalar(1, tU8)
-	if err != nil {
+	sigType, err := cur.scalar(1, tSigType)
+	if err != nil || configurableTypeRefused(c, sigType[31]) {
 		return revert(nil)
 	}
 	rc, err := cur.follow(2)
@@ -259,7 +263,10 @@ var keychainV2Table = extend(keychainTable,
 	mutate("authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[]),bytes32)", []abiType{tRaw}, func(c *Context, a []abiValue) ([]byte, error) {
 		return nil, authorizeKeyV2(c, a, true)
 	}).from(hardfork.T5),
-	mutate("authorizeAdminKey(address,uint8,bytes32)", []abiType{tAddress, tU8, tB32}, func(c *Context, a []abiValue) ([]byte, error) {
+	mutate("authorizeAdminKey(address,uint8,bytes32)", []abiType{tAddress, tSigType, tB32}, func(c *Context, a []abiValue) ([]byte, error) {
+		if configurableTypeRefused(c, a[1].u8()) {
+			return nil, revert(nil)
+		}
 		w := a[2].bytes32()
 		g := KeyGrant{Account: c.Caller, KeyID: a[0].addr(), SigType: a[1].u8(), Admin: true, Restrictions: KeyRestrictions{Expiry: ^uint64(0), AllowAnyCalls: true}}
 		if w != (Hash{}) {

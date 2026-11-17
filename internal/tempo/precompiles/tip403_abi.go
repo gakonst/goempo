@@ -384,11 +384,11 @@ var tip403Table = register(TIP403RegistryAddress, newTable(
 		n, err := c.migrateTransferPolicyIDs(rows)
 		return retU64(n), err
 	}).from(hardfork.T9),
-	mutate("createPolicy(address,uint8)", []abiType{tAddress, tU8}, func(c *Context, a []abiValue) ([]byte, error) {
+	mutate("createPolicy(address,uint8)", []abiType{tAddress, tPolType}, func(c *Context, a []abiValue) ([]byte, error) {
 		id, err := c.createPolicy(newPolicy{sender: c.Caller, admin: a[0].addr(), kind: a[1].u8()})
 		return retU64(id), err
 	}),
-	mutate("createPolicyWithAccounts(address,uint8,address[])", []abiType{tAddress, tU8, tScalarArray(tAddress)}, func(c *Context, a []abiValue) ([]byte, error) {
+	mutate("createPolicyWithAccounts(address,uint8,address[])", []abiType{tAddress, tPolType, tScalarArray(tAddress)}, func(c *Context, a []abiValue) ([]byte, error) {
 		id, err := c.createPolicy(newPolicy{sender: c.Caller, admin: a[0].addr(), kind: a[1].u8(), accounts: addressItems(a[2])})
 		return retU64(id), err
 	}),

@@ -31,7 +31,7 @@ var storageCreditsTable = register(StorageCreditsAddress, newTable(
 		s, err := c.creditStateOf(a[0].addr())
 		return retU64(s.budget), err
 	}),
-	mutate("setMode(uint8)", []abiType{tU8}, func(c *Context, a []abiValue) ([]byte, error) {
+	mutate("setMode(uint8)", []abiType{tCredit}, func(c *Context, a []abiValue) ([]byte, error) {
 		return nil, c.setCreditModeABI(a[0].u64())
 	}),
 	mutate("setBudget(uint64)", []abiType{tU64}, func(c *Context, a []abiValue) ([]byte, error) {

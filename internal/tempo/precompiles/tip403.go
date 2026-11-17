@@ -284,7 +284,7 @@ func decodeReceiveConfig(w Word) receiveConfig {
 	}
 }
 
-const recoveryModeMax = 2
+const recoveryModeMax = recoveryReceiver + 1
 
 func (c *Context) readReceiveConfig(account Address) (receiveConfig, error) {
 	w, err := c.sload(TIP403RegistryAddress, c.receivePolicySlot(account))

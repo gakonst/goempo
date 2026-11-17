@@ -16,28 +16,29 @@ type Hash = primitives.Hash
 type Word = u256.Int
 
 const (
-	gasWarmRead           uint64 = 100
-	gasColdSloadExtra     uint64 = 2_000
-	gasColdAccountExtra   uint64 = 2_500
-	gasColdSstore         uint64 = 2_100
-	gasSstoreReset        uint64 = 2_800
-	gasSstoreSetPreT1     uint64 = 19_900
-	gasSstoreSetT1        uint64 = 250_000
-	gasSstoreSetT7        uint64 = 5_000
-	gasCallStipend        uint64 = 2_300
-	gasStorageCredit      uint64 = 245_000
-	gasLog                uint64 = 375
-	gasLogTopic           uint64 = 375
-	gasLogByte            uint64 = 8
-	gasKeccak             uint64 = 30
-	gasKeccakWord         uint64 = 6
-	gasInputWordPreT11    uint64 = 6
-	gasInputWordT11       uint64 = 30
-	gasCodeDepositPerByte uint64 = 200
-	refundClearPreT7      int64  = 4_800
-	refundSetPreT7        int64  = 19_900
-	refundSetT7           int64  = 5_000
-	refundReset           int64  = 2_800
+	gasWarmRead         uint64 = 100
+	gasColdSloadExtra   uint64 = 2_000
+	gasColdAccountExtra uint64 = 2_500
+	gasColdSstore       uint64 = 2_100
+	gasSstoreReset      uint64 = 2_800
+	gasSstoreSetPreT1   uint64 = 19_900
+	gasSstoreSetT1      uint64 = 250_000
+	gasSstoreSetT7      uint64 = 5_000
+	gasCallStipend      uint64 = 2_300
+	gasStorageCredit    uint64 = 245_000
+	gasLog              uint64 = 375
+	gasLogTopic         uint64 = 375
+	gasLogByte          uint64 = 8
+	gasKeccak           uint64 = 30
+	gasKeccakWord       uint64 = 6
+	gasInputWordPreT11  uint64 = 6
+	gasInputWordT11     uint64 = 30
+	gasCodeDepositPreT1 uint64 = 200
+	gasCodeDepositT1    uint64 = 1_000
+	refundClearPreT7    int64  = 4_800
+	refundSetPreT7      int64  = 19_900
+	refundSetT7         int64  = 5_000
+	refundReset         int64  = 2_800
 )
 
 const _ = uint64(gasSstoreSetT1 - gasStorageCredit - gasSstoreSetT7)
@@ -341,13 +342,14 @@ func (c *Context) setCode(addr Address, code []byte) error {
 	if err := c.ensureMutable(); err != nil {
 		return err
 	}
-	if err := c.charge(gasCodeDepositPerByte * uint64(len(code))); err != nil {
+	perByte := gasCodeDepositPreT1
+	if c.at(hardfork.T1) {
+		perByte = gasCodeDepositT1
+	}
+	if err := c.charge(perByte * uint64(len(code))); err != nil {
 		return err
 	}
 	c.State.WarmAddress(addr)
-	if !c.State.Exist(addr) {
-		c.State.CreateAccount(addr)
-	}
 	c.State.SetCode(addr, code)
 	return nil
 }

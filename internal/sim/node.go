@@ -412,24 +412,42 @@ func (n *node) Propose(ctx consensus.ProposeContext) (consensus.Digest, bool) {
 	return b.digest, true
 }
 
-func (n *node) Verify(ctx consensus.ProposeContext, payload consensus.Digest) bool {
+func (n *node) Verify(ctx consensus.ProposeContext, payload consensus.Digest) consensus.Verdict {
 	b, ok := n.blocks[payload]
-	parent, pok := n.blocks[ctx.ParentDigest]
-	if !ok || !pok {
-		return false
+	if !ok {
+		n.request(payload)
+		return consensus.Undecided
+	}
+	parent, ok := n.blocks[ctx.ParentDigest]
+	if !ok {
+		n.request(ctx.ParentDigest)
+		return consensus.Undecided
 	}
 	if payload == ctx.ParentDigest {
-		return parent.number() == n.epocher.Last(n.epoch)
+		if parent.number() != n.epocher.Last(n.epoch) {
+			return consensus.Reject
+		}
+		return consensus.Accept
 	}
 	c := b.blk.Header.Consensus
 	if b.parent() != ctx.ParentDigest || b.number() != parent.number()+1 || b.number() > n.epocher.Last(n.epoch) || c == nil {
-		return false
+		return consensus.Reject
 	}
-	want := types.ConsensusContext{Epoch: n.epoch, View: ctx.Round.View, ParentView: ctx.Parent, Proposer: n.players[ctx.Leader]}
+	want := types.ConsensusContext{Epoch: n.epoch, View: ctx.Round.View, ParentView: ctx.Parent, Proposer: c.Proposer}
+	if ctx.Leader != consensus.NoLeader {
+		want.Proposer = n.players[ctx.Leader]
+	}
 	if *c != want {
-		return false
+		return consensus.Reject
 	}
-	return n.verifyExtra(link{child: b, parent: parent})
+	if !n.verifyExtra(link{child: b, parent: parent}) {
+		return consensus.Reject
+	}
+	return consensus.Accept
+}
+
+func (n *node) Certify(ctx consensus.ProposeContext, payload consensus.Digest) consensus.Verdict {
+	return n.Verify(ctx, payload)
 }
 
 type link struct {

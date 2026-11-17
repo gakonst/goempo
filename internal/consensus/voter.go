@@ -4,6 +4,8 @@ import (
 	"github.com/gakonst/goempo/internal/crypto/bls12381"
 	"github.com/gakonst/goempo/internal/dkg"
 	"github.com/kapetan-io/tiger/assert"
+	"maps"
+	"slices"
 )
 
 type Millis int64
@@ -33,9 +35,18 @@ type ProposeContext struct {
 	Leader       int
 }
 
+type Verdict uint8
+
+const (
+	Undecided Verdict = iota
+	Accept
+	Reject
+)
+
 type Application interface {
 	Propose(ctx ProposeContext) (Digest, bool)
-	Verify(ctx ProposeContext, payload Digest) bool
+	Verify(ctx ProposeContext, payload Digest) Verdict
+	Certify(ctx ProposeContext, payload Digest) Verdict
 }
 
 type VoterConfig struct {
@@ -46,14 +57,14 @@ type VoterConfig struct {
 	Namespace Namespace
 	Genesis   Digest
 	Timeouts  Timeouts
+	Elector   ElectorVersion
 	App       Application
 }
 
 type MessageKind uint8
 
 const (
-	MsgProposal MessageKind = iota + 1
-	MsgVote
+	MsgVote MessageKind = iota + 1
 	MsgNotarization
 	MsgNullification
 	MsgFinalization
@@ -110,6 +121,9 @@ type viewState struct {
 	nullification *certified
 	finalization  *certified
 	sentNullify   bool
+	certified     bool
+	rejected      bool
+	seed          *[SignatureBytes]byte
 	sentFinalize  bool
 	nullifyVote   Vote
 	helped        bool
@@ -119,11 +133,13 @@ func (s *viewState) payload() (Digest, bool) {
 	if s.finalization != nil {
 		return s.finalization.proposal.Payload, true
 	}
-	if s.notarization != nil {
+	if s.notarization != nil && s.certified {
 		return s.notarization.proposal.Payload, true
 	}
 	return Digest{}, false
 }
+
+const NoLeader = -1
 
 type Voter struct {
 	cfg       VoterConfig
@@ -153,7 +169,15 @@ func (v *Voter) Epoch() uint64 { return v.cfg.Epoch }
 func (v *Voter) View() uint64 { return v.view }
 
 func (v *Voter) Leader(view uint64) int {
-	return int((v.cfg.Epoch + view) % uint64(len(v.cfg.Publics)))
+	e := Election{Version: v.cfg.Elector, Round: v.round(view), N: len(v.cfg.Publics)}
+	if view > 1 {
+		prev := v.views[view-1]
+		if prev == nil || prev.seed == nil {
+			return NoLeader
+		}
+		e.Seed = prev.seed
+	}
+	return e.Leader()
 }
 
 func (v *Voter) push(t task) {
@@ -225,7 +249,28 @@ func (v *Voter) enter(view uint64) {
 	v.leaderAt = v.now + v.cfg.Timeouts.Leader
 	v.advanceAt = v.now + v.cfg.Timeouts.Notarization
 	v.retryAt = 0
+	v.findProposal(view)
 	v.push(task{kind: taskPropose})
+}
+
+func (v *Voter) findProposal(view uint64) {
+	s := v.views[view]
+	leader := v.Leader(view)
+	if s == nil || s.proposal != nil || leader == NoLeader {
+		return
+	}
+	for _, x := range s.notarizes {
+		if x.Signer != leader {
+			continue
+		}
+		if VerifyVote(v.cfg.Publics[x.Signer], v.cfg.Namespace, x) != nil {
+			return
+		}
+		p := x.Proposal
+		s.proposal = &p
+		v.evaluate(view)
+		return
+	}
 }
 
 func (v *Voter) prune() {
@@ -241,7 +286,7 @@ func (v *Voter) Deadline() Millis {
 	if s != nil && s.sentNullify {
 		return v.retryAt
 	}
-	if s != nil && s.verified {
+	if s != nil && s.proposal != nil {
 		return v.advanceAt
 	}
 	return min(v.leaderAt, v.advanceAt)
@@ -294,7 +339,6 @@ func (v *Voter) tryPropose() {
 	s.proposed = true
 	s.proposal = &p
 	s.verified = true
-	v.broadcast(Message{Kind: MsgProposal, Proposal: p})
 	v.notarize(p)
 }
 
@@ -326,6 +370,20 @@ func (v *Voter) parentDigest(p Proposal) (Digest, bool) {
 	return ps.payload()
 }
 
+func (v *Voter) notarizedParent(p Proposal) (Digest, bool) {
+	if p.Parent == 0 {
+		return v.cfg.Genesis, true
+	}
+	ps := v.views[p.Parent]
+	if ps == nil {
+		return Digest{}, false
+	}
+	if ps.notarization != nil {
+		return ps.notarization.proposal.Payload, true
+	}
+	return ps.payload()
+}
+
 func (v *Voter) evaluate(view uint64) {
 	s := v.views[view]
 	if s == nil || s.proposal == nil || s.verified || s.sentNullify || view != v.view {
@@ -340,16 +398,65 @@ func (v *Voter) evaluate(view uint64) {
 		return
 	}
 	ctx := ProposeContext{Round: p.Round, Parent: p.Parent, ParentDigest: digest, Leader: v.Leader(view)}
-	if !v.cfg.App.Verify(ctx, p.Payload) {
+	switch v.cfg.App.Verify(ctx, p.Payload) {
+	case Undecided:
+		return
+	case Reject:
+		s.rejected = true
+		v.nullify(s)
+		return
+	case Accept:
+		s.verified = true
+		v.notarize(p)
+	default:
+		assert.Unreachable("consensus: unknown verdict")
+	}
+}
+
+func (v *Voter) certifyAll() {
+	for _, view := range slices.Sorted(maps.Keys(v.views)) {
+		s := v.views[view]
+		if s.notarization != nil && !s.certified && !s.rejected {
+			v.certify(view)
+		}
+	}
+}
+
+func (v *Voter) certify(view uint64) {
+	s := v.views[view]
+	p := s.notarization.proposal
+	digest, ok := v.notarizedParent(p)
+	if !ok {
 		return
 	}
-	s.verified = true
-	v.notarize(p)
+	ctx := ProposeContext{Round: p.Round, Parent: p.Parent, ParentDigest: digest, Leader: v.Leader(view)}
+	switch v.cfg.App.Certify(ctx, p.Payload) {
+	case Undecided:
+		return
+	case Reject:
+		s.rejected = true
+		if view == v.view && !s.sentNullify {
+			v.nullify(s)
+		}
+		return
+	case Accept:
+		s.certified = true
+		if !s.sentNullify && !s.sentFinalize && s.finalization == nil {
+			s.sentFinalize = true
+			vote := v.cfg.Signer.Sign(KindFinalize, p)
+			v.broadcast(Message{Kind: MsgVote, Vote: vote})
+			v.push(task{kind: taskVote, vote: vote})
+		}
+		v.advance(view)
+	default:
+		assert.Unreachable("consensus: unknown verdict")
+	}
 }
 
 func (v *Voter) Reevaluate(now Millis) Output {
 	v.now = now
 	v.push(task{kind: taskPropose})
+	v.certifyAll()
 	return v.drain()
 }
 
@@ -373,7 +480,7 @@ func (v *Voter) known(m Message) bool {
 		return s.nullification != nil
 	case MsgFinalization:
 		return s.finalization != nil
-	case MsgProposal, MsgVote:
+	case MsgVote:
 		return false
 	default:
 		assert.Unreachable("consensus: unknown message kind")
@@ -381,7 +488,7 @@ func (v *Voter) known(m Message) bool {
 	return false
 }
 
-func (k MessageKind) Valid() bool { return k >= MsgProposal && k <= MsgFinalization }
+func (k MessageKind) Valid() bool { return k >= MsgVote && k <= MsgFinalization }
 
 func (v *Voter) Handle(now Millis, from int, m Message) Output {
 	v.now = now
@@ -389,8 +496,6 @@ func (v *Voter) Handle(now Millis, from int, m Message) Output {
 		return v.drain()
 	}
 	switch m.Kind {
-	case MsgProposal:
-		v.onProposal(from, m.Proposal)
 	case MsgVote:
 		v.onVoteMessage(from, m.Vote)
 	case MsgNotarization, MsgNullification, MsgFinalization:
@@ -418,7 +523,7 @@ func (v *Voter) onCertificate(m Message) {
 		if VerifyFinalization(v.cfg.Identity, v.cfg.Namespace, Finalization{Proposal: m.Proposal, Certificate: m.Certificate}) == nil {
 			v.push(task{kind: taskFinalization, cert: c})
 		}
-	case MsgProposal, MsgVote:
+	case MsgVote:
 		return
 	default:
 		assert.Unreachable("consensus: unknown certificate kind")
@@ -432,19 +537,6 @@ func (v *Voter) inWindow(r Round) bool {
 	return r.View <= v.view+viewsAheadMax
 }
 
-func (v *Voter) onProposal(from int, p Proposal) {
-	view := p.Round.View
-	if !v.inWindow(p.Round) || view < v.view || from != v.Leader(view) {
-		return
-	}
-	s := v.state(view)
-	if s.proposal != nil {
-		return
-	}
-	s.proposal = &p
-	v.evaluate(view)
-}
-
 func (v *Voter) onVoteMessage(from int, vote Vote) {
 	if !vote.Kind.Valid() || vote.Signer != from || from < 0 || from >= len(v.cfg.Publics) {
 		return
@@ -456,6 +548,21 @@ func (v *Voter) onVoteMessage(from int, vote Vote) {
 		return
 	}
 	v.push(task{kind: taskVote, vote: vote})
+	view := vote.Proposal.Round.View
+	if vote.Kind == KindNullify && view == v.view && from == v.Leader(view) {
+		v.skipLeader(vote)
+	}
+}
+
+func (v *Voter) skipLeader(vote Vote) {
+	s := v.state(v.view)
+	if s.sentNullify || s.sentFinalize {
+		return
+	}
+	if VerifyVote(v.cfg.Publics[vote.Signer], v.cfg.Namespace, vote) != nil {
+		return
+	}
+	v.nullify(s)
 }
 
 func (v *Voter) help(view uint64) {
@@ -499,7 +606,11 @@ func (v *Voter) storeVote(vote Vote) {
 		}
 	}
 	*list = append(*list, vote)
-	v.checkQuorum(vote.Proposal.Round.View, vote.Kind)
+	view := vote.Proposal.Round.View
+	if vote.Kind == KindNotarize && s.proposal == nil && vote.Signer == v.Leader(view) && view == v.view {
+		v.findProposal(view)
+	}
+	v.checkQuorum(view, vote.Kind)
 }
 
 func (v *Voter) matching(list []Vote, p Proposal) []Vote {
@@ -586,16 +697,18 @@ func (v *Voter) onNotarization(c certified) {
 		return
 	}
 	s.notarization = &c
+	v.setSeed(s, c.cert)
 	m := Message{Kind: MsgNotarization, Proposal: c.proposal, Certificate: c.cert}
 	v.broadcast(m)
 	v.lastCert = &m
-	if !s.sentNullify && !s.sentFinalize {
-		s.sentFinalize = true
-		vote := v.cfg.Signer.Sign(KindFinalize, c.proposal)
-		v.broadcast(Message{Kind: MsgVote, Vote: vote})
-		v.push(task{kind: taskVote, vote: vote})
+	v.certify(view)
+}
+
+func (v *Voter) setSeed(s *viewState, c Certificate) {
+	if s.seed == nil {
+		seed := c.Seed
+		s.seed = &seed
 	}
-	v.advance(view)
 }
 
 func (v *Voter) advance(view uint64) {
@@ -610,6 +723,7 @@ func (v *Voter) onNullification(c certified) {
 		return
 	}
 	s.nullification = &c
+	v.setSeed(s, c.cert)
 	m := Message{Kind: MsgNullification, Proposal: c.proposal, Certificate: c.cert}
 	v.broadcast(m)
 	v.lastCert = &m
@@ -623,6 +737,8 @@ func (v *Voter) onFinalization(c certified) {
 		return
 	}
 	s.finalization = &c
+	s.certified = true
+	v.setSeed(s, c.cert)
 	m := Message{Kind: MsgFinalization, Proposal: c.proposal, Certificate: c.cert}
 	v.broadcast(m)
 	v.lastFinal = &m
@@ -636,7 +752,7 @@ func (v *Voter) timedOut(s *viewState) bool {
 	if v.now >= v.advanceAt {
 		return true
 	}
-	return v.now >= v.leaderAt && !s.verified
+	return v.now >= v.leaderAt && s.proposal == nil
 }
 
 func (v *Voter) Tick(now Millis) Output {

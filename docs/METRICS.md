@@ -82,7 +82,7 @@ The script builds `cmd/goempo-dev` into a temporary directory and runs, all from
 | R3 replay | `goempo-dev replay -to $GOEMPO_REPLAY_TO -diagnose off` | gas used, receipts root, bloom and state root of every block, in memory |
 | R6 sim (`--all`) | `go test -count=1 ./internal/sim/` | simplex and DKG reshare across 4-7 simulated validators with faults |
 | R6a p2p vectors (--all) | `go test ./internal/cwp2p -run CommonwareVectors` | SAKE handshake and CUPS records byte for byte against vectors from Rust commonware 2026.10.0 |
-| R6b wire vectors (--all) | `go test ./internal/consensus/wire ./internal/dkg -run 'Rust|Mainnet'` | votes, certificates, resolver, marshal and DKG messages against Rust golden vectors and mainnet certificates |
+| R6b wire vectors (--all) | `go test ./internal/consensus/wire ./internal/dkg -run 'Rust\|Mainnet'` | votes, certificates, resolver, marshal and DKG messages against Rust golden vectors and mainnet certificates |
 | R6c pool and builder (--all) | `go test ./internal/txpool ./internal/builder` | pool admission rules and block assembly (the 20,000-block mainnet rebuild needs a datadir, so it is read from FRONTIER) |
 | R6d validator cluster (--all) | `go test ./internal/validator` | key files, mainnet ValidatorConfig calls, and a 4-validator in-memory cluster finalizing 3 DKG epochs |
 

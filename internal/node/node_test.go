@@ -361,3 +361,33 @@ func TestRecentEvicts(t *testing.T) {
 	_, ok = r.BlockNumber(primitives.Hash{})
 	assert.Ok(!(ok), "ok")
 }
+
+func TestCertifierSparseWhenBuried(t *testing.T) {
+	fin := loadFinalizations(t)
+	only := fixtureFinality{boundary2041: fin[boundary2041]}
+	anchor := loadBlock(t, "44085599")
+	before := loadBlock(t, "44107198")
+	last := loadBlock(t, "44107199")
+	c := node.NewCertifier(consensus.NewMainnetChain(), only, node.MainnetCertifyFrom)
+	assert.NoError(c.Anchor(boundary2040, &anchor), "anchor")
+	n, err := c.Admit([]types.Block{before, last}, node.Buried)
+	assert.NoError(err, "admit buried")
+	assert.Equal(n, 2, "both admitted")
+	s := c.Stats()
+	assert.Equal(s.Certified, uint64(1), "one certificate verified")
+	assert.Equal(s.Linked, uint64(1), "the earlier block is linked by hash")
+	assert.Equal(s.Transitions, uint64(1), "the boundary installs the next identity")
+
+	c = node.NewCertifier(consensus.NewMainnetChain(), only, node.MainnetCertifyFrom)
+	assert.NoError(c.Anchor(boundary2040, &anchor), "anchor")
+	n, err = c.Admit([]types.Block{before, last}, node.NearTip)
+	assert.NoError(err, "admit near tip")
+	assert.Equal(n, 2, "the certified descendant covers its parent")
+
+	forged := last
+	forged.Header.Inner.GasUsed++
+	c = node.NewCertifier(consensus.NewMainnetChain(), only, node.MainnetCertifyFrom)
+	assert.NoError(c.Anchor(boundary2040, &anchor), "anchor")
+	_, err = c.Admit([]types.Block{before, forged}, node.Buried)
+	assert.Ok(err != nil, "a forged block fails its certificate")
+}

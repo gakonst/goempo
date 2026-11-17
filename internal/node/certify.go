@@ -90,7 +90,7 @@ func (c *Certifier) Admit(blocks []types.Block, depth Depth) (int, error) {
 	for skip < n && sub[skip].Header.Inner.Number < c.from {
 		skip++
 	}
-	k, err := c.verify(sub[skip:])
+	k, err := c.verifySparse(sub[skip:], depth)
 	if err != nil {
 		return 0, err
 	}
@@ -110,6 +110,26 @@ func (c *Certifier) Admit(blocks []types.Block, depth Depth) (int, error) {
 		c.stats.Trusted++
 	}
 	return n, c.closeEpoch(&sub[n-1])
+}
+
+func (c *Certifier) verifySparse(sub []types.Block, depth Depth) (int, error) {
+	if depth == NearTip || len(sub) < 2 {
+		return c.verify(sub)
+	}
+	last := &sub[len(sub)-1]
+	certs, err := c.fetch(last.Header.Inner.Number, 1)
+	if err != nil {
+		return 0, err
+	}
+	if certs[0] == nil {
+		return c.verify(sub)
+	}
+	if err := c.chain.Verify([]consensus.Certified{certified(last, certs[0])}); err != nil {
+		return 0, err
+	}
+	c.stats.Certified++
+	c.stats.Linked += uint64(len(sub) - 1)
+	return len(sub), nil
 }
 
 func (c *Certifier) verify(sub []types.Block) (int, error) {

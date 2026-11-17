@@ -238,6 +238,8 @@
   - ./internal/types
   - ./internal/u256
 "./internal/validator":
+  - ./internal/consensus
+  - ./internal/types
   - net
   - os
   - ./internal/crypto/bls12381

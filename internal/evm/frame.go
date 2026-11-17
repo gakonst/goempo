@@ -4,6 +4,8 @@ import "github.com/gakonst/goempo/internal/u256"
 
 const StackLimit = 1024
 
+const stackInitial = 64
+
 const CallDepthLimit = 1024
 
 const _ = uint(StackLimit - CallDepthLimit)
@@ -24,7 +26,7 @@ func (k CallKind) IsCreate() bool {
 }
 
 type Frame struct {
-	stack       [StackLimit]u256.Int
+	stack       []u256.Int
 	sp          int
 	memory      []byte
 	code        []byte
@@ -86,6 +88,13 @@ func (f *Frame) UseGas(amount uint64) bool {
 }
 
 func (f *Frame) Memory() []byte { return f.memory }
+
+func (f *Frame) growStack(need int) {
+	size := min(max(need, 2*len(f.stack), stackInitial), StackLimit)
+	grown := make([]u256.Int, size)
+	copy(grown, f.stack[:f.sp])
+	f.stack = grown
+}
 
 func (f *Frame) reset() {
 	f.sp = 0

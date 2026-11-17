@@ -31,13 +31,14 @@ const _ = uint(replayBlocksMax - chunkBlocks)
 var errCacheGap = errors.New("block cache has a gap")
 
 type replayResult struct {
-	Rung      string  `json:"rung"`
-	Chain     string  `json:"chain"`
-	Height    uint64  `json:"height"`
-	Target    uint64  `json:"target"`
-	Mismatch  string  `json:"mismatch,omitempty"`
-	Seconds   float64 `json:"seconds"`
-	BlocksSec float64 `json:"blocks_per_sec"`
+	Rung      string      `json:"rung"`
+	Chain     string      `json:"chain"`
+	Height    uint64      `json:"height"`
+	Target    uint64      `json:"target"`
+	Mismatch  string      `json:"mismatch,omitempty"`
+	Seconds   float64     `json:"seconds"`
+	BlocksSec float64     `json:"blocks_per_sec"`
+	Bench     *benchStats `json:"bench,omitempty"`
 }
 
 type mismatch struct {
@@ -70,6 +71,7 @@ type replayer struct {
 	healedFrom *mismatch
 	healedHead uint64
 	stopped    bool
+	counters   benchCounters
 }
 
 func defaultResultPath() string {
@@ -90,6 +92,8 @@ func runReplay(args []string) int {
 	heals := fs.Int("heal", 0, "after a mismatch, apply the block's traced state diff and keep going, up to this many blocks")
 	datadir := fs.String("datadir", "", "keep the replay state on disk here and resume from it (empty: in memory, from genesis)")
 	every := fs.Uint64("checkpoint", checkpointDefault, "with -datadir, flush the state to disk every this many blocks (0: only at exit)")
+	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the run here")
+	memProfile := fs.String("memprofile", "", "write an allocation profile at the end of the run here")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -107,8 +111,17 @@ func runReplay(args []string) int {
 	if *heals > 0 {
 		r.heal = &healer{client: newRPCClient(*rpcURL), remaining: min(*heals, healsMax), verbose: *diagnose == "on"}
 	}
+	prof, err := startProfiles(profilePaths{cpu: *cpuProfile, mem: *memProfile})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "replay:", err)
+		return 1
+	}
 	start := time.Now()
 	runErr := r.run(*to)
+	took := time.Since(start)
+	if err := prof.stop(); err != nil {
+		runErr = errors.Join(runErr, err)
+	}
 	if r.failed != nil && *diagnose == "on" {
 		r.diagnose(newRPCClient(*rpcURL))
 	}
@@ -116,7 +129,9 @@ func runReplay(args []string) int {
 		runErr = errors.Join(runErr, err)
 	}
 	r.reportHeals()
-	res := r.summary(*to, time.Since(start))
+	res := r.summary(*to, took)
+	bench := r.counters.stats(took)
+	res.Bench = &bench
 	if err := writeResult(*out, &res); err != nil {
 		fmt.Fprintln(os.Stderr, "replay:", err)
 	}
@@ -197,9 +212,25 @@ func writeResult(path string, res *replayResult) error {
 
 func (r *replayer) run(to uint64) error {
 	chunks := min(to/chunkBlocks+1, chunksMax)
-	for i := (r.head + 1) / chunkBlocks; i < chunks; i++ {
+	first := (r.head + 1) / chunkBlocks
+	if first >= chunks {
+		return nil
+	}
+	next := prefetchChunk(r.ctx, r.dir, first*chunkBlocks)
+	defer func() { next.Wait() }()
+	for i := first; i < chunks; i++ {
 		start := i * chunkBlocks
-		raws, err := readChunk(r.dir, start)
+		got := next.take(r.ctx)
+		if stopRequested(r.ctx) {
+			r.stopped = true
+			fmt.Fprintf(os.Stderr, "replay: stopped after block %d\n", r.head)
+			return nil
+		}
+		next.Wait()
+		if i+1 < chunks {
+			next = prefetchChunk(r.ctx, r.dir, start+chunkBlocks)
+		}
+		raws, err := got.raws, got.err
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("cache ends before block %d", start)
 		}

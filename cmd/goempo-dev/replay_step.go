@@ -45,6 +45,7 @@ func (r *replayer) step(blk *types.Block) bool {
 	}
 	r.hashes[h.Number%hashWindow] = blk.Header.Hash()
 	r.head = h.Number
+	r.counters.add(res.GasUsed, len(blk.Transactions))
 	return true
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const (
@@ -192,6 +194,41 @@ func readChunkBytes(dir string, start uint64) ([]byte, error) {
 	zr := flate.NewReader(f)
 	defer zr.Close()
 	return io.ReadAll(io.LimitReader(zr, chunkBytesMax))
+}
+
+type chunkRead struct {
+	raws [][]byte
+	err  error
+}
+
+type chunkPrefetch struct {
+	wg  sync.WaitGroup
+	out chan chunkRead
+}
+
+func prefetchChunk(ctx context.Context, dir string, start uint64) *chunkPrefetch {
+	p := &chunkPrefetch{out: make(chan chunkRead, 1)}
+	p.wg.Go(func() {
+		raws, err := readChunk(dir, start)
+		select {
+		case p.out <- chunkRead{raws: raws, err: err}:
+		case <-ctx.Done():
+		}
+	})
+	return p
+}
+
+func (p *chunkPrefetch) take(ctx context.Context) chunkRead {
+	select {
+	case got := <-p.out:
+		return got
+	case <-ctx.Done():
+		return chunkRead{err: ctx.Err()}
+	}
+}
+
+func (p *chunkPrefetch) Wait() {
+	p.wg.Wait()
 }
 
 func readChunk(dir string, start uint64) ([][]byte, error) {

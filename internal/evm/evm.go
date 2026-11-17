@@ -172,8 +172,12 @@ func (e *EVM) interpret(f *Frame) Status {
 		if f.sp < o.In {
 			return StatusStackUnderflow
 		}
-		if f.sp-o.In+o.Out > StackLimit {
+		need := f.sp - o.In + o.Out
+		if need > StackLimit {
 			return StatusStackOverflow
+		}
+		if need > len(f.stack) {
+			f.growStack(need)
 		}
 		if f.gas < o.Gas {
 			return StatusOutOfGas

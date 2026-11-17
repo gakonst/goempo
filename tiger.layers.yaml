@@ -257,3 +257,24 @@
   - ./internal/dkg
   - ./internal/primitives
   - github.com/kapetan-io/tiger/assert
+"./internal/txpool":
+  - ./internal/primitives
+  - ./internal/tempo/chain
+  - ./internal/tempo/executor
+  - ./internal/types
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert
+"./internal/builder":
+  - ./internal/crypto/keccak
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/state
+  - ./internal/tempo/chain
+  - ./internal/tempo/executor
+  - ./internal/tempo/hardfork
+  - ./internal/tempo/precompiles
+  - ./internal/trie
+  - ./internal/txpool
+  - ./internal/types
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert

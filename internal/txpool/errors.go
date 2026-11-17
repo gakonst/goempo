@@ -1,0 +1,33 @@
+package txpool
+
+import "errors"
+
+var (
+	ErrOversized              = errors.New("txpool: oversized transaction data")
+	ErrDecode                 = errors.New("txpool: malformed transaction")
+	ErrTxType                 = errors.New("txpool: transaction type not supported")
+	ErrChainID                = errors.New("txpool: invalid chain id")
+	ErrAlreadyKnown           = errors.New("txpool: already known")
+	ErrUnderpriced            = errors.New("txpool: max fee per gas below the pool minimum")
+	ErrTipAboveFeeCap         = errors.New("txpool: max priority fee per gas higher than max fee per gas")
+	ErrGasLimit               = errors.New("txpool: gas limit exceeds the block gas limit")
+	ErrTooManyAuthorizations  = errors.New("txpool: too many authorizations")
+	ErrTooManyCalls           = errors.New("txpool: too many calls")
+	ErrNoCalls                = errors.New("txpool: transaction has no calls")
+	ErrCallInputTooLarge      = errors.New("txpool: call input too large")
+	ErrAccessListAccounts     = errors.New("txpool: too many access list accounts")
+	ErrAccessListKeys         = errors.New("txpool: too many storage keys per account")
+	ErrAccessListKeysTotal    = errors.New("txpool: too many total storage keys")
+	ErrTokenLimits            = errors.New("txpool: too many token limits")
+	ErrCallScopes             = errors.New("txpool: too many keychain call scopes")
+	ErrSelectorRules          = errors.New("txpool: too many keychain selector rules")
+	ErrRecipients             = errors.New("txpool: too many keychain recipients")
+	ErrValidBefore            = errors.New("txpool: valid_before too close to the chain tip")
+	ErrValidAfter             = errors.New("txpool: valid_after too far in the future")
+	ErrSubblockNonceKey       = errors.New("txpool: subblock nonce keys are not accepted")
+	ErrSender                 = errors.New("txpool: invalid sender signature")
+	ErrSenderLimit            = errors.New("txpool: sender has too many pooled transactions")
+	ErrReplacementUnderpriced = errors.New("txpool: replacement transaction underpriced")
+	ErrPoolFull               = errors.New("txpool: pool is full")
+	ErrRejected               = errors.New("txpool: rejected by the protocol checks")
+)

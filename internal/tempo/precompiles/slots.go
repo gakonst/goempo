@@ -4,6 +4,7 @@ import (
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/u256"
+	"unicode/utf8"
 )
 
 type slot Hash
@@ -123,6 +124,14 @@ func longStringWords(head Word) (int, error) {
 }
 
 func (c *Context) loadString(addr Address, s slot) ([]byte, error) {
+	b, err := c.loadStringBytes(addr, s)
+	if err == nil && !utf8.Valid(b) {
+		return nil, errFatal
+	}
+	return b, err
+}
+
+func (c *Context) loadStringBytes(addr Address, s slot) ([]byte, error) {
 	head, err := c.sload(addr, s)
 	if err != nil {
 		return nil, err

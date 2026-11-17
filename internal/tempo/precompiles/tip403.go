@@ -284,6 +284,20 @@ func decodeReceiveConfig(w Word) receiveConfig {
 	}
 }
 
+const recoveryModeMax = 2
+
+func (c *Context) readReceiveConfig(account Address) (receiveConfig, error) {
+	w, err := c.sload(TIP403RegistryAddress, c.receivePolicySlot(account))
+	if err != nil {
+		return receiveConfig{}, err
+	}
+	cfg := decodeReceiveConfig(w)
+	if cfg.recoveryMode > recoveryModeMax {
+		return receiveConfig{}, revert(abiError(selPanic, wordOfU64(panicEnumConversion)))
+	}
+	return cfg, nil
+}
+
 func (c *Context) receivePolicySlot(account Address) slot { return c.mapAddr(account, slot403Receive) }
 
 type receiveBlock struct {
@@ -319,11 +333,10 @@ type inbound struct {
 }
 
 func (c *Context) checkReceivePolicy(in inbound) (receiveBlock, error) {
-	w, err := c.sload(TIP403RegistryAddress, c.receivePolicySlot(in.receiver))
+	cfg, err := c.readReceiveConfig(in.receiver)
 	if err != nil {
 		return receiveBlock{}, err
 	}
-	cfg := decodeReceiveConfig(w)
 	if !cfg.has {
 		return receiveBlock{}, nil
 	}

@@ -356,11 +356,13 @@ var tip403Table = register(TIP403RegistryAddress, newTable(
 		return encodeWords(wordOfU64(cp.sender), wordOfU64(cp.recipient), wordOfU64(cp.mintRecipient)), err
 	}).from(hardfork.T2),
 	view("receivePolicy(address)", []abiType{tAddress}, func(c *Context, a []abiValue) ([]byte, error) {
-		w, err := c.sload(TIP403RegistryAddress, c.receivePolicySlot(a[0].addr()))
+		cfg, err := c.readReceiveConfig(a[0].addr())
 		if err != nil {
 			return nil, err
 		}
-		cfg := decodeReceiveConfig(w)
+		if cfg.senderType > policyCompound || cfg.tokenType > policyCompound {
+			return nil, errSel("InvalidReceivePolicyType()")
+		}
 		rec, err := c.receiveRecovery(a[0].addr(), cfg.recoveryMode)
 		return encodeWords(flag(cfg.has).hash(), wordOfU64(cfg.senderPolicy), wordOfU64(uint64(cfg.senderType)),
 			wordOfU64(cfg.tokenFilter), wordOfU64(uint64(cfg.tokenType)), addressWord(rec)), err

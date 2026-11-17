@@ -52,6 +52,9 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 	if err := r.chargeFee(); err != nil {
 		return TxOutcome{}, fmt.Errorf("fee: %w", err)
 	}
+	if err := r.applyKeyAuthorization(); err != nil {
+		return TxOutcome{}, fmt.Errorf("key authorization: %w", err)
+	}
 	r.warm()
 	r.applyAuthorizations()
 	ran := r.execute()

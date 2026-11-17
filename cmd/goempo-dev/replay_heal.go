@@ -47,6 +47,7 @@ func (r *replayer) stepOrHeal(blk *types.Block) bool {
 		r.diagnoseReceipts(r.heal.client)
 	}
 	if err := r.applyTrace(blk); err != nil {
+		fmt.Fprintf(os.Stderr, "heal: block %d: %v\n", blk.Header.Inner.Number, err)
 		r.failed = &mismatch{number: blk.Header.Inner.Number, field: "heal", got: err.Error(), want: "ok"}
 		return false
 	}

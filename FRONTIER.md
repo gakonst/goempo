@@ -5,7 +5,7 @@
 | R0 Gate | scaffold | - | 2026-11-17 |
 | R1 Decode | 100% (632/632 mainnet blocks) | a5aa2d9 | 2026-11-17 |
 | R2 Genesis | yes | d1c1553 | 2026-11-17 |
-| R3 Replay | 3864 | 033b5e0 | 2026-11-17 |
+| R3 Replay | 836358 | 033b5e0 | 2026-11-17 |
 | R4 Follow | headers+bodies (no execution) | dc3d3d3 | 2026-11-17 |
 | R5 RPC | 0% | - | - |
 | R6 Validator | no | - | - |
@@ -23,4 +23,6 @@ R4 (partial, 2026-11-17): go run ./cmd/goempo-dev follow -last 1000 starts at an
 R3 replay (033b5e0, 2026-11-17): "go run ./cmd/goempo-dev fetch-range -to 9999" caches mainnet blocks (debug_getRawBlock, 10k-block flate chunks under ~/cache/mainnet), then "go run ./cmd/goempo-dev replay" (or "score -rung R3") executes blocks 1..N from the embedded genesis with internal/tempo/executor over internal/state, checking each block's gas used, receipts root, logs bloom and state root. Height 3857 (was 3662 before the fee token was validated in the handler, which warms its TIP-20 slots): blocks 1..3210 are system-transaction-only; 3211..3662 include the first 0x76 and legacy user transactions with TIP-20 fees through the fee manager. Now 3864 with TIP-20 factory createToken (3858) and CREATEs (3863/3864). First mismatch: block 3865, the first key authorization (keychain authorizeKey not in internal/tempo/precompiles yet; gas already matches, the KeyAuthorized log and key slot are missing).
 
 R3 survey with healing (2026-11-17): "goempo-dev replay -heal N -rpc <node>" applies the block's prestateTracer diff after a mismatch and keeps executing, to list every mismatching block in one run. Blocks 1..1,259,999 executed in 30 s with 8 healed blocks: 3865, 3876, 3878, 3892, 3910, 1179655 (keychain authorizeKey not implemented: KeyAuthorized log and key slot missing; gas matches), 3934 (gas 200 low, key authorization with a WebAuthn key, sponsored), 836359 (TIP-403 registry calls, not implemented). Every other block matches gas, receipts root, bloom and state root.
+
+R3 = 836358 (2026-11-17): key authorizations (keychain AuthorizeKey from agent 5, same-tx key use with AuthorizeTransfer of the collected fee) now match at 3865..3934, 1179655 and 1524056. First mismatch: block 836359, TIP-403 registry calls (precompile ABI not implemented). With -heal, blocks 1..1,599,999 have that single mismatching block.
 

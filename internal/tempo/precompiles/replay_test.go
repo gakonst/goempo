@@ -38,7 +38,34 @@ type replayLog struct {
 	Data    string   `json:"data"`
 }
 
+type replayLimit struct {
+	Token  string `json:"token"`
+	Amount string `json:"amount"`
+	Period uint64 `json:"period"`
+}
+
+type replayRule struct {
+	Selector   string   `json:"selector"`
+	Recipients []string `json:"recipients"`
+}
+
+type replayScope struct {
+	Target string       `json:"target"`
+	Rules  []replayRule `json:"rules"`
+}
+
+type replayKeyAuth struct {
+	KeyType      uint8         `json:"keyType"`
+	KeyID        string        `json:"keyId"`
+	Expiry       *uint64       `json:"expiry"`
+	Limits       []replayLimit `json:"limits"`
+	AllowedCalls []replayScope `json:"allowedCalls"`
+	Witness      *string       `json:"witness"`
+	IsAdmin      bool          `json:"isAdmin"`
+}
+
 type replayFixture struct {
+	KeyAuth      *replayKeyAuth               `json:"keyAuth"`
 	KeyID        string                       `json:"keyId"`
 	SigType      uint8                        `json:"sigType"`
 	Source       string                       `json:"source"`
@@ -127,7 +154,8 @@ func replay(t *testing.T, path string) {
 	st.WarmAddress(mustAddr(fx.Sender))
 	st.WarmAddress(mustAddr(fx.Coinbase))
 	h := run.context(handlerGas)
-	if fx.KeyID != "" {
+	sameTx := fx.KeyAuth != nil && fx.KeyAuth.KeyID == fx.KeyID
+	if fx.KeyID != "" && !sameTx {
 		precompiles.SetTxOrigin(h, mustAddr(fx.Sender))
 		use := precompiles.KeyUse{Account: mustAddr(fx.Sender), KeyID: mustAddr(fx.KeyID), SigType: fx.SigType, Check: run.fork >= hardfork.T1}
 		_, err := precompiles.ValidateKeychainAuthorization(h, use)
@@ -138,6 +166,9 @@ func replay(t *testing.T, path string) {
 	collection := precompiles.FeeCollection{FeePayer: mustAddr(fx.FeePayer), Token: mustAddr(fx.FeeToken), MaxAmount: maxFee, Beneficiary: mustAddr(fx.Coinbase)}
 	_, err = precompiles.CollectFeePreTx(h, collection)
 	assert.NoError(err, "collect fee pre tx")
+	if fx.KeyAuth != nil {
+		applyKeyAuth(run, h, fx)
+	}
 	if run.fork >= hardfork.T7 {
 		precompiles.MarkFeeSlotsNonCreditable(h, precompiles.FeeSlots{FeePayer: mustAddr(fx.FeePayer), FeeToken: mustAddr(fx.FeeToken)})
 	}
@@ -153,6 +184,9 @@ func replay(t *testing.T, path string) {
 		c.Env = h.Env
 		to := mustAddr(call.To)
 		st.WarmAddress(to)
+		if !precompiles.IsPrecompile(to, run.fork) {
+			continue
+		}
 		snap := st.Snapshot()
 		_, err := precompiles.Call(c, to, mustBytes(call.Input))
 		assert.Equal(err != nil, call.Reverted, "call revert status "+call.To)
@@ -214,4 +248,50 @@ func TestReplayMainnet(t *testing.T) {
 	for _, p := range paths {
 		t.Run(filepath.Base(p), func(t *testing.T) { replay(t, p) })
 	}
+}
+
+func keyGrant(fx replayFixture) precompiles.KeyGrant {
+	ka := fx.KeyAuth
+	r := precompiles.KeyRestrictions{Expiry: ^uint64(0), EnforceLimits: ka.Limits != nil, AllowAnyCalls: ka.AllowedCalls == nil}
+	if ka.Expiry != nil {
+		r.Expiry = *ka.Expiry
+	}
+	for _, l := range ka.Limits {
+		r.Limits = append(r.Limits, precompiles.TokenLimit{Token: mustAddr(l.Token), Amount: mustWord(l.Amount), Period: l.Period})
+	}
+	for _, sc := range ka.AllowedCalls {
+		scope := precompiles.CallScope{Target: mustAddr(sc.Target)}
+		for _, rule := range sc.Rules {
+			sr := precompiles.SelectorRule{Selector: [4]byte(mustBytes(rule.Selector))}
+			for _, rc := range rule.Recipients {
+				sr.Recipients = append(sr.Recipients, mustAddr(rc))
+			}
+			scope.SelectorRules = append(scope.SelectorRules, sr)
+		}
+		r.AllowedCalls = append(r.AllowedCalls, scope)
+	}
+	g := precompiles.KeyGrant{Account: mustAddr(fx.Sender), KeyID: mustAddr(ka.KeyID), SigType: ka.KeyType, Admin: ka.IsAdmin, Restrictions: r}
+	if ka.Witness != nil {
+		w := mustHash(*ka.Witness)
+		g.Witness = &w
+	}
+	return g
+}
+
+func applyKeyAuth(run replayRun, h *precompiles.Context, fx replayFixture) {
+	precompiles.SetTxOrigin(h, mustAddr(fx.Sender))
+	k := run.context(handlerGas)
+	k.Env = h.Env
+	k.SkipStorageCredits = true
+	assert.NoError(precompiles.AuthorizeKey(k, keyGrant(fx)), "authorize key")
+	if fx.KeyAuth.KeyID != fx.KeyID {
+		return
+	}
+	precompiles.SetTransactionKey(h, mustAddr(fx.KeyID))
+	maxFee := mustWord(fx.MaxFee)
+	if maxFee.IsZero() {
+		return
+	}
+	flow := precompiles.TokenFlow{Account: mustAddr(fx.FeePayer), Token: mustAddr(fx.FeeToken), Amount: maxFee}
+	assert.NoError(precompiles.AuthorizeTransfer(h, flow), "authorize fee transfer")
 }

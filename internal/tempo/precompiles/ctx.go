@@ -70,20 +70,21 @@ type SlotRef struct {
 }
 
 type Context struct {
-	State         evm.State
-	Fork          hardfork.Fork
-	Block         *evm.BlockContext
-	Tx            *evm.TxContext
-	Env           *TxEnv
-	Caller        Address
-	Static        bool
-	ChainID       Word
-	self          Address
-	gasLimit      uint64
-	gasUsed       uint64
-	refund        int64
-	creditMinting bool
-	hasher        *keccak.Hasher
+	State              evm.State
+	Fork               hardfork.Fork
+	Block              *evm.BlockContext
+	Tx                 *evm.TxContext
+	Env                *TxEnv
+	Caller             Address
+	Static             bool
+	SkipStorageCredits bool
+	ChainID            Word
+	self               Address
+	gasLimit           uint64
+	gasUsed            uint64
+	refund             int64
+	creditMinting      bool
+	hasher             *keccak.Hasher
 }
 
 func NewContext(state evm.State, fork hardfork.Fork, gas uint64) *Context {
@@ -270,7 +271,7 @@ func (c *Context) sstore(addr Address, s slot, value Word) error {
 			return err
 		}
 	}
-	if c.at(hardfork.T7) {
+	if c.at(hardfork.T7) && !c.SkipStorageCredits {
 		if err := c.storageCredits(addr, s, v); err != nil {
 			return err
 		}

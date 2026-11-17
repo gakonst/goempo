@@ -57,6 +57,9 @@ type replayer struct {
 	dir    string
 	failed *mismatch
 	result *executor.Result
+
+	heal      *healer
+	firstHead uint64
 }
 
 func defaultResultPath() string {
@@ -74,6 +77,7 @@ func runReplay(args []string) int {
 	rpcURL := fs.String("rpc", mainnetRPC, "JSON-RPC endpoint used to diagnose a mismatch")
 	out := fs.String("result", defaultResultPath(), "where the R3 result is written")
 	diagnose := fs.String("diagnose", "on", "on: fetch traces to diagnose the first mismatch; off: don't")
+	heals := fs.Int("heal", 0, "after a mismatch, apply the block's traced state diff and keep going, up to this many blocks")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -82,8 +86,12 @@ func runReplay(args []string) int {
 		fmt.Fprintln(os.Stderr, "replay:", err)
 		return 1
 	}
+	if *heals > 0 {
+		r.heal = &healer{client: newRPCClient(*rpcURL), remaining: min(*heals, healsMax), verbose: *diagnose == "on"}
+	}
 	start := time.Now()
 	runErr := r.run(*to)
+	r.reportHeals()
 	res := r.summary(*to, time.Since(start))
 	if err := writeResult(*out, &res); err != nil {
 		fmt.Fprintln(os.Stderr, "replay:", err)
@@ -122,6 +130,11 @@ func newReplayer(dir string) (*replayer, error) {
 
 func (r *replayer) summary(target uint64, took time.Duration) replayResult {
 	res := replayResult{Rung: "R3", Chain: "mainnet", Height: r.head, Target: target, Seconds: took.Seconds()}
+	if r.heal != nil && r.heal.first != nil {
+		res.Height = r.firstHead
+		res.Mismatch = r.heal.first.String()
+		return res
+	}
 	if took > 0 {
 		res.BlocksSec = float64(r.head) / took.Seconds()
 	}
@@ -183,7 +196,7 @@ func (r *replayer) runChunk(raws [][]byte, span chunkSpan) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("block %d: %w", number, err)
 		}
-		if !r.step(&blk) {
+		if !r.stepOrHeal(&blk) {
 			return true, nil
 		}
 		if number%progressInterval == 0 {

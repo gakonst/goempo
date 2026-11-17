@@ -203,6 +203,17 @@ func tableFor(c *Context, addr Address) (*methodTable, error) {
 
 var systemTables = map[Address]*methodTable{}
 
+func extend(t *methodTable, methods ...method) *methodTable {
+	for i := range methods {
+		m := &methods[i]
+		key := selectorWord(selector(m.sig))
+		_, dup := t.bySelector[key]
+		assert.Ok(!dup, "duplicate precompile selector")
+		t.bySelector[key] = m
+	}
+	return t
+}
+
 func register(addr Address, t *methodTable) *methodTable {
 	systemTables[addr] = t
 	return t

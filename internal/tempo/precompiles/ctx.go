@@ -43,6 +43,8 @@ const (
 
 const _ = uint64(gasSstoreSetT1 - gasStorageCredit - gasSstoreSetT7)
 
+var ErrOutOfGas = errOutOfGas
+
 var (
 	errOutOfGas = errors.New("precompile: out of gas")
 	errFatal    = errors.New("precompile: fatal")
@@ -78,6 +80,7 @@ type Context struct {
 	Caller             Address
 	Static             bool
 	SkipStorageCredits bool
+	KeyAuthGas         bool
 	Trace              func(op string, addr Address, key Hash, gasUsed uint64)
 	ChainID            Word
 	self               Address
@@ -113,6 +116,13 @@ func (c *Context) outOfGas() error {
 	return errOutOfGas
 }
 
+func (c *Context) cost(gas uint64) uint64 {
+	if c.KeyAuthGas {
+		return 0
+	}
+	return gas
+}
+
 func (c *Context) charge(gas uint64) error {
 	if c.GasLeft() < gas {
 		return c.outOfGas()
@@ -132,7 +142,7 @@ func (c *Context) keccak(data []byte) Hash { return c.hasher.Hash(data) }
 
 func (c *Context) chargeKeccak(n int) error {
 	words := (uint64(n) + 31) / 32
-	return c.charge(gasKeccak + gasKeccakWord*words)
+	return c.charge(c.cost(gasKeccak + gasKeccakWord*words))
 }
 
 func (c *Context) warmSlot(addr Address, s slot) bool {
@@ -147,7 +157,7 @@ func (c *Context) sload(addr Address, s slot) (Word, error) {
 		if err := c.charge(gasWarmRead); err != nil {
 			return Word{}, err
 		}
-		if !c.State.SlotWarm(addr, Hash(s)) && c.GasLeft() < gasColdSloadExtra {
+		if !c.State.SlotWarm(addr, Hash(s)) && c.GasLeft() < c.cost(gasColdSloadExtra) {
 			return Word{}, c.outOfGas()
 		}
 	}
@@ -162,7 +172,7 @@ func (c *Context) sload(addr Address, s slot) (Word, error) {
 		}
 	}
 	if cold {
-		if err := c.charge(gasColdSloadExtra); err != nil {
+		if err := c.charge(c.cost(gasColdSloadExtra)); err != nil {
 			return Word{}, err
 		}
 	}
@@ -198,7 +208,7 @@ func (c *Context) setCost() uint64 {
 func (c *Context) dynamicSstoreGas(v sstoreValues) uint64 {
 	gas := uint64(0)
 	if v.cold {
-		gas += gasColdSstore
+		gas += c.cost(gasColdSstore)
 	}
 	if !v.cleanUpdate() {
 		return gas
@@ -206,7 +216,7 @@ func (c *Context) dynamicSstoreGas(v sstoreValues) uint64 {
 	if v.original.IsZero() {
 		return gas + c.setCost()
 	}
-	return gas + gasSstoreReset
+	return gas + c.cost(gasSstoreReset)
 }
 
 func (c *Context) sstoreRefund(v sstoreValues) int64 {
@@ -262,7 +272,7 @@ func (c *Context) sstore(addr Address, s slot, value Word) error {
 		return c.outOfGas()
 	}
 	if c.at(hardfork.T4) {
-		if err := c.charge(gasWarmRead); err != nil {
+		if err := c.charge(c.cost(gasWarmRead)); err != nil {
 			return err
 		}
 		if !c.State.SlotWarm(addr, Hash(s)) && c.GasLeft() < gasColdSloadExtra {
@@ -274,7 +284,7 @@ func (c *Context) sstore(addr Address, s slot, value Word) error {
 		c.Trace("sstore", addr, Hash(s), c.gasUsed)
 	}
 	if !c.at(hardfork.T4) {
-		if err := c.charge(gasWarmRead); err != nil {
+		if err := c.charge(c.cost(gasWarmRead)); err != nil {
 			return err
 		}
 	}
@@ -314,7 +324,7 @@ func (c *Context) emit(addr Address, topics []Hash, data []byte) error {
 	if err := c.ensureMutable(); err != nil {
 		return err
 	}
-	cost := gasLog + gasLogTopic*uint64(len(topics)) + gasLogByte*uint64(len(data))
+	cost := gasLog + c.cost(gasLogTopic*uint64(len(topics))+gasLogByte*uint64(len(data)))
 	if err := c.charge(cost); err != nil {
 		return err
 	}
@@ -327,7 +337,7 @@ func (c *Context) accountCode(addr Address) ([]byte, error) {
 		if err := c.charge(gasWarmRead); err != nil {
 			return nil, err
 		}
-		if !c.State.AddressWarm(addr) && c.GasLeft() < gasColdAccountExtra {
+		if !c.State.AddressWarm(addr) && c.GasLeft() < c.cost(gasColdAccountExtra) {
 			return nil, c.outOfGas()
 		}
 	}
@@ -339,7 +349,7 @@ func (c *Context) accountCode(addr Address) ([]byte, error) {
 		}
 	}
 	if cold {
-		if err := c.charge(gasColdAccountExtra); err != nil {
+		if err := c.charge(c.cost(gasColdAccountExtra)); err != nil {
 			return nil, err
 		}
 	}

@@ -33,6 +33,7 @@ const (
 	argBytes
 	argString
 	argTupleArray
+	argRaw
 )
 
 type abiType struct {
@@ -90,6 +91,9 @@ func decodeABI(data []byte, types []abiType, mode decodeMode) ([]abiValue, error
 		return nil, errABI
 	}
 	vals := make([]abiValue, len(types))
+	if len(types) == 1 && types[0].kind == argRaw {
+		return []abiValue{{data: data}}, nil
+	}
 	end := head
 	for i, t := range types {
 		w := wordAt(data, 32*i)

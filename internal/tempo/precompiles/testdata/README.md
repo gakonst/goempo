@@ -5,3 +5,4 @@ eth_getTransactionByHash, eth_getTransactionReceipt, debug_traceTransaction with
 
 TestReplayMainnet loads the pre state, runs fee collection, the expiring nonce, keychain setup and each call through precompiles.Call, then checks every touched slot, every log and each 0x76 call frame's gas against mainnet.
 - testdata/frames/*.json: precompile call frames (from callTracer) replayed statelessly for exact gas and output.
+- testdata/committee/epoch1502.json: CurrentCommittee storage at mainnet block 32443199 via eth_getStorageAt.

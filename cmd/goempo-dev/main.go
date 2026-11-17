@@ -21,6 +21,8 @@ func main() {
 		os.Exit(runFetch(os.Args[2:]))
 	case "fetch-range":
 		os.Exit(runFetchRange(os.Args[2:]))
+	case "ingest-bench":
+		os.Exit(runIngestBench(os.Args[2:]))
 	case "convert-chunks":
 		os.Exit(runConvertChunks(os.Args[2:]))
 	case "certify":

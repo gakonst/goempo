@@ -175,3 +175,17 @@ one full epoch boundary (about 3.2 h) with every block's state root matching.
   code at height 4) and for the second half of an epoch
   (TestEngineConcludesDKGOnNotarizedBranch). Logs saved under
   ~/goempo-work/devnet/r6e-halt on the build machine.
+- 2026-11-17 20:40 UTC, rerun of 2 of 4: halted at finalized 2529 the same
+  way (2530 notarized, not finalized, Rust building on it). The binary had not
+  been replaced (copying over the running file failed), so it was still the
+  old code; saved under ~/goempo-work/devnet/r6e-halt2-oldbin.
+- 2026-11-17 21:07 UTC, goempo e3ac1c6 (with 3c791cf) in slots 2 and 3:
+  R6e with 2 of 4 goempo passed. Quorum window 258 to 378 with Rust slot 0
+  down (every certificate needed both goempo votes; goempo proposed 87 of the
+  120 blocks); 1 hour soak 381 to 10259, 0 forks, 0 stalls, 165 of 165 DKG
+  outcomes, 4930 goempo blocks finalized, both goempo dealer logs on chain in
+  171 of 171 epochs, 0 Rust ceremony failures. Rust WARNs naming goempo: the
+  paged-writer buffer notice when storing dealings (benign, also for Rust
+  dealers) and 199 to 308 per pair of "serve send failed", tempo dropping
+  marshal replies over its 8 per second per-peer quota during goempo backfill
+  bursts; fixed in 3454772 (4 requests per peer per 500 ms).

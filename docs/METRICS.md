@@ -33,7 +33,7 @@ Measured on the 4-core dev host. Phase one ended at 8a4bc6b; the second column i
 | R3 replay 1..1,000,000 | ~6 s, ~160k blocks/s (mostly system-only blocks) | 5.8 s, 172k blocks/s |
 | R3 replay 35.9M..49.4M | 13.5M blocks in 3,181 s: 4.2k blocks/s, 289 Mgas/s, 4.2 GB peak RSS | same run |
 | R5 RPC | 111/111 methods, 3,378/3,378 cases | same |
-| R6 | local simulation tests pass | sim passes; R6a-R6d pass; R6e passes at 19:51 (1 goempo + 3 Rust validators, 1 h soak; read from FRONTIER, not rerun by the script); R6f in progress |
+| R6 | local simulation tests pass | sim passes; R6a-R6d pass; R6e passes with 1 of 4 goempo (19:51) and 2 of 4 goempo (22:12: 1 h soak 381 to 10,259, 0 forks, 0 stalls, quorum window needing both goempo votes; read from FRONTIER, not rerun by the script); R6f dry run done, joining moderato not attempted |
 | R6 local checks (--all) | sim only | sim 29 s, p2p vectors 1 s, wire vectors 1 s, pool and builder <1 s, validator cluster 25 s: all pass |
 | R7 | 59.0k blocks/s, 30.3 Mgas/s on 1..4,165,926 (32-core build machine, 4 pinned cores) | same |
 | precompiles oracle | 4,986/4,992 | same |

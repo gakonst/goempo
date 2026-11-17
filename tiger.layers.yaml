@@ -217,3 +217,23 @@
   - ./internal/dkg
   - ./internal/tempo/dkg
   - github.com/kapetan-io/tiger/assert
+"./cmd/goempo":
+  - os
+  - syscall
+  - ./internal/io
+  - ./internal/node
+  - ./internal/rpc
+  - ./internal/state
+"./internal/node":
+  - ./internal/consensus
+  - ./internal/genesis
+  - ./internal/io
+  - ./internal/primitives
+  - ./internal/rpc
+  - ./internal/rpcexec
+  - ./internal/state
+  - ./internal/sync
+  - ./internal/tempo/executor
+  - ./internal/tempo/hardfork
+  - ./internal/types
+  - ./internal/u256

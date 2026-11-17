@@ -111,7 +111,13 @@ func (r Rules) Config(precompiles evm.PrecompileLookup) *evm.Config {
 }
 
 func (r Rules) config(g *evm.GasTable, t *evm.JumpTable, precompiles evm.PrecompileLookup) *evm.Config {
-	return &evm.Config{
+	cfg := new(evm.Config)
+	r.fill(cfg, g, t, precompiles)
+	return cfg
+}
+
+func (r Rules) fill(dst *evm.Config, g *evm.GasTable, t *evm.JumpTable, precompiles evm.PrecompileLookup) {
+	*dst = evm.Config{
 		Fork:        evm.Osaka,
 		ChainID:     u256.FromUint64(uint64(r.ChainID)),
 		Gas:         g,

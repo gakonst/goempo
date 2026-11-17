@@ -51,6 +51,20 @@ func (c *Cache) EthereumPrecompiles(r Rules) *evm.PrecompileSet {
 	return c.machine(r).eth
 }
 
+// ConfigInto writes Config(r, precompiles) into dst without allocating when
+// the cache is not nil.
+func (c *Cache) ConfigInto(dst *evm.Config, r Rules, precompiles evm.PrecompileLookup) {
+	if c == nil {
+		*dst = *r.Config(precompiles)
+		return
+	}
+	m := c.machine(r)
+	if precompiles == nil {
+		precompiles = m.eth
+	}
+	r.fill(dst, m.gas, m.table, precompiles)
+}
+
 func (c *Cache) Config(r Rules, precompiles evm.PrecompileLookup) *evm.Config {
 	if c == nil {
 		return r.Config(precompiles)

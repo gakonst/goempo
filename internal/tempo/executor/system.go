@@ -29,19 +29,17 @@ type systemCall struct {
 }
 
 func preBlock(st State, env *systemEnv) {
-	parent := env.header.Inner.ParentHash
 	historyCall(st, env, systemCall{
 		caller: chain.SystemAddress,
 		to:     chain.HistoryStorageAddress,
-		input:  parent[:],
+		input:  env.header.Inner.ParentHash[:],
 		gas:    env.rules.SystemCallGas(),
 	})
 	if !env.rules.AtLeast(hardfork.T13) {
-		root := env.header.Inner.ParentBeaconBlockRoot
 		historyCall(st, env, systemCall{
 			caller: chain.SystemAddress,
 			to:     BeaconRootsAddress,
-			input:  root[:],
+			input:  env.header.Inner.ParentBeaconBlockRoot[:],
 			gas:    env.rules.SystemCallGas(),
 		})
 	}
@@ -59,12 +57,12 @@ func historyCall(st State, env *systemEnv, call systemCall) {
 
 func run(st State, cfg *evm.Config, blk *evm.BlockContext, call systemCall) evm.Result {
 	st.WarmAddress(call.to)
-	machine := evm.New(evm.Context{
+	machine := borrowMachine(evm.Context{
 		State:  st,
 		Block:  blk,
-		Tx:     &evm.TxContext{Origin: call.caller},
 		Config: cfg,
-	})
+	}, evm.TxContext{Origin: call.caller})
+	defer returnMachine(machine)
 	return machine.Execute(evm.Message{
 		Kind:   evm.KindCall,
 		Caller: call.caller,

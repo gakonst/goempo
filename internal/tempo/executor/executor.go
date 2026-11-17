@@ -3,9 +3,12 @@ package executor
 import (
 	"errors"
 	"fmt"
+	"sync"
 
+	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/evm"
 	"github.com/gakonst/goempo/internal/primitives"
+	"github.com/gakonst/goempo/internal/rlp"
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/tempo/precompiles"
@@ -50,6 +53,10 @@ type Input struct {
 	Block   *types.Block
 	GetHash func(number uint64) Hash
 	Senders []Sender
+	// Receipts, when not nil, is a buffer Execute appends the block's
+	// receipts to, so a caller that is done with the last block's receipts
+	// can reuse their storage.
+	Receipts []types.Receipt
 }
 
 type Result struct {
@@ -86,23 +93,27 @@ func (x *Executor) SystemSteps(st State, in Input) error {
 	return x.committeeCall(st, sys)
 }
 
+// Execute runs in.Block on st. Result.Receipts reuses in.Receipts' backing
+// array when it is large enough.
 func (x *Executor) Execute(st State, in Input) (Result, error) {
 	assert.Ok(in.Block != nil, "executor needs a block")
 	header := &in.Block.Header
-	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
-	set := precompiles.NewSet(rules.Fork, x.Configs.EthereumPrecompiles(rules))
-	cfg := x.Configs.Config(rules, set)
-	blk := blockContext(header, in.GetHash)
-	sys := &systemEnv{config: cfg, block: blk, header: header, rules: rules}
+	scratch := x.borrowScratch(header, in.GetHash)
+	defer returnScratch(scratch)
+	rules, set, cfg, blk, sys := scratch.sys.rules, &scratch.set, &scratch.cfg, &scratch.blk, &scratch.sys
 	preBlock(st, sys)
 	txs := in.Block.Transactions
 	if len(txs) > blockTxsMax {
 		return Result{}, ErrTooManyTxs
 	}
-	receipts := make([]types.Receipt, 0, len(txs))
+	receipts := in.Receipts[:0]
+	if cap(receipts) < len(txs) {
+		receipts = make([]types.Receipt, 0, len(txs))
+	}
 	var cumulative uint64
+	env := &scratch.env
 	for i := 0; i < len(txs); i++ {
-		env := &TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i}
+		*env = TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i}
 		if len(in.Senders) == len(txs) {
 			env.Sender = &in.Senders[i]
 		}
@@ -133,9 +144,15 @@ func apply(env *TxEnv, set *precompiles.Set, count int) (TxOutcome, error) {
 }
 
 func blockContext(header *types.Header, getHash func(uint64) Hash) *evm.BlockContext {
+	blk := new(evm.BlockContext)
+	fillBlockContext(blk, header, getHash)
+	return blk
+}
+
+func fillBlockContext(dst *evm.BlockContext, header *types.Header, getHash func(uint64) Hash) {
 	h := &header.Inner
 	ts := chain.Timestamp{Seconds: h.Timestamp, MillisPart: header.TimestampMillisPart}
-	return &evm.BlockContext{
+	*dst = evm.BlockContext{
 		Coinbase:   h.Beneficiary,
 		Number:     h.Number,
 		Time:       h.Timestamp,
@@ -163,12 +180,71 @@ func receiptOf(kind types.TxType, out TxOutcome, cumulative uint64) types.Receip
 	}
 }
 
+// receiptScratch holds a block's receipt encodings while finish computes
+// their root; finish borrows one from receiptScratches and returns it.
+type receiptScratch struct {
+	enc     *rlp.Encoder
+	ends    []int
+	encoded [][]byte
+}
+
+// receiptScratchRetainMax caps the encoding buffer a scratch keeps.
+const receiptScratchRetainMax = 1 << 24
+
+const receiptScratchHint = 1 << 16
+
+const _ = uint(receiptScratchRetainMax - receiptScratchHint)
+
+var receiptScratches = sync.Pool{New: func() any {
+	return &receiptScratch{enc: rlp.NewEncoder(receiptScratchHint)}
+}}
+
 func finish(receipts []types.Receipt, gasUsed uint64) Result {
-	encoded := make([][]byte, len(receipts))
+	sc, ok := receiptScratches.Get().(*receiptScratch)
+	assert.Ok(ok, "the receipt scratch pool holds scratches")
+	sc.enc.Reset()
+	sc.ends = sc.ends[:0]
 	var bloom types.Bloom
 	for i := 0; i < len(receipts); i++ {
-		encoded[i] = receipts[i].Encode()
+		receipts[i].EncodeTo(sc.enc)
+		sc.ends = append(sc.ends, sc.enc.Len())
 		bloom.Or(&receipts[i].Bloom)
 	}
-	return Result{GasUsed: gasUsed, Receipts: receipts, ReceiptsRoot: trie.OrderedRoot(encoded), Bloom: bloom}
+	buf := sc.enc.Encoded()
+	sc.encoded = sc.encoded[:0]
+	start := 0
+	for i := 0; i < len(sc.ends); i++ {
+		sc.encoded = append(sc.encoded, buf[start:sc.ends[i]:sc.ends[i]])
+		start = sc.ends[i]
+	}
+	assert.Equal(start, len(buf), "receipt encodings tile the scratch buffer")
+	root := receiptsRoot(sc.enc, sc.encoded)
+	clear(sc.encoded)
+	if sc.enc.Cap() <= receiptScratchRetainMax {
+		receiptScratches.Put(sc)
+	}
+	return Result{GasUsed: gasUsed, Receipts: receipts, ReceiptsRoot: root, Bloom: bloom}
+}
+
+// singleLeafKey is the hex-prefix encoding of the only key in a one-item
+// ordered trie: rlp(0) = 0x80, the nibbles 8 and 0 of a leaf path.
+var singleLeafKey = [2]byte{0x20, 0x80}
+
+// receiptsRoot is trie.OrderedRoot(items), with the one-receipt block (most
+// blocks: one system transaction) hashed straight from its leaf node, built
+// in e after the items. items must alias e's buffer or be independent of it.
+func receiptsRoot(e *rlp.Encoder, items [][]byte) Hash {
+	if len(items) != 1 {
+		return trie.OrderedRoot(items)
+	}
+	start := e.Len()
+	e.ListStart()
+	e.WriteBytes(singleLeafKey[:])
+	e.WriteBytes(items[0])
+	e.ListEnd()
+	leaf := e.Encoded()[start:]
+	// A leaf shorter than a hash would be embedded rather than hashed; a
+	// receipt carries a 256-byte bloom, so its leaf never is.
+	assert.Ok(len(leaf) >= primitives.HashLength, "a receipt leaf is hashed")
+	return keccak.Sum256(leaf)
 }

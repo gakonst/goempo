@@ -359,13 +359,13 @@ type execution struct {
 func (r *txRun) execute() execution {
 	st := r.env.State
 	v := &r.view
-	machine := evm.New(evm.Context{
+	machine := borrowMachine(evm.Context{
 		State:   st,
 		Block:   r.env.Block,
-		Tx:      &evm.TxContext{Origin: v.sender, GasPrice: r.price},
 		Config:  r.env.Config,
 		Storage: r.storageHook(),
-	})
+	}, evm.TxContext{Origin: v.sender, GasPrice: r.price})
+	defer returnMachine(machine)
 	gasLeft, allowed := r.checkCallScopes(v.gasLimit - r.need.gas)
 	if !allowed {
 		return execution{success: false, gasLeft: gasLeft}

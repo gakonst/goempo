@@ -172,6 +172,9 @@ func Call(c *Context, addr Address, input []byte) ([]byte, error) {
 	if err := c.charge(inputCost(c.Fork, len(input))); err != nil {
 		return nil, err
 	}
+	if dormantPrecompile(c, addr) {
+		return nil, nil
+	}
 	table, err := tableFor(c, addr)
 	if err != nil {
 		return nil, err

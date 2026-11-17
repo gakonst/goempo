@@ -90,3 +90,47 @@ func TestSystemTxMustBeLast(t *testing.T) {
 	_, err := x.Execute(db.State(), executor.Input{Block: &b, GetHash: func(uint64) primitives.Hash { return primitives.Hash{} }})
 	assert.Ok(errors.Is(err, executor.ErrSystemTxPlace), "a second system tx is not last")
 }
+
+func checkBlock(t *testing.T, db *state.DB, blk *types.Block) executor.Result {
+	h := &blk.Header.Inner
+	x := &executor.Executor{ChainID: hardfork.MainnetChainID}
+	res, err := x.Execute(db.State(), executor.Input{
+		Block:   blk,
+		GetHash: func(uint64) primitives.Hash { return primitives.Hash{} },
+	})
+	assert.NoError(err, "execute block")
+	assert.Equal(res.GasUsed, h.GasUsed, "gas used")
+	assert.Equal(res.ReceiptsRoot, h.ReceiptsRoot, "receipts root")
+	assert.Equal(res.Bloom, h.LogsBloom, "logs bloom")
+	root, err := db.State().Commit(h.Number)
+	assert.NoError(err, "commit")
+	assert.Equal(root, h.StateRoot, "state root")
+	return res
+}
+
+func TestMainnetFirstUserTransactions(t *testing.T) {
+	blocks := readBlocks(t, "testdata/mainnet-user-3211-3857.blk")
+	assert.Equal(len(blocks), 12, "fixture holds the 12 user blocks")
+	db := openGenesis(t)
+	users := 0
+	for i := range blocks {
+		res := checkBlock(t, db, &blocks[i])
+		users += len(res.Receipts) - 1
+	}
+	assert.Ok(users >= 12, "every fixture block carries user transactions")
+}
+
+func TestMainnetFeeTokenSetUserToken(t *testing.T) {
+	blocks := readBlocks(t, "testdata/mainnet-user-3211-3857.blk")
+	db := openGenesis(t)
+	var res executor.Result
+	for i := range blocks {
+		res = checkBlock(t, db, &blocks[i])
+		if blocks[i].Header.Inner.Number == 3663 {
+			break
+		}
+	}
+	assert.Equal(res.Receipts[0].CumulativeGasUsed, uint64(45_124), "setUserToken tx gas at block 3663")
+	assert.Equal(len(res.Receipts[0].Logs), 2, "UserTokenSet and the fee transfer")
+	assert.Ok(res.Receipts[0].Success, "setUserToken succeeds")
+}

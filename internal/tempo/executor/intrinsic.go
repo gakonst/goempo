@@ -151,3 +151,17 @@ func nonceGas(v *txView, rules chain.Rules) uint64 {
 	}
 	return nonceKeyGasT1
 }
+
+type Intrinsic struct {
+	Gas   uint64
+	Floor uint64
+}
+
+func IntrinsicGas(tx *types.Transaction, rules chain.Rules) (Intrinsic, error) {
+	v, err := viewOf(tx)
+	if err != nil {
+		return Intrinsic{}, err
+	}
+	need := intrinsic(&v, rules)
+	return Intrinsic{Gas: need.gas, Floor: need.floor}, nil
+}

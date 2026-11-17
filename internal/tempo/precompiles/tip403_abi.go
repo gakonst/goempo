@@ -29,7 +29,7 @@ func (c *Context) nextPolicyID() (uint64, error) {
 }
 
 func (c *Context) writePolicyData(id uint64, p policyData) error {
-	return c.storePackedGroup(TIP403RegistryAddress, c.policyRecordSlot(id), encodePolicyData(p))
+	return c.storePackedGroup(TIP403RegistryAddress, c.policyRecordSlot(id), encodePolicyData(p), fPolicyType, fPolicyAdmin)
 }
 
 type policyEvent struct {
@@ -182,7 +182,7 @@ func (c *Context) createCompoundPolicy(sender Address, cp compoundPolicy) (uint6
 		return 0, err
 	}
 	w := pack(Word{}).withU64(fU64At0, cp.sender).withU64(fU64At8, cp.recipient).withU64(fU64At16, cp.mintRecipient).w
-	if err := c.storePackedGroup(TIP403RegistryAddress, c.policyRecordSlot(id).plus(1), w); err != nil {
+	if err := c.storePackedGroup(TIP403RegistryAddress, c.policyRecordSlot(id).plus(1), w, fU64At0, fU64At8, fU64At16); err != nil {
 		return 0, err
 	}
 	data := encodeWords(wordOfU64(cp.sender), wordOfU64(cp.recipient), wordOfU64(cp.mintRecipient))
@@ -228,7 +228,7 @@ func (c *Context) setReceivePolicy(r receivePolicyReq) error {
 	w := pack(Word{}).with(fRcvHas, flag(true).word()).withU64(fRcvSender, r.senderPolicy).withU64(fRcvSendType, uint64(st)).
 		withU64(fRcvToken, r.tokenFilter).withU64(fRcvTokType, uint64(tt)).withU64(fRcvRecovery, uint64(mode)).w
 	base := c.receivePolicySlot(r.sender)
-	if err := c.storePackedGroup(TIP403RegistryAddress, base, w); err != nil {
+	if err := c.storePackedGroup(TIP403RegistryAddress, base, w, fRcvHas, fRcvSender, fRcvSendType, fRcvToken, fRcvTokType, fRcvRecovery); err != nil {
 		return err
 	}
 	if err := c.storeAddress(TIP403RegistryAddress, base.plus(1), stored); err != nil {

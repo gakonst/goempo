@@ -58,6 +58,8 @@ func decodeAuthorizedKey(w Word) authorizedKey {
 	}
 }
 
+var keyFields = []field{fKeySigType, fKeyExpiry, fKeyEnforce, fKeyRevoked, fKeyAdmin}
+
 func encodeAuthorizedKey(k authorizedKey) Word {
 	return pack(Word{}).withU64(fKeySigType, uint64(k.sigType)).withU64(fKeyExpiry, k.expiry).
 		with(fKeyEnforce, flag(k.enforceLimits).word()).with(fKeyRevoked, flag(k.revoked).word()).
@@ -108,7 +110,7 @@ func (c *Context) writeLimit(s slot, l spendingLimit) error {
 		return err
 	}
 	w := pack(Word{}).with(fLimitMax, l.max).withU64(fLimitPeriod, l.period).withU64(fLimitPerEnd, l.periodEnd).w
-	return c.storePackedGroup(AccountKeychainAddress, s.plus(1), w)
+	return c.storePackedGroup(AccountKeychainAddress, s.plus(1), w, fLimitMax, fLimitPeriod, fLimitPerEnd)
 }
 
 func (l spendingLimit) nextPeriodEnd(now uint64) uint64 {

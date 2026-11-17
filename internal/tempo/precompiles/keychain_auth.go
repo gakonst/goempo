@@ -182,7 +182,7 @@ func AuthorizeKey(c *Context, g KeyGrant) error {
 	}
 	k := keyRef{account: g.Account, keyID: g.KeyID}
 	key := authorizedKey{sigType: g.SigType, expiry: r.Expiry, enforceLimits: r.EnforceLimits, admin: g.Admin}
-	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(key)); err != nil {
+	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(key), keyFields...); err != nil {
 		return err
 	}
 	if !g.Admin {

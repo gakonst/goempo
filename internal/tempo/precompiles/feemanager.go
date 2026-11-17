@@ -63,7 +63,7 @@ func (c *Context) readPool(id Hash) (pool, error) {
 
 func (c *Context) writePool(id Hash, p pool) error {
 	w := pack(Word{}).with(fReserveUser, p.reserveUser).with(fReserveValidator, p.reserveValidator).w
-	return c.storePackedGroup(FeeManagerAddress, c.poolSlot(id), w)
+	return c.storePackedGroup(FeeManagerAddress, c.poolSlot(id), w, fReserveUser, fReserveValidator)
 }
 
 func (p pool) hasEnoughValidator(amount Word) bool {

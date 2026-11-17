@@ -17,6 +17,8 @@ type method struct {
 	since   hardfork.Fork
 	until   hardfork.Fork
 	fn      handler
+
+	mutatesBefore hardfork.Fork
 }
 
 type methodTable struct {
@@ -45,6 +47,11 @@ func mutate(sig string, args []abiType, fn handler) method {
 
 func (m method) from(f hardfork.Fork) method {
 	m.since = f
+	return m
+}
+
+func (m method) mutatesUntil(f hardfork.Fork) method {
+	m.mutatesBefore = f
 	return m
 }
 
@@ -88,7 +95,7 @@ func (t *methodTable) dispatch(c *Context, input []byte) ([]byte, error) {
 	if err != nil {
 		return nil, revert(nil)
 	}
-	if bool(m.mutates) && c.Static {
+	if bool(m.mutates) && c.Static && !(m.mutatesBefore != 0 && c.at(m.mutatesBefore)) {
 		if !c.at(hardfork.T12) {
 			return nil, revert(abiError(selStaticNotAllowed))
 		}

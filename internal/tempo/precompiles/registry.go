@@ -28,7 +28,7 @@ func (c *Context) registerVirtualMaster(sender Address, salt Hash) ([4]byte, err
 		return id, revert(abiError(selector("MasterIdCollision(address)"), addressWord(existing)))
 	}
 	s := c.mapKey(masterKey(id), slotRegistryData)
-	if err := c.storePackedGroup(AddressRegistryAddress, s, toWord(addressWord(sender))); err != nil {
+	if err := c.storePackedGroup(AddressRegistryAddress, s, toWord(addressWord(sender)), fNextQuote); err != nil {
 		return id, err
 	}
 	return id, c.emit(AddressRegistryAddress, []Hash{evMasterRegistered, bytes4Word(id), addressWord(sender)}, nil)

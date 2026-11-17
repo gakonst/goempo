@@ -75,7 +75,7 @@ func (c *Context) revokeKey(k keyRef) error {
 	if stored.expiry == 0 {
 		return errSel("KeyNotFound()")
 	}
-	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(authorizedKey{revoked: true})); err != nil {
+	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(authorizedKey{revoked: true}), keyFields...); err != nil {
 		return err
 	}
 	return c.emit(AccountKeychainAddress, []Hash{evKeyRevoked, addressWord(k.account), addressWord(k.keyID)}, nil)
@@ -102,18 +102,18 @@ func (c *Context) updateSpendingLimit(sp spend) error {
 	}
 	if !key.enforceLimits {
 		key.enforceLimits = true
-		if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(sp.key), encodeAuthorizedKey(key)); err != nil {
+		if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(sp.key), encodeAuthorizedKey(key), keyFields...); err != nil {
 			return err
 		}
 	}
 	s := c.limitSlot(sp.key, sp.token)
 	if c.at(hardfork.T3) {
-		if sp.amount.Gt(u128Max) {
-			return errSel("InvalidSpendingLimit()")
-		}
 		limit, rerr := c.readLimit(s)
 		if rerr != nil {
 			return rerr
+		}
+		if sp.amount.Gt(u128Max) {
+			return errSel("InvalidSpendingLimit()")
 		}
 		limit.remaining = sp.amount
 		limit.max = sp.amount
@@ -212,7 +212,7 @@ var keychainTable = register(AccountKeychainAddress, newTable(
 		}
 		r := KeyRestrictions{Expiry: a[2].u64(), EnforceLimits: a[3].boolean(), Limits: legacyLimits(a[4]), AllowAnyCalls: true}
 		return nil, AuthorizeKey(c, KeyGrant{Account: c.Caller, KeyID: a[0].addr(), SigType: a[1].u8(), Restrictions: r})
-	}),
+	}).mutatesUntil(hardfork.T3),
 	mutate("burnKeyAuthorizationWitness(bytes32)", []abiType{tB32}, func(c *Context, a []abiValue) ([]byte, error) {
 		return nil, c.burnWitness(c.Caller, a[0].bytes32())
 	}).from(hardfork.T5),

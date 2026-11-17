@@ -76,13 +76,6 @@ T4-13/keychain/authorize-recipients-of-two-rules/T3
 T4-13/keychain/setAllowedCalls-recipients-of-two-rules/T3
 T4-13/keychain/authorize-recipients-of-mint/T3
 T4-13/keychain/setAllowedCalls-recipients-of-mint/T3
-T4-7/keychain/authorize-over-foreign-bytes/T3
-T4-7/keychain/revokeKey-over-foreign-bytes/T3
-T4-7/keychain/updateSpendingLimit-unlimited-key-over-foreign-bytes/T3
-T3-14/keychain/authorize-legacy-static/T3
-T3-16/keychain/updateSpendingLimit-above-u128/T3
-T3-16/keychain/updateSpendingLimit-above-u128-unlimited-key/T3
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T12/gas+101
 store-order/last-store/keychain/setAllowedCalls-replaces-recipients/T13/gas+101
 T7-10/reserve/storageCredits-above-u64/T7
-T4-7/tip403/setPolicyAdmin-keeps-unowned-bytes/T3

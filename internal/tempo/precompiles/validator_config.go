@@ -51,13 +51,19 @@ func (c *Context) readValidator(v Address) (validatorRecord, error) {
 	}, err
 }
 
-func (c *Context) storePackedGroup(addr Address, s slot, w Word) error {
-	if !c.at(hardfork.T4) {
-		if _, err := c.sload(addr, s); err != nil {
-			return err
-		}
+func (c *Context) storePackedGroup(addr Address, s slot, w Word, owned ...field) error {
+	if c.at(hardfork.T4) {
+		return c.sstore(addr, s, w)
 	}
-	return c.sstore(addr, s, w)
+	cur, err := c.sload(addr, s)
+	if err != nil {
+		return err
+	}
+	p := pack(cur)
+	for _, f := range owned {
+		p = p.with(f, f.of(w))
+	}
+	return c.sstore(addr, s, p.w)
 }
 
 func (c *Context) writeValidator(v Address, r validatorRecord) error {
@@ -66,7 +72,7 @@ func (c *Context) writeValidator(v Address, r validatorRecord) error {
 		return err
 	}
 	w := pack(Word{}).with(fVCActive, flag(r.active).word()).withU64(fVCIndex, r.index).with(fVCAddress, toWord(addressWord(r.address))).w
-	if err := c.storePackedGroup(ValidatorConfigAddress, base.plus(1), w); err != nil {
+	if err := c.storePackedGroup(ValidatorConfigAddress, base.plus(1), w, fVCActive, fVCIndex, fVCAddress); err != nil {
 		return err
 	}
 	if err := c.storeString(ValidatorConfigAddress, base.plus(2), r.inbound); err != nil {

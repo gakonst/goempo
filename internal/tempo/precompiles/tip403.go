@@ -261,7 +261,7 @@ func (c *Context) registeredTokenPolicy(token Address) (registeredPolicy, error)
 
 func (c *Context) setTokenTransferPolicy(token Address, id uint64) error {
 	w := pack(Word{}).withU64(fU64At0, id).with(fFlagAt8, flag(true).word()).w
-	return c.storePackedGroup(TIP403RegistryAddress, c.tokenTransferPolicySlot(token), w)
+	return c.storePackedGroup(TIP403RegistryAddress, c.tokenTransferPolicySlot(token), w, fU64At0, fFlagAt8)
 }
 
 type receiveConfig struct {

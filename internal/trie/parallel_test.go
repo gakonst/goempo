@@ -145,7 +145,7 @@ func BenchmarkCommitStored(b *testing.B) {
 	}
 	round := 0
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		round++
 		for i := range keys {
 			tr.Update(keys[i], []byte{byte(i), byte(round), 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9})

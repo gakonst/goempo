@@ -46,11 +46,10 @@ const (
 )
 
 func hexPrefix(path []byte, kind pathKind) []byte {
-	return appendHexPrefix(make([]byte, 0, 1+len(path)/2), path, kind)
+	return appendHexPrefix(make([]byte, 0, 1+len(path)/2), kind, path)
 }
 
-// appendHexPrefix appends the compact (hex-prefix) encoding of path to dst.
-func appendHexPrefix(dst []byte, path []byte, kind pathKind) []byte {
+func appendHexPrefix(dst []byte, kind pathKind, path []byte) []byte {
 	flag := byte(0)
 	if kind == pathLeaf {
 		flag = 2

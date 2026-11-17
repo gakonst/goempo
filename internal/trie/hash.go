@@ -12,21 +12,32 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
-// A commit with at least parallelMin dirty updates hashes the dirty subtrees
-// under the root on worker goroutines, one subtree per task: the up to 16
-// children of the first branch, or with at least parallelWideMin updates the
-// up to 256 grandchildren. The caller then hashes the few nodes above them.
 const (
 	parallelMin     = 256
 	parallelWideMin = 4096
 	workersMax      = 32
 	tasksMax        = 256
+	hashersCached   = 2 * workersMax
+	queueCount      = 4
+	heightsMax      = 2*nibblesMax + 2
 )
 
-// refHashers is the free list of hashing states. Each goroutine computing
-// references takes one for the call, so tries own no encoder, batch or arena
-// of their own; the channel bounds how many idle ones stay cached.
-var refHashers = make(chan *refHasher, 2*workersMax)
+const _ = uint(parallelWideMin - parallelMin)
+
+const _ = uint(tasksMax - 16*16)
+
+const _ = uint(tasksMax - workersMax)
+
+const _ = uint(heightsMax - nibblesMax - 1)
+
+type encodingRetention bool
+
+const (
+	keepEncodings encodingRetention = true
+	dropEncodings encodingRetention = false
+)
+
+var refHashers = make(chan *refHasher, hashersCached)
 
 func takeRefHasher() *refHasher {
 	select {
@@ -64,6 +75,13 @@ func (t *Trie) keccak() *keccak.Hasher {
 		t.hasher = keccak.New()
 	}
 	return t.hasher
+}
+
+func (t *Trie) retention() encodingRetention {
+	if t.reader != nil {
+		return keepEncodings
+	}
+	return dropEncodings
 }
 
 func (t *Trie) Commit(w NodeWriter) primitives.Hash {
@@ -106,7 +124,6 @@ func (t *Trie) save(w NodeWriter) {
 		if children == 0 {
 			continue
 		}
-		// One allocation holds every child's path; the batch keeps the paths.
 		width := len(top.path) + 1
 		if n.kind == kindExtension {
 			width = len(top.path) + len(n.path)
@@ -131,10 +148,12 @@ func (t *Trie) save(w NodeWriter) {
 	t.scratch = stack[:0]
 }
 
-// encode returns a fresh copy of n's encoding; n's children have references.
 func (t *Trie) encode(n *node) []byte {
-	size, _ := nodeSize(n)
-	return appendNode(make([]byte, 0, size), n)
+	size := nodeSize(n)
+	e := nodeEncoder{buf: make([]byte, 0, size)}
+	e.node(n)
+	assert.Equal(len(e.buf), size, "trie node encoding size")
+	return e.buf
 }
 
 func (t *Trie) Evict(keepDepth int) {
@@ -162,7 +181,7 @@ func (t *Trie) Evict(keepDepth int) {
 			if top.depth+1 >= keepDepth && child.saved && child.hashRef() {
 				t.dropSubtree(child)
 				t.nodes++
-				top.n.children[i] = sealedNode(child.ref(), true)
+				top.n.children[i] = sealedNode(child.ref(), nodeStored)
 				continue
 			}
 			stack = append(stack, visit{n: child, depth: top.depth + 1})
@@ -184,7 +203,7 @@ func (t *Trie) sealBelow(n *node, index byte) {
 		t.computeRefs(child)
 		t.dropSubtree(child)
 		t.nodes++
-		n.children[i] = sealedNode(child.ref(), false)
+		n.children[i] = sealedNode(child.ref(), nodeUnstored)
 	}
 }
 
@@ -213,19 +232,15 @@ func (t *Trie) dropSubtree(root *node) {
 	t.scratch = stack[:0]
 }
 
-// computeRefs gives root and every node under it a reference on the calling
-// goroutine.
 func (t *Trie) computeRefs(root *node) {
 	if root.hasRef() {
 		return
 	}
 	h := takeRefHasher()
-	h.computeRefs(root, refsInput{nodes: t.nodes, keepEnc: t.reader != nil})
+	h.computeRefs(root, refsInput{nodes: t.nodes, retention: t.retention()})
 	returnRefHasher(h)
 }
 
-// computeRootRefs gives every node a reference, hashing large dirty sets on
-// worker goroutines first.
 func (t *Trie) computeRootRefs() {
 	if t.root.hasRef() {
 		return
@@ -241,14 +256,10 @@ func (t *Trie) computeRootRefs() {
 	t.pending = 0
 }
 
-// parallelRefs computes the references of the dirty subtrees depth branch
-// levels below the root, each on one worker with its own hashing state. The
-// subtrees share no nodes, and every worker is done before it returns.
 func (t *Trie) parallelRefs(depth int) {
-	assert.Ok(depth == 1 || depth == 2, "trie parallel split depth")
-	var frontier [tasksMax]*node
-	tasks := frontier[:0]
-	tasks = append(tasks, t.root)
+	assert.Ok(depth >= 1, "trie parallel split depth at least one")
+	assert.Ok(depth <= 2, "trie parallel split depth at most two")
+	tasks := []*node{t.root}
 	for d := 0; d < depth; d++ {
 		next := splitDirty(tasks)
 		if len(next) == 0 {
@@ -259,14 +270,13 @@ func (t *Trie) parallelRefs(depth int) {
 	if len(tasks) < 2 {
 		return
 	}
-	in := refsInput{nodes: t.nodes, keepEnc: t.reader != nil}
+	assert.Ok(len(tasks) <= tasksMax, "trie parallel tasks over tasksMax")
+	in := refsInput{nodes: t.nodes, retention: t.retention()}
 	workers := min(len(tasks), runtime.GOMAXPROCS(0), workersMax)
 	var next atomic.Int64
 	var wg sync.WaitGroup
-	wg.Add(workers)
-	for w := 0; w < workers; w++ {
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			h := takeRefHasher()
 			for range len(tasks) {
 				i := int(next.Add(1)) - 1
@@ -276,14 +286,11 @@ func (t *Trie) parallelRefs(depth int) {
 				h.computeRefs(tasks[i], in)
 			}
 			returnRefHasher(h)
-		}()
+		})
 	}
 	wg.Wait()
 }
 
-// splitDirty returns the dirty children of the first branch at or under each
-// of nodes (through at most one extension). A node that is not dirty or has
-// no branch there is left to the caller's serial pass.
 func splitDirty(nodes []*node) []*node {
 	assert.Ok(len(nodes) <= 16, "trie split of more than one level")
 	out := make([]*node, 0, 16*len(nodes))
@@ -304,38 +311,23 @@ func splitDirty(nodes []*node) []*node {
 	return out
 }
 
-// refsInput is what a reference computation needs from its trie.
 type refsInput struct {
-	nodes   int
-	keepEnc bool
+	nodes     int
+	retention encodingRetention
 }
 
-const (
-	queueCount  = 4
-	keepChunk   = 64 << 10
-	heightsMax  = 2*KeyBytesMax*2 + 8
-	levelBucket = keccak.BatchLanes
-)
-
-// hashQueue collects nodes whose encodings need a keccak, grouped by block
-// count so eight of them share one permutation per block.
 type hashQueue struct {
 	nodes []*node
 	msgs  [][]byte
 	out   [keccak.BatchLanes]primitives.Hash
 }
 
-// refHasher computes node references on one goroutine: a keccak state and an
-// 8-way batch, the nodes to hash grouped by height, and
-// two arenas for encodings: keep (append-only; encodings of hashed nodes live
-// there until save writes them) and temp (reused once each level is hashed).
 type refHasher struct {
 	single *keccak.Hasher
 	batch  *keccak.Batch
 	stack  []nodeVisit
-	levels [heightsMax][]*node
-	keep   []byte
-	temp   []byte
+	levels [][]*node
+	temp   nodeEncoder
 	queues [queueCount]hashQueue
 }
 
@@ -348,30 +340,24 @@ func newRefHasher() *refHasher {
 	return h
 }
 
-// computeRefs hashes the dirty nodes under root level by level from the
-// leaves up: a node's height is one more than its highest dirty child's, so
-// every node of a level has its children's references, and a level's
-// encodings are hashed eight at a time.
 func (h *refHasher) computeRefs(root *node, in refsInput) {
 	if root.hasRef() {
 		return
 	}
-	top := h.sortByHeight(root, in.nodes)
+	top := min(h.sortByHeight(root, in.nodes), heightsMax-1)
 	for height := 0; height <= top; height++ {
 		level := h.levels[height]
 		for _, n := range level {
-			h.encodeLevelNode(n, in.keepEnc)
+			h.encodeLevelNode(n, in.retention)
 		}
-		h.flush(in.keepEnc)
-		h.temp = h.temp[:0]
+		h.flush(in.retention)
+		h.temp.buf = h.temp.buf[:0]
 		clear(level)
 		h.levels[height] = level[:0]
 	}
 	assert.Ok(root.hasRef(), "trie root left without a reference")
 }
 
-// sortByHeight walks the dirty nodes under root (children before parents),
-// files each under its height and returns root's height.
 func (h *refHasher) sortByHeight(root *node, nodes int) int {
 	stack := append(h.stack[:0], nodeVisit{n: root})
 	limit := min(2*nodes+2, 2*nodesMax+2)
@@ -392,6 +378,9 @@ func (h *refHasher) sortByHeight(root *node, nodes int) int {
 			}
 			assert.Ok(height < heightsMax, "trie deeper than heightsMax")
 			n.height = uint16(height)
+			if height >= len(h.levels) {
+				h.levels = append(h.levels, make([][]*node, height+1-len(h.levels))...)
+			}
 			h.levels[height] = append(h.levels[height], n)
 			continue
 		}
@@ -409,39 +398,39 @@ func (h *refHasher) sortByHeight(root *node, nodes int) int {
 	return int(root.height)
 }
 
-func (h *refHasher) encodeLevelNode(n *node, keepEnc bool) {
-	size, _ := nodeSize(n)
-	arena := &h.temp
-	if keepEnc {
-		arena = &h.keep
-		if size >= primitives.HashLength && cap(h.keep)-len(h.keep) < size {
-			h.keep = make([]byte, 0, max(keepChunk, size))
-		}
+func (h *refHasher) encodeLevelNode(n *node, retention encodingRetention) {
+	size := nodeSize(n)
+	var msg []byte
+	if retention == keepEncodings && size >= primitives.HashLength {
+		e := nodeEncoder{buf: make([]byte, 0, size)}
+		e.node(n)
+		msg = e.buf
+	} else {
+		start := len(h.temp.buf)
+		h.temp.node(n)
+		msg = h.temp.buf[start:len(h.temp.buf):len(h.temp.buf)]
 	}
-	start := len(*arena)
-	*arena = appendNode(*arena, n)
-	msg := (*arena)[start:len(*arena):len(*arena)]
 	assert.Equal(len(msg), size, "trie node encoding size")
 	if size < primitives.HashLength {
 		n.setRef(msg)
-		*arena = (*arena)[:start]
+		h.temp.buf = h.temp.buf[:len(h.temp.buf)-size]
 		return
 	}
 	q := &h.queues[min(size/keccak.BlockSize, queueCount-1)]
 	q.nodes = append(q.nodes, n)
 	q.msgs = append(q.msgs, msg)
-	if len(q.msgs) == levelBucket {
-		h.flushQueue(q, keepEnc)
+	if len(q.msgs) == keccak.BatchLanes {
+		h.flushQueue(q, retention)
 	}
 }
 
-func (h *refHasher) flush(keepEnc bool) {
+func (h *refHasher) flush(retention encodingRetention) {
 	for i := range h.queues {
-		h.flushQueue(&h.queues[i], keepEnc)
+		h.flushQueue(&h.queues[i], retention)
 	}
 }
 
-func (h *refHasher) flushQueue(q *hashQueue, keepEnc bool) {
+func (h *refHasher) flushQueue(q *hashQueue, retention encodingRetention) {
 	count := len(q.msgs)
 	if count == 0 {
 		return
@@ -456,7 +445,7 @@ func (h *refHasher) flushQueue(q *hashQueue, keepEnc bool) {
 	for i := 0; i < count; i++ {
 		n := q.nodes[i]
 		n.setRef(q.out[i][:])
-		if keepEnc {
+		if retention == keepEncodings {
 			n.enc = q.msgs[i]
 		}
 	}
@@ -466,9 +455,12 @@ func (h *refHasher) flushQueue(q *hashQueue, keepEnc bool) {
 	q.msgs = q.msgs[:0]
 }
 
-// nodeSize returns the length of n's RLP and of its list payload; every
-// child of n has a reference.
-func nodeSize(n *node) (int, int) {
+func nodeSize(n *node) int {
+	payload := nodePayload(n)
+	return headerSize(payload) + payload
+}
+
+func nodePayload(n *node) int {
 	payload := 0
 	switch n.kind {
 	case kindLeaf:
@@ -485,31 +477,32 @@ func nodeSize(n *node) (int, int) {
 	default:
 		assert.Unreachable("trie node kind")
 	}
-	return headerSize(payload) + payload, payload
+	return payload
 }
 
-// appendNode appends n's RLP to dst, writing it once in place.
-func appendNode(dst []byte, n *node) []byte {
-	_, payload := nodeSize(n)
-	dst = appendHeader(dst, 0xc0, payload)
+type nodeEncoder struct {
+	buf []byte
+}
+
+func (e *nodeEncoder) node(n *node) {
+	e.header(0xc0, nodePayload(n))
 	switch n.kind {
 	case kindLeaf:
-		dst = appendCompact(dst, n.path, pathLeaf)
-		dst = appendString(dst, n.value)
+		e.compact(n.path, pathLeaf)
+		e.str(n.value)
 	case kindExtension:
-		dst = appendCompact(dst, n.path, pathExtension)
-		dst = appendRef(dst, n.children[0])
+		e.compact(n.path, pathExtension)
+		e.ref(n.children[0])
 	case kindBranch:
 		for _, child := range n.children {
-			dst = appendRef(dst, child)
+			e.ref(child)
 		}
-		dst = appendString(dst, n.value)
+		e.str(n.value)
 	case kindSealed:
 		assert.Fail("trie encode of a sealed node")
 	default:
 		assert.Unreachable("trie node kind")
 	}
-	return dst
 }
 
 func refSize(child *node) int {
@@ -523,14 +516,15 @@ func refSize(child *node) int {
 	return int(child.refLen)
 }
 
-func appendRef(dst []byte, child *node) []byte {
+func (e *nodeEncoder) ref(child *node) {
 	if child == nil {
-		return append(dst, 0x80)
+		e.buf = append(e.buf, 0x80)
+		return
 	}
 	if child.hashRef() {
-		dst = append(dst, 0x80+primitives.HashLength)
+		e.buf = append(e.buf, 0x80+primitives.HashLength)
 	}
-	return append(dst, child.ref()...)
+	e.buf = append(e.buf, child.ref()...)
 }
 
 func stringSize(b []byte) int {
@@ -540,15 +534,15 @@ func stringSize(b []byte) int {
 	return headerSize(len(b)) + len(b)
 }
 
-func appendString(dst, b []byte) []byte {
+func (e *nodeEncoder) str(b []byte) {
 	if len(b) == 1 && b[0] < 0x80 {
-		return append(dst, b[0])
+		e.buf = append(e.buf, b[0])
+		return
 	}
-	return append(appendHeader(dst, 0x80, len(b)), b...)
+	e.header(0x80, len(b))
+	e.buf = append(e.buf, b...)
 }
 
-// compactSize is the RLP length of a path's hex-prefix encoding, whose first
-// byte is always below 0x80.
 func compactSize(nibbles int) int {
 	size := 1 + nibbles/2
 	if size == 1 {
@@ -557,12 +551,12 @@ func compactSize(nibbles int) int {
 	return headerSize(size) + size
 }
 
-func appendCompact(dst, path []byte, kind pathKind) []byte {
+func (e *nodeEncoder) compact(path []byte, kind pathKind) {
 	size := 1 + len(path)/2
 	if size > 1 {
-		dst = appendHeader(dst, 0x80, size)
+		e.header(0x80, size)
 	}
-	return appendHexPrefix(dst, path, kind)
+	e.buf = appendHexPrefix(e.buf, kind, path)
 }
 
 func headerSize(size int) int {
@@ -572,16 +566,16 @@ func headerSize(size int) int {
 	return 1 + uintBytes(size)
 }
 
-func appendHeader(dst []byte, offset byte, size int) []byte {
+func (e *nodeEncoder) header(offset byte, size int) {
 	if size <= 55 {
-		return append(dst, offset+byte(size))
+		e.buf = append(e.buf, offset+byte(size))
+		return
 	}
 	n := uintBytes(size)
-	dst = append(dst, offset+55+byte(n))
+	e.buf = append(e.buf, offset+55+byte(n))
 	for k := n - 1; k >= 0; k-- {
-		dst = append(dst, byte(size>>(8*k)))
+		e.buf = append(e.buf, byte(size>>(8*k)))
 	}
-	return dst
 }
 
 func uintBytes(v int) int {
@@ -760,6 +754,6 @@ func decodeRef(list *rlp.Stream, slot **node) (embedded, error) {
 	if len(ref) != primitives.HashLength {
 		return embedded{}, ErrNodeRLP
 	}
-	*slot = sealedNode(ref, true)
+	*slot = sealedNode(ref, nodeStored)
 	return embedded{}, nil
 }

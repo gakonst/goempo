@@ -7,21 +7,26 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
-// BatchLanes is how many messages one permutation of a Batch hashes.
 const BatchLanes = 8
 
 const blockLanes = BlockSize / 8
 
-// batchMessagesMax bounds one Hash call; callers split longer lists.
 const batchMessagesMax = 1 << 20
 
-// BatchBytesMax bounds one message of a Batch.
 const BatchBytesMax = 1 << 24
 
-// Batch hashes independent messages eight at a time with one Keccak-f[1600]
-// over eight states (keccakf_amd64.s) on CPUs with AVX-512, so a group of
-// eight costs about what one hash does. Messages of equal block count share
-// permutations best. Without AVX-512 it hashes them one by one.
+const _ = uint(batchMessagesMax - BatchLanes)
+
+const _ = uint(BatchBytesMax - BlockSize)
+
+const batchGroupsMax = batchMessagesMax / BatchLanes
+
+const batchBlocksMax = BatchBytesMax/BlockSize + 1
+
+const _ = uint(batchMessagesMax - batchGroupsMax)
+
+const _ = uint(BatchBytesMax - batchBlocksMax)
+
 type Batch struct {
 	a      [25][BatchLanes]uint64
 	pad    [BlockSize]byte
@@ -33,7 +38,6 @@ func NewBatch() *Batch {
 	return &Batch{h: New()}
 }
 
-// Hash sets out[i] to the Keccak-256 of msgs[i].
 func (b *Batch) Hash(msgs [][]byte, out []primitives.Hash) {
 	assert.Equal(len(msgs), len(out), "keccak batch output count")
 	assert.Ok(len(msgs) <= batchMessagesMax, "keccak batch longer than batchMessagesMax")
@@ -43,7 +47,7 @@ func (b *Batch) Hash(msgs [][]byte, out []primitives.Hash) {
 		}
 		return
 	}
-	groups := (len(msgs) + BatchLanes - 1) / BatchLanes
+	groups := min((len(msgs)+BatchLanes-1)/BatchLanes, batchGroupsMax)
 	for g := 0; g < groups; g++ {
 		end := min((g+1)*BatchLanes, len(msgs))
 		b.group(msgs[g*BatchLanes:end], out[g*BatchLanes:end])
@@ -51,7 +55,8 @@ func (b *Batch) Hash(msgs [][]byte, out []primitives.Hash) {
 }
 
 func (b *Batch) group(msgs [][]byte, out []primitives.Hash) {
-	assert.Ok(len(msgs) > 0 && len(msgs) <= BatchLanes, "keccak batch group size")
+	assert.Ok(len(msgs) > 0, "keccak batch group empty")
+	assert.Ok(len(msgs) <= BatchLanes, "keccak batch group over BatchLanes")
 	if len(msgs) == 1 {
 		out[0] = b.h.Hash(msgs[0])
 		return
@@ -63,6 +68,7 @@ func (b *Batch) group(msgs [][]byte, out []primitives.Hash) {
 		b.blocks[k] = len(msgs[k])/BlockSize + 1
 		rounds = max(rounds, b.blocks[k])
 	}
+	rounds = min(rounds, batchBlocksMax)
 	for j := 0; j < rounds; j++ {
 		for k := 0; k < len(msgs); k++ {
 			switch {

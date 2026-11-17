@@ -38,10 +38,6 @@ func (s *Secure) Hash() primitives.Hash {
 	return s.trie.Hash()
 }
 
-// OrderedRoot is the root of the trie mapping rlp(i) to items[i], the
-// transactions, receipts and withdrawals root. It builds the whole trie
-// without copying the items, then hashes it level by level (and on workers
-// for long lists).
 func OrderedRoot(items [][]byte) primitives.Hash {
 	n := len(items)
 	if n == 0 {
@@ -56,7 +52,6 @@ func OrderedRoot(items [][]byte) primitives.Hash {
 	return t.Hash()
 }
 
-// appendIndexKey appends rlp(v), the key of item v in an ordered trie.
 func appendIndexKey(dst []byte, v uint64) []byte {
 	if v == 0 {
 		return append(dst, 0x80)

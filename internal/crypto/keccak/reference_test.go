@@ -53,7 +53,13 @@ func TestBatchZeroAlloc(t *testing.T) {
 	}
 }
 
-func benchBatch(b *testing.B, n, size int) {
+type batchShape struct {
+	n    int
+	size int
+}
+
+func benchBatch(b *testing.B, shape batchShape) {
+	n, size := shape.n, shape.size
 	kb := keccak.NewBatch()
 	msgs := make([][]byte, n)
 	for i := range msgs {
@@ -61,20 +67,20 @@ func benchBatch(b *testing.B, n, size int) {
 	}
 	out := make([]primitives.Hash, n)
 	b.SetBytes(int64(n * size))
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		kb.Hash(msgs, out)
 	}
 }
 
-func BenchmarkBatch8x532(b *testing.B) { benchBatch(b, 8, 532) }
-func BenchmarkBatch2x532(b *testing.B) { benchBatch(b, 2, 532) }
-func BenchmarkBatch8x64(b *testing.B)  { benchBatch(b, 8, 64) }
+func BenchmarkBatch8x532(b *testing.B) { benchBatch(b, batchShape{n: 8, size: 532}) }
+func BenchmarkBatch2x532(b *testing.B) { benchBatch(b, batchShape{n: 2, size: 532}) }
+func BenchmarkBatch8x64(b *testing.B)  { benchBatch(b, batchShape{n: 8, size: 64}) }
 
 func BenchmarkHasher532(b *testing.B) {
 	h := keccak.New()
 	in := make([]byte, 532)
 	b.SetBytes(532)
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		h.Hash(in)
 	}
 }

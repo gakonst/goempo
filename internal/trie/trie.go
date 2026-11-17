@@ -33,9 +33,6 @@ const (
 	kindSealed    nodeKind = 4
 )
 
-// node is one trie node. Its reference (its RLP when shorter than 32 bytes,
-// else the keccak of it) lives in refBuf, so re-hashing a dirty node reuses
-// the node's own storage. height is scratch for computeRefs.
 type node struct {
 	kind     nodeKind
 	saved    bool
@@ -52,7 +49,6 @@ func (n *node) hasRef() bool {
 	return n.refLen > 0
 }
 
-// hashRef reports a reference that is a hash, not an embedded encoding.
 func (n *node) hashRef() bool {
 	return n.refLen == primitives.HashLength
 }
@@ -62,12 +58,20 @@ func (n *node) ref() []byte {
 }
 
 func (n *node) setRef(ref []byte) {
-	assert.Ok(len(ref) > 0 && len(ref) <= primitives.HashLength, "trie node reference length")
+	assert.Ok(len(ref) > 0, "trie node reference empty")
+	assert.Ok(len(ref) <= primitives.HashLength, "trie node reference longer than a hash")
 	n.refLen = uint8(copy(n.refBuf[:], ref))
 }
 
-func sealedNode(ref []byte, saved bool) *node {
-	n := &node{kind: kindSealed, saved: saved}
+type storedState bool
+
+const (
+	nodeStored   storedState = true
+	nodeUnstored storedState = false
+)
+
+func sealedNode(ref []byte, stored storedState) *node {
+	n := &node{kind: kindSealed, saved: bool(stored)}
 	n.setRef(ref)
 	return n
 }
@@ -88,15 +92,13 @@ type NodeWriter interface {
 }
 
 type Trie struct {
-	root    *node
-	nodes   int
-	pending int
-	last    []byte
-	sorted  int
-	reader  NodeReader
-	hasher  *keccak.Hasher
-	// borrowValues keeps the caller's value slices instead of copies, for a
-	// trie that lives only inside one call (OrderedRoot).
+	root         *node
+	nodes        int
+	pending      int
+	last         []byte
+	sorted       int
+	reader       NodeReader
+	hasher       *keccak.Hasher
 	borrowValues bool
 	scratch      []nodeVisit
 }
@@ -114,7 +116,7 @@ func New() *Trie {
 func Open(root primitives.Hash, reader NodeReader) *Trie {
 	t := &Trie{reader: reader}
 	if root != EmptyRoot {
-		t.root = sealedNode(root[:], true)
+		t.root = sealedNode(root[:], nodeStored)
 		t.nodes = 1
 	}
 	return t

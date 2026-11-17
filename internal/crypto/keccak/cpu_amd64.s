@@ -2,21 +2,20 @@
 
 #include "textflag.h"
 
-// func cpuid(eaxArg, ecxArg uint32) (eax, ebx, ecx, edx uint32)
+// func cpuid(leaf uint32) cpuidRegs
 TEXT ·cpuid(SB), NOSPLIT, $0-24
-	MOVL eaxArg+0(FP), AX
-	MOVL ecxArg+4(FP), CX
+	MOVL leaf+0(FP), AX
+	MOVL $0, CX
 	CPUID
-	MOVL AX, eax+8(FP)
-	MOVL BX, ebx+12(FP)
-	MOVL CX, ecx+16(FP)
-	MOVL DX, edx+20(FP)
+	MOVL AX, ret_eax+8(FP)
+	MOVL BX, ret_ebx+12(FP)
+	MOVL CX, ret_ecx+16(FP)
+	MOVL DX, ret_edx+20(FP)
 	RET
 
-// func xgetbv() (eax, edx uint32)
-TEXT ·xgetbv(SB), NOSPLIT, $0-8
+// func xgetbv() uint32
+TEXT ·xgetbv(SB), NOSPLIT, $0-4
 	MOVL $0, CX
 	XGETBV
-	MOVL AX, eax+0(FP)
-	MOVL DX, edx+4(FP)
+	MOVL AX, ret+0(FP)
 	RET

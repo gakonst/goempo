@@ -6,7 +6,7 @@ harness itself is scripts/devnet (see its README for commands and ports).
 
 ## Rust-only devnet (baseline)
 
-Built from tempoxyz/tempo at c8b89f9b6d (tempo 1.18.4-dev), on dev-georgios
+Built from tempoxyz/tempo at c8b89f9b6d (tempo 1.18.4-dev), on a 32-core build machine
 under ~/goempo-work/devnet:
 
     scripts/devnet/devnet.sh build && scripts/devnet/devnet.sh gen && scripts/devnet/devnet.sh start

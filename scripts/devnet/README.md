@@ -2,7 +2,7 @@
 
 A reproducible Tempo devnet: N validators (4 by default) from a fresh genesis and
 DKG, run by the Rust reference node (tempoxyz/tempo), where any slot can be run by
-goempo instead. It runs on a Linux host with cargo (dev-georgios, under
+goempo instead. It runs on a Linux host with cargo (a 32-core build machine, under
 ~/goempo-work/devnet); nothing here talks to mainnet or moderato.
 
 ## Files

@@ -5,6 +5,8 @@
   - os
   - net
   - ./internal/version
+  - ./internal/genesis
+  - ./internal/primitives
 "./internal/version": []
 "./internal/io/...":
   - os
@@ -24,3 +26,8 @@
   - ./internal/rlp
   - ./internal/crypto/keccak
   - github.com/kapetan-io/tiger/assert
+"./internal/genesis":
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/crypto/keccak
+  - ./internal/trie

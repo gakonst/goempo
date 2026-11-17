@@ -19,6 +19,7 @@ func (r *replayer) getHash(n uint64) primitives.Hash {
 }
 
 func (r *replayer) step(blk *types.Block) bool {
+	r.failedBlock = blk
 	h := &blk.Header.Inner
 	if h.Number == 1 {
 		r.hashes[0] = h.ParentHash

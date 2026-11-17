@@ -52,13 +52,14 @@ func (m *mismatch) String() string {
 }
 
 type replayer struct {
-	db     *state.DB
-	exec   *executor.Executor
-	hashes [hashWindow]primitives.Hash
-	head   uint64
-	dir    string
-	failed *mismatch
-	result *executor.Result
+	db          *state.DB
+	exec        *executor.Executor
+	hashes      [hashWindow]primitives.Hash
+	head        uint64
+	dir         string
+	failed      *mismatch
+	failedBlock *types.Block
+	result      *executor.Result
 
 	heal      *healer
 	firstHead uint64

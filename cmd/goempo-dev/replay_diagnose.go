@@ -68,6 +68,8 @@ func (r *replayer) diagnoseReceipts(c *rpcClient) {
 		fmt.Fprintf(os.Stderr, "diagnose: %d receipts, want %d\n", len(got), len(want))
 	}
 	var prev uint64
+	var bad []int
+	defer func() { r.diagnoseFrames(c, r.failedBlock, bad) }()
 	count := min(len(got), len(want), diagReceiptsMax)
 	for i := 0; i < count; i++ {
 		g := &got[i]
@@ -90,6 +92,9 @@ func (r *replayer) diagnoseReceipts(c *rpcClient) {
 		}
 		if g.CumulativeGasUsed == wantCum && status == w.Status && len(g.Logs) == len(w.Logs) {
 			continue
+		}
+		if gasUsed != wantGas {
+			bad = append(bad, i)
 		}
 		fmt.Fprintf(os.Stderr, "diagnose: tx %d %s: gasUsed %d want %d (diff %d), status %s want %s, logs %d want %d\n",
 			i, w.TransactionHash, gasUsed, wantGas, int64(gasUsed)-int64(wantGas), status, w.Status, len(g.Logs), len(w.Logs))

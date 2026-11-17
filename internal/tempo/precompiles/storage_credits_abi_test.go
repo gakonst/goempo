@@ -109,3 +109,21 @@ func TestStorageCreditsStatic(t *testing.T) {
 	_, err = creditsCall(c, "balanceOf(address)", word(alice))
 	assert.NoError(err, "static view")
 }
+
+func TestStorageCreditsMainnetBalances(t *testing.T) {
+	st := memstate.New()
+	st.SetCode(precompiles.StorageCreditsAddress, []byte{0xef})
+	st.SetStorage(precompiles.StorageCreditsAddress, wordHash(precompiles.ChannelReserveAddress), u256.FromUint64(0x97))
+	st.SetStorage(precompiles.StorageCreditsAddress, wordHash(precompiles.StablecoinDEXAddress), u256.FromUint64(0xb76))
+	st.FinalizeTx()
+	c := precompiles.NewContext(st, hardfork.T13, 1_000_000)
+	out, err := creditsCall(c, "balanceOf(address)", word(precompiles.ChannelReserveAddress))
+	assert.NoError(err, "channel reserve credits")
+	assert.Ok(bytes.Equal(out, amount(0x97)), "eth_call at block 48400138 returned 0x97")
+	out, err = creditsCall(c, "balanceOf(address)", word(precompiles.StablecoinDEXAddress))
+	assert.NoError(err, "dex credits")
+	assert.Ok(bytes.Equal(out, amount(0xb76)), "eth_call at block 48400138 returned 0xb76")
+	out, err = creditsCall(c, "modeOf(address)", word(precompiles.StablecoinDEXAddress))
+	assert.NoError(err, "dex mode")
+	assert.Ok(bytes.Equal(out, amount(0)), "eth_call returned mode 0")
+}

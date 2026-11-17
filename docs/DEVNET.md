@@ -57,11 +57,37 @@ only). ValidatorConfigV2 (0xCCCCCCCC00000000000000000000000000000001) owner is
 0xe823bb1ae947a0197929a0ea5fc49394ca621483.
 
 goempo follows a chain by fetching blocks and finalization certificates from an
-RPC upstream and executing every block (cmd/goempo). For moderato it needs
-the moderato genesis (internal/genesis already reproduces its state root) and
-the chain id and initial committee from it instead of mainnet's; then:
+RPC upstream and executing every block (cmd/goempo). What works for moderato
+today (R6f dry run, 2026-11-17):
 
-    goempo --chain moderato --upstream https://rpc.moderato.tempo.xyz --datadir ~/goempo-moderato --archive ''
+- Genesis: goempo-dev genesis <tempo>/crates/chainspec/src/genesis/moderato.json
+  0x3952ff0c60a3f215ab11a3a2c7698126b7911da84faf5cb66bdbcb0c605738c4 prints
+  R2 PASS (chain id 42431, 16 accounts, equal to moderato block 0's state root).
+- Certificates: consensus.NewModeratoChain carries the testnet network
+  identity (from_epoch 1747, the Rust reference's
+  testnet-network-identity.json); TestModeratoNetworkIdentity checks the DKG
+  outcome in moderato block 37735199 against it.
+- Header chain with certificates: goempo-dev follow -chain moderato -upstream
+  https://rpc.moderato.tempo.xyz -check https://rpc.moderato.tempo.xyz
+  -last 3000 -steps 3 linked 3187 blocks to the tip (44676258), matched every
+  hash and verified 3187 finalization certificates in 1m41s.
+- Execution: the R1 sample executes 512 of 512 moderato blocks across every
+  fork window (receipts and senders match).
+
+Not done yet, needed before a goempo validator can run on moderato:
+
+- cmd/goempo (the follower with execution) and goempo-dev replay are
+  mainnet-only (genesis.Mainnet, MainnetChainID, NewMainnetChain). They need a
+  chain switch (genesis, chain id, network identity, certify-from height).
+- Moderato state at the tip: replay from genesis (44.7M blocks; mainnet's
+  recent blocks replay at about 4.2k blocks/s, so most of a day plus fetching
+  the chunks), then follow with execution across at least one epoch boundary.
+- Validator mode from a synced datadir: goempo validator opens its datadir
+  and catches up from peers; on moderato it must start from a moderato
+  datadir at the tip, register the current epoch's outcome from the last
+  boundary block (not epoch 0's), and join as a player with no share.
+  The devnet has not yet exercised a validator added by addValidator after
+  genesis (every devnet validator is in the genesis committee).
 
 Passive consensus peering is not possible for a non-validator: commonware's
 authenticated lookup network admits a connection only from a public key in a
@@ -78,17 +104,21 @@ Agents must not do any of this; it changes a shared network.
    example 8000/tcp) reachable from the other validators' egress addresses,
    and goempo synced to the moderato tip (as above), keeping up with 1.85
    blocks/s.
-2. Keys: generate an ed25519 consensus key (tempo consensus
-   generate-signing-key, or goempo's validator key tool once it exists) and keep
-   it offline-backed; print its public key with tempo consensus
-   show-verification-key. Choose a validator address (an Ethereum account
+2. Keys: generate an ed25519 consensus key with goempo keys generate
+   --output <file> (or tempo consensus generate-signing-key) and keep it
+   offline-backed; goempo keys public --signing-key <file> prints its public
+   key. Choose a validator address (an Ethereum account
    you control: it can later deactivate the validator or change its IPs and fee
    recipient) and a fee recipient.
 3. Signature: prove control of the consensus key with
    tempo consensus create-add-validator-signature --validator-address <addr>
    --consensus.public-key <pubkey> --ingress <ip:port> --egress <ip>
    --fee-recipient <addr> --chain-id-from-rpc-url https://rpc.moderato.tempo.xyz
-   --signing-key <file>. It signs keccak256(chainId || 0xCCCC..0001 ||
+   --signing-key <file>, or goempo keys add-validator --signing-key <file>
+   --chain-id 42431 --validator <addr> --ingress <ip:port> --egress <ip>
+   --fee-recipient <addr> --simulate-rpc https://rpc.moderato.tempo.xyz,
+   which prints the signature and addValidator call data and eth_calls it
+   from the config owner (no transaction). It signs keccak256(chainId || 0xCCCC..0001 ||
    validatorAddress || len(ingress) || ingress || len(egress) || egress ||
    feeRecipient) under the add-validator namespace. The ingress must be unique
    among active validators.
@@ -126,3 +156,22 @@ one full epoch boundary (about 3.2 h) with every block's state root matching.
   dealer log on chain in 162 of 162 epochs, 0 Rust ceremony failures, 0 WARNs
   naming goempo. One host-load spike (load average 106 on 32 cores from other
   builds) slowed blocks for a minute without a stall.
+- 2026-11-17 19:53 UTC, goempo before 3c791cf in slots 2 and 3 (2 of 4): halted at
+  t=807s with every slot at finalized 3590 (epoch 59, length 60). Root cause:
+  block 3591 (Rust proposer) was notarized but its finalization did not
+  complete before the next view, and the Rust leaders then proposed 3592 and
+  on with 3591 as parent, as commonware's simplex allows (a proposal may
+  extend a notarized, unfinalized block). goempo only built on and verified
+  children of its finalized head, so it answered Undecided to every later
+  proposal and never notarized them; with Rust slots 0 and 1 only 2 of 4
+  votes remained, so nothing reached quorum again and views were nullified
+  forever. With goempo in 1 of 4 slots the three Rust votes hid the bug.
+  Fix 3c791cf: the engine walks from a proposal's parent back to the
+  finalized head through the blocks it holds and node.Local executes that
+  branch in a discarded overlay (WithBranch, ExecuteOn, DkgConfigOn) to build,
+  verify and compute the boundary outcome; dealer logs in notarized branch
+  blocks count and are not re-included. Regression tests drop finalize votes
+  for one view (TestEngineBuildsOnNotarizedUnfinalizedParent halts on the old
+  code at height 4) and for the second half of an epoch
+  (TestEngineConcludesDKGOnNotarizedBranch). Logs saved under
+  ~/goempo-work/devnet/r6e-halt on the build machine.

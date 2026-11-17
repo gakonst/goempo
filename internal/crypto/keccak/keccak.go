@@ -25,6 +25,7 @@ type readHash interface {
 
 type Hasher struct {
 	state readHash
+	out   primitives.Hash
 }
 
 func New() *Hasher {
@@ -50,9 +51,8 @@ func (h *Hasher) SumInto(out *primitives.Hash) {
 }
 
 func (h *Hasher) Sum() primitives.Hash {
-	var out primitives.Hash
-	h.SumInto(&out)
-	return out
+	h.SumInto(&h.out)
+	return h.out
 }
 
 func (h *Hasher) Hash(b []byte) primitives.Hash {

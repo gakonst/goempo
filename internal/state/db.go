@@ -248,7 +248,7 @@ type nodeWriter struct {
 func (w nodeWriter) WriteNode(n trie.StoredNode) {
 	key := make([]byte, 0, nodeKeyBytesMax)
 	key = append(key, w.prefix...)
-	w.batch.Put(appendPath(key, nibbles(n.Path)), n.Encoded)
+	w.batch.PutOwned(appendPath(key, nibbles(n.Path)), n.Encoded)
 }
 
 func storageNodePrefix(addr Address) []byte {

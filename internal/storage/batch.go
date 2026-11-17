@@ -47,6 +47,14 @@ func (b *Batch) Put(key []byte, value Value) {
 	b.bytes += len(key) + len(value)
 }
 
+func (b *Batch) PutOwned(key []byte, value Value) {
+	assert.Ok(len(key) > 0, "storage put of an empty key")
+	assert.Ok(len(key) <= KeyBytesMax, "storage key longer than KeyBytesMax")
+	assert.Ok(len(value) <= ValueBytesMax, "storage value longer than ValueBytesMax")
+	b.ops = append(b.ops, op{key: key, value: value})
+	b.bytes += len(key) + len(value)
+}
+
 func (b *Batch) Delete(key []byte) {
 	assert.Ok(len(key) > 0, "storage delete of an empty key")
 	assert.Ok(len(key) <= KeyBytesMax, "storage key longer than KeyBytesMax")

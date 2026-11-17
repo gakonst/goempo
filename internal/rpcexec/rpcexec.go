@@ -215,6 +215,8 @@ func (x *Executor) gasLimit(e *env, req *rpc.CallRequest, gasCap uint64) uint64 
 }
 
 func (x *Executor) Call(block uint64, req *rpc.CallRequest, gasCap uint64) (rpc.CallResult, error) {
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return rpc.CallResult{}, err
@@ -261,6 +263,8 @@ func (g *gasRange) settled() bool {
 }
 
 func (x *Executor) EstimateGas(block uint64, req *rpc.CallRequest, gasCap uint64) (uint64, error) {
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return 0, err

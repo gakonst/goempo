@@ -1,7 +1,9 @@
 package rpcexec_test
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gakonst/goempo/internal/genesis"
@@ -53,4 +55,29 @@ func TestCallTIP20Name(t *testing.T) {
 	assert.NoError(err, "estimate")
 	assert.Ok(gas > res.GasUsed-1, "estimate covers the gas the call used")
 	t.Log(gas, res.GasUsed)
+}
+
+func TestConcurrentCallsShareOneState(t *testing.T) {
+	x := genesisExecutor()
+	to := primitives.Address{0x20, 0xc0}
+	req := &rpc.CallRequest{To: &to, Input: []byte{0x06, 0xfd, 0xde, 0x03}}
+	var wg sync.WaitGroup
+	fails := make([]int, 8)
+	for w := range fails {
+		wg.Go(func() {
+			for range 25 {
+				res, err := x.Call(0, req, gasCap)
+				if err != nil || res.Reverted {
+					fails[w]++
+				}
+				if _, err := x.EstimateGas(0, req, gasCap); err != nil {
+					fails[w]++
+				}
+			}
+		})
+	}
+	wg.Wait()
+	for w, n := range fails {
+		assert.Ok(n == 0, fmt.Sprintf("worker %d: %d failed calls", w, n))
+	}
 }

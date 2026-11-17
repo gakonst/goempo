@@ -332,7 +332,7 @@ func writeSimError(w *writer, c *SimCall) {
 	w.key("error")
 	w.objOpen()
 	if c.Reverted {
-		w.kStr("message", RevertError(c.ReturnData).Message)
+		w.kStr("message", RevertDebugString(c.ReturnData))
 		w.key("code")
 		w.integer(simulateRevertCode)
 		w.kData("data", c.ReturnData)

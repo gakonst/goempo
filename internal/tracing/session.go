@@ -26,6 +26,7 @@ type Account struct {
 	Nonce       uint64
 	Code        []byte
 	EmptyBefore bool
+	Existed     bool
 	Slots       []evm.Hash
 	Pre         map[evm.Hash]u256.Int
 	Post        map[evm.Hash]u256.Int
@@ -138,6 +139,7 @@ func (s *Session) touch(addr evm.Address) *Account {
 		Nonce:       s.Inner.Nonce(addr),
 		Code:        s.Inner.Code(addr),
 		EmptyBefore: s.Inner.Empty(addr),
+		Existed:     s.Inner.Exist(addr),
 		Pre:         make(map[evm.Hash]u256.Int),
 	}
 	s.index[addr] = a

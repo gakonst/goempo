@@ -46,12 +46,21 @@ func excludedNodes(rec *Recorder) []bool {
 	return ex
 }
 
-func ParityJSON(rec *Recorder, info TxInfo, loc Locator) []byte {
-	w := &writer{}
-	w.arrOpen()
+const syntheticNode = -1
+
+type Flat struct {
+	Node      int
+	Subtraces int
+	Addr      []int
+	From      evm.Address
+	To        evm.Address
+	ToKnown   bool
+}
+
+func FlatTraces(rec *Recorder, info TxInfo) []Flat {
 	ex := excludedNodes(rec)
 	addrs := make([][]int, len(rec.Nodes))
-	var base []int
+	var out []Flat
 	if info.AA {
 		roots := 0
 		for _, r := range rec.Roots {
@@ -59,18 +68,17 @@ func ParityJSON(rec *Recorder, info TxInfo, loc Locator) []byte {
 				roots++
 			}
 		}
-		writeParitySynthetic(w, roots, loc)
+		out = append(out, Flat{Node: syntheticNode, Subtraces: roots, Addr: []int{}, ToKnown: true})
 	}
 	pos := 0
 	for _, r := range rec.Roots {
 		if ex[r] {
 			continue
 		}
+		addrs[r] = []int{}
 		if info.AA {
-			addrs[r] = append(append([]int(nil), base...), pos)
+			addrs[r] = []int{pos}
 			pos++
-		} else {
-			addrs[r] = []int{}
 		}
 	}
 	for i := range rec.Nodes {
@@ -86,20 +94,49 @@ func ParityJSON(rec *Recorder, info TxInfo, loc Locator) []byte {
 			addrs[c] = append(append([]int(nil), addrs[i]...), kept)
 			kept++
 		}
-		writeParityNode(w, parityRow{node: n, subtraces: kept, addr: addrs[i], loc: loc})
+		f := Flat{Node: i, Subtraces: kept, Addr: addrs[i], From: n.From, To: n.To, ToKnown: true}
+		if n.Kind.IsCreate() && !n.Success() {
+			f.ToKnown = false
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func FlatJSON(rec *Recorder, f *Flat, loc *Locator) []byte {
+	w := &writer{}
+	if f.Node == syntheticNode {
+		writeParitySynthetic(w, f.Subtraces, loc)
+	} else {
+		writeParityNode(w, parityRow{node: &rec.Nodes[f.Node], subtraces: f.Subtraces, addr: f.Addr, loc: loc})
+	}
+	return w.buf
+}
+
+func ParityJSON(rec *Recorder, info TxInfo, loc Locator) []byte {
+	w := &writer{}
+	w.arrOpen()
+	for _, f := range FlatTraces(rec, info) {
+		w.raw(FlatJSON(rec, &f, &loc))
 	}
 	w.arrClose()
 	return w.buf
 }
 
-func writeLocator(w *writer, loc Locator) {
+func writeLocator(w *writer, loc *Locator) {
+	if loc == nil {
+		return
+	}
 	w.key("blockHash")
 	w.hash(loc.BlockHash)
 	w.key("blockNumber")
 	w.integer(loc.BlockNumber)
 }
 
-func writeTxLocator(w *writer, loc Locator) {
+func writeTxLocator(w *writer, loc *Locator) {
+	if loc == nil {
+		return
+	}
 	w.key("transactionHash")
 	w.hash(loc.TxHash)
 	w.key("transactionPosition")
@@ -115,7 +152,7 @@ func writeTraceAddress(w *writer, addr []int) {
 	w.arrClose()
 }
 
-func writeParitySynthetic(w *writer, subtraces int, loc Locator) {
+func writeParitySynthetic(w *writer, subtraces int, loc *Locator) {
 	w.objOpen()
 	w.key("action")
 	w.objOpen()
@@ -144,7 +181,7 @@ type parityRow struct {
 	node      *Node
 	subtraces int
 	addr      []int
-	loc       Locator
+	loc       *Locator
 }
 
 func writeParityNode(w *writer, row parityRow) {

@@ -19,11 +19,15 @@ import (
 
 const _ = uint(simulateGasCap - simulateCallsMax)
 
+const _ = uint(simulateCallsMax - simulateBlocksMax)
+
 const (
 	simulateGasCap      = 50_000_000
 	simulateCallsMax    = 1 << 12
+	simulateBlocksMax   = 256
 	refundQuotient      = 5
 	refundQuotientLess1 = 4
+	codeFeeCapTooLow    = -38012
 )
 
 var (
@@ -62,7 +66,31 @@ func (x *Executor) SimulateV1(block uint64, req *rpc.SimulateRequest) ([]rpc.Sim
 		if calls > simulateCallsMax {
 			return nil, ErrSimulateTooMany
 		}
+		gap, err := run.gapBlocks(req.Blocks[i].Block.Number)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, gap...)
 		sb, err := run.block(&req.Blocks[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sb)
+	}
+	return out, nil
+}
+
+func (r *simRun) gapBlocks(number *uint64) ([]rpc.SimulatedBlock, error) {
+	if number == nil || *number <= r.prev.Inner.Number+1 {
+		return nil, nil
+	}
+	gap := *number - r.prev.Inner.Number - 1
+	if gap > simulateBlocksMax {
+		return nil, ErrSimulateTooMany
+	}
+	out := make([]rpc.SimulatedBlock, 0, gap)
+	for range gap {
+		sb, err := r.block(&rpc.SimBlock{})
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +240,10 @@ func (r *simRun) call(blk *types.Block, req *rpc.CallRequest, cumulative uint64)
 	tx := buildTx(req, txShape{chainID: uint64(r.x.ChainID), gas: gas, nonce: nonce})
 	session := tracing.NewSession(r.st, []evm.Address{from}, tracing.StepOptions{})
 	strict := r.req.Validation
-	sim := executor.Simulation{Sender: from, SkipNonceCheck: !strict, SkipBalanceCheck: !strict, SkipGasCap: !strict, SkipFeeCharge: !strict}
+	if strict && priceOf(req).maxFee.Lt(u256.FromUint64(blk.Header.Inner.BaseFeePerGas)) {
+		return simResult{}, &rpc.Error{Code: codeFeeCapTooLow, Message: "max fee per gas less than block base fee"}
+	}
+	sim := executor.Simulation{Sender: from, SkipNonceCheck: !strict, SkipBalanceCheck: !strict, SkipGasCap: true, SkipFeeCharge: !strict}
 	out, err := r.x.Blocks.ApplyCall(session, blk, &tx, sim)
 	if err != nil {
 		return simResult{}, err

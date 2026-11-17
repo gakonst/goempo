@@ -396,3 +396,12 @@ func rustDebugString(s string) string {
 	b.WriteByte('"')
 	return b.String()
 }
+
+func RevertDebugString(ret []byte) string {
+	e := RevertError(ret)
+	data := "None"
+	if len(ret) > 0 {
+		data = "Some(RawValue(\"0x" + hex.EncodeToString(ret) + "\"))"
+	}
+	return "ErrorObject { code: ServerError(" + strconv.Itoa(int(e.Code)) + "), message: " + rustDebugString(e.Message) + ", data: " + data + " }"
+}

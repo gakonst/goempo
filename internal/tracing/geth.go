@@ -325,6 +325,8 @@ func StructJSON(rec *Recorder, info TxInfo, opts StepOptions) []byte {
 	return w.buf
 }
 
+func TxOutput(rec *Recorder, info TxInfo) []byte { return returnValue(rec, info) }
+
 func returnValue(rec *Recorder, info TxInfo) []byte {
 	if info.Output != nil {
 		return info.Output

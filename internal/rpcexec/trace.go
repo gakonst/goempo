@@ -287,21 +287,6 @@ func (x *Executor) TraceBlock(number uint64, opts *rpc.TraceOptions) ([]json.Raw
 	return out, nil
 }
 
-func (x *Executor) TraceBlockParity(number uint64) ([]json.RawMessage, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	run, err := x.replayBlock(number, tracing.StepOptions{})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]json.RawMessage, len(run.data.Block.Transactions))
-	for u, i := range run.user {
-		loc := tracing.Locator{BlockHash: run.data.Hash, BlockNumber: number, TxHash: run.data.TxHash(i), TxIndex: i}
-		out[i] = tracing.ParityJSON(run.trace(u).Recorder, run.infos[i], loc)
-	}
-	return out, nil
-}
-
 func sortedKeys(m map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

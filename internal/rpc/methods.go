@@ -110,14 +110,17 @@ func methodTable() map[string]handler {
 		"txpool_inspect":                             constant([]byte(`{"pending":{},"queued":{}}`)),
 		"txpool_contentFrom":                         txpoolContentFrom,
 		"eth_simulateV1":                             ethSimulateV1,
-		"eth_callMany":                               notServed("eth_callMany"),
+		"eth_callMany":                               ethCallMany,
 		"consensus_getLatest":                        consensusGetLatest,
 		"consensus_getFinalization":                  notServed("consensus_getFinalization"),
 		"trace_block":                                traceBlockParity,
-		"trace_transaction":                          notServed("trace_transaction"),
-		"trace_filter":                               notServed("trace_filter"),
-		"trace_replayBlockTransactions":              notServed("trace_replayBlockTransactions"),
-		"trace_call":                                 notServed("trace_call"),
+		"trace_transaction":                          traceTransaction,
+		"trace_filter":                               traceFilter,
+		"trace_replayBlockTransactions":              traceReplayBlockTransactions,
+		"trace_replayTransaction":                    traceReplayTransaction,
+		"trace_get":                                  traceGet,
+		"trace_call":                                 traceCallParity,
+		"trace_callMany":                             traceCallMany,
 	}
 }
 

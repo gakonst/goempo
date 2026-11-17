@@ -13,6 +13,19 @@ import (
 
 var errNoPipeline = errors.New("rpcexec: no transaction pipeline for this state")
 
+const (
+	legacyChainMultiplier = 2
+	legacyChainOffset     = 35
+)
+
+var simulatedLegacyScalar = [32]byte{31: 1}
+
+var simulatedTempoSignature = types.TempoSignature{Inner: types.PrimitiveSignature{
+	Kind: types.SignatureSecp256k1,
+	R:    [32]byte{0x84, 0x0c, 0xfc, 0x57, 0x28, 0x45, 0xf5, 0x78, 0x6e, 0x70, 0x29, 0x84, 0xc2, 0xa5, 0x82, 0x52, 0x8c, 0xad, 0x4b, 0x49, 0xb2, 0xa1, 0x0b, 0x9d, 0xb1, 0xbe, 0x7f, 0xca, 0x90, 0x05, 0x85, 0x65},
+	S:    [32]byte{0x25, 0xe7, 0x10, 0x9c, 0xeb, 0x98, 0x16, 0x8d, 0x95, 0xb0, 0x9b, 0x18, 0xbb, 0xf6, 0xb6, 0x85, 0x13, 0x0e, 0x05, 0x62, 0xf2, 0x33, 0x87, 0x7d, 0x49, 0x2b, 0x94, 0xee, 0xe0, 0xc5, 0xb6, 0xd1},
+}}
+
 type callRun struct {
 	trace   *tracing.TxTrace
 	info    tracing.TxInfo
@@ -80,10 +93,14 @@ func buildTx(req *rpc.CallRequest, shape txShape) types.Transaction {
 		if req.NonceKey != nil {
 			t.NonceKey = *req.NonceKey
 		}
+		t.Signature = simulatedTempoSignature
 		return types.Transaction{Data: t}
 	}
 	if req.GasPrice != nil && len(req.AccessList) == 0 {
-		return types.Transaction{Data: &types.LegacyTx{Nonce: nonce, GasPrice: maxFee, Gas: gas, To: req.To, Value: req.Value, Data: req.Input}}
+		return types.Transaction{Data: &types.LegacyTx{
+			Nonce: nonce, GasPrice: maxFee, Gas: gas, To: req.To, Value: req.Value, Data: req.Input,
+			V: chainID*legacyChainMultiplier + legacyChainOffset, R: simulatedLegacyScalar, S: simulatedLegacyScalar,
+		}}
 	}
 	return types.Transaction{Data: &types.DynamicFeeTx{
 		ChainID:              chainID,
@@ -98,10 +115,18 @@ func buildTx(req *rpc.CallRequest, shape txShape) types.Transaction {
 	}}
 }
 
+type keepState bool
+
+const (
+	discardState  keepState = false
+	keepCallState keepState = true
+)
+
 type callSpec struct {
 	req   *rpc.CallRequest
 	gas   uint64
 	steps tracing.StepOptions
+	keep  keepState
 }
 
 func (x *Executor) applyCall(e *env, spec callSpec) (callRun, error) {
@@ -109,7 +134,11 @@ func (x *Executor) applyCall(e *env, spec callSpec) (callRun, error) {
 	if !ok || x.Blocks == nil || e.header == nil {
 		return callRun{}, errNoPipeline
 	}
-	defer st.RevertToSnapshot(st.Snapshot())
+	release, ok := settleCall(st, spec.keep)
+	if !ok {
+		return callRun{}, errNoPipeline
+	}
+	defer release()
 	req := spec.req
 	from := sender(req)
 	nonce := st.Nonce(from)
@@ -158,4 +187,16 @@ func (x *Executor) execute(e *env, req *rpc.CallRequest, gas uint64) (outcome, e
 		return outcome{}, err
 	}
 	return run.outcome(), nil
+}
+
+func settleCall(st executor.State, keep keepState) (func(), bool) {
+	if !keep {
+		snap := st.Snapshot()
+		return func() { st.RevertToSnapshot(snap) }, true
+	}
+	bs, ok := st.(BlockState)
+	if !ok {
+		return nil, false
+	}
+	return bs.FinalizeTx, true
 }

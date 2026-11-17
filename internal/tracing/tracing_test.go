@@ -182,3 +182,31 @@ func TestAccessList(t *testing.T) {
 	assert.Equal(list[1].Address, callee, "called address")
 	assert.Equal(len(list[1].Keys), 0, "no callee slots")
 }
+
+func TestStateDiff(t *testing.T) {
+	tr := runTraced(t, tracing.StepOptions{}).trace
+	out := decode(t, tracing.StateDiffJSON(tr))
+	c := out[contract.Hex()].(map[string]any)
+	same(c["balance"], "=", "unchanged balance")
+	slot := primitives.Hash{31: 1}
+	change := c["storage"].(map[string]any)[slot.Hex()].(map[string]any)["*"].(map[string]any)
+	same(change["from"], "0x0000000000000000000000000000000000000000000000000000000000000005", "slot before")
+	same(change["to"], "0x000000000000000000000000000000000000000000000000000000000000002a", "slot after")
+	_, touched := out[callee.Hex()]
+	assert.Equal(touched, false, "unchanged accounts omitted")
+}
+
+func TestFlatTraces(t *testing.T) {
+	tr := runTraced(t, tracing.StepOptions{}).trace
+	flats := tracing.FlatTraces(tr.Recorder, tracing.TxInfo{})
+	assert.Equal(len(flats), 2, "root and call")
+	assert.Equal(flats[0].Subtraces, 1, "root subtraces")
+	assert.Equal(flats[1].To, callee, "child target")
+	plain := decode(t, tracing.FlatJSON(tr.Recorder, &flats[1], nil))
+	_, hasBlock := plain["blockHash"]
+	assert.Equal(hasBlock, false, "plain traces have no locator")
+	loc := tracing.Locator{BlockNumber: 9, TxIndex: 2}
+	localized := decode(t, tracing.FlatJSON(tr.Recorder, &flats[1], &loc))
+	same(localized["blockNumber"], "9", "localized block")
+	same(localized["transactionPosition"], "2", "localized index")
+}

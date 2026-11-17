@@ -57,7 +57,9 @@ type Executor interface {
 	Call(block uint64, req *CallRequest, gasCap uint64) (CallResult, error)
 	EstimateGas(block uint64, req *CallRequest, gasCap uint64) (uint64, error)
 	TraceBlock(block uint64, opts *TraceOptions) ([]json.RawMessage, error)
-	TraceBlockParity(block uint64) ([]json.RawMessage, error)
+	ReplayBlock(block uint64, diff DiffMode) ([]*TxReplay, error)
+	TraceCalls(block uint64, reqs []*CallRequest, diff DiffMode) ([]TxReplay, error)
+	CallMany(block uint64, bundles []CallBundle) ([][]CallResult, error)
 	TraceCall(block uint64, req *CallRequest, opts *TraceOptions) (json.RawMessage, error)
 	CreateAccessList(block uint64, req *CallRequest, gasCap uint64) (AccessListResult, error)
 	SimulateV1(block uint64, req *SimulateRequest) ([]SimulatedBlock, error)
@@ -279,7 +281,7 @@ func ethCreateAccessList(s *Server, p *params) ([]byte, error) {
 	failure := ""
 	switch {
 	case res.Failure.Reverted:
-		failure = RevertError(res.Failure.Return).Message
+		failure = RevertDebugString(res.Failure.Return)
 	case res.Failure.Halt != "":
 		failure = res.Failure.Halt
 	}
@@ -603,41 +605,17 @@ func traceBlockParity(s *Server, p *params) ([]byte, error) {
 	if b == nil {
 		return resultNull, nil
 	}
-	var user []json.RawMessage
-	if !systemOnly(b) {
-		if s.exec == nil {
-			return nil, internalError("unimplemented")
-		}
-		user, err = s.exec.TraceBlockParity(b.Number())
-		if err != nil {
-			return nil, executionError(err)
-		}
+	replays, err := s.replayBlock(b, false)
+	if err != nil {
+		return nil, err
 	}
 	return encode(func(w *writer) {
 		w.arrOpen()
-		for i, tx := range b.Block.Transactions {
-			if isSystemTx(tx) {
-				writeParityCall(w, b, i, tx.Data.(*types.LegacyTx))
-				continue
-			}
-			if i < len(user) {
-				writeFlattened(w, user[i])
-			}
+		for i := range b.Block.Transactions {
+			writeLocalizedTx(w, b, i, replays[i])
 		}
 		w.arrClose()
 	}), nil
-}
-
-func writeFlattened(w *writer, arr json.RawMessage) {
-	inner := bytes.TrimSpace(arr)
-	if len(inner) < 2 {
-		return
-	}
-	inner = bytes.TrimSpace(inner[1 : len(inner)-1])
-	if len(inner) == 0 {
-		return
-	}
-	w.raw(inner)
 }
 
 func writeParityCall(w *writer, b *BlockData, i int, d *types.LegacyTx) {

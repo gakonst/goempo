@@ -93,7 +93,9 @@ func RecoverPublicKey(hash primitives.Hash, sig Signature) (PublicKey, error) {
 	if sig.RecoveryID > 1 {
 		return PublicKey{}, ErrInvalidRecoveryID
 	}
-	if !sig.ScalarsValid() {
+	r := scalarFromBytes(&sig.R)
+	s := scalarFromBytes(&sig.S)
+	if !r.valid() || !s.valid() {
 		return PublicKey{}, ErrInvalidSignature
 	}
 	x, ok := feFromBytes(&sig.R)
@@ -105,15 +107,13 @@ func RecoverPublicKey(hash primitives.Hash, sig Signature) (PublicKey, error) {
 	if y.isOdd() != (sig.RecoveryID == 1) {
 		y = y.neg()
 	}
-	r := u256.FromBytes32(sig.R)
-	s := u256.FromBytes32(sig.S)
-	rinv, ok := r.ModInverse(curveOrder)
-	assert.Ok(ok, "secp256k1: r in [1, n) is invertible")
-	z := hashScalar(hash)
-	u1 := curveOrder.Sub(z.MulFull(rinv).Mod(curveOrder)).Mod(curveOrder)
-	u2 := s.MulFull(rinv).Mod(curveOrder)
-	big := affine{x: x, y: y}
-	q := shamir(u1, pointScalar{point: big.toJacobian(), scalar: u2}).toAffine()
+	rinv := r.inv()
+	hb := [32]byte(hash)
+	z := scalarFromBytes(&hb).reduceOnce()
+	u1 := z.mul(rinv).neg()
+	u2 := s.mul(rinv)
+	var wk recoverWork
+	q := wk.ecmult(u1, u2, affine{x: x, y: y}).toAffine()
 	if q.infinity {
 		return PublicKey{}, ErrInvalidPublicKey
 	}

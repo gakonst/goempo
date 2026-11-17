@@ -74,7 +74,7 @@ func (a fe) neg() fe { return fe{}.sub(a) }
 
 func (a fe) double() fe { return a.add(a) }
 
-func (a fe) mul(b fe) fe {
+func (a fe) mulGeneric(b fe) fe {
 	var hi, lo, c, carry uint64
 	var t0, t1, t2, t3, t4, t5, t6, t7 uint64
 	carry = 0
@@ -181,7 +181,14 @@ func (a fe) mul(b fe) fe {
 	t6 = lo
 	carry = hi
 	t7 = carry
-	var c2 uint64
+	return reduceWide(wide{t0, t1, t2, t3, t4, t5, t6, t7})
+}
+
+type wide [8]uint64
+
+func reduceWide(t wide) fe {
+	t0, t1, t2, t3, t4, t5, t6, t7 := t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]
+	var c, c2 uint64
 	h0, l0 := bits.Mul64(t4, reduceC)
 	h1, l1 := bits.Mul64(t5, reduceC)
 	h2, l2 := bits.Mul64(t6, reduceC)
@@ -212,7 +219,44 @@ func (a fe) mul(b fe) fe {
 	return z
 }
 
-func (a fe) sqr() fe { return a.mul(a) }
+func (a fe) sqrGeneric() fe {
+	var c uint64
+	h01, l01 := bits.Mul64(a.l0, a.l1)
+	h02, l02 := bits.Mul64(a.l0, a.l2)
+	h03, l03 := bits.Mul64(a.l0, a.l3)
+	h12, l12 := bits.Mul64(a.l1, a.l2)
+	h13, l13 := bits.Mul64(a.l1, a.l3)
+	h23, l23 := bits.Mul64(a.l2, a.l3)
+	t1 := l01
+	t2, c := bits.Add64(l02, h01, 0)
+	t3, c := bits.Add64(l03, h02, c)
+	t4, _ := bits.Add64(h03, 0, c)
+	t3, c = bits.Add64(t3, l12, 0)
+	t4, c = bits.Add64(t4, h12, c)
+	t5, _ := bits.Add64(h13, 0, c)
+	t4, c = bits.Add64(t4, l13, 0)
+	t5, c = bits.Add64(t5, l23, c)
+	t6, _ := bits.Add64(h23, 0, c)
+	t7 := t6 >> 63
+	t6 = t6<<1 | t5>>63
+	t5 = t5<<1 | t4>>63
+	t4 = t4<<1 | t3>>63
+	t3 = t3<<1 | t2>>63
+	t2 = t2<<1 | t1>>63
+	t1 <<= 1
+	h00, l00 := bits.Mul64(a.l0, a.l0)
+	h11, l11 := bits.Mul64(a.l1, a.l1)
+	h22, l22 := bits.Mul64(a.l2, a.l2)
+	h33, l33 := bits.Mul64(a.l3, a.l3)
+	t1, c = bits.Add64(t1, h00, 0)
+	t2, c = bits.Add64(t2, l11, c)
+	t3, c = bits.Add64(t3, h11, c)
+	t4, c = bits.Add64(t4, l22, c)
+	t5, c = bits.Add64(t5, h22, c)
+	t6, c = bits.Add64(t6, l33, c)
+	t7, _ = bits.Add64(t7, h33, c)
+	return reduceWide(wide{l00, t1, t2, t3, t4, t5, t6, t7})
+}
 
 func (a fe) sqrN(n int) fe {
 	z := a

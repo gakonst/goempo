@@ -33,4 +33,10 @@ func TestApplyCallMatchesMainnetGas(t *testing.T) {
 	out, err = x.ApplyCall(db.State(), &blocks[target], tx, executor.Simulation{Sender: sender, SkipNonceCheck: true})
 	assert.NoError(err, "the discarded call left the nonce untouched")
 	assert.Equal(out.GasUsed, uint64(45_124), "repeatable")
+	st2 := db.State()
+	st2.Discard()
+	out, err = x.ApplyCall(st2, &blocks[target], tx, executor.Simulation{Sender: sender, SkipFeeCharge: true, SkipGasCap: true})
+	assert.NoError(err, "call without fee charge")
+	assert.Equal(out.GasUsed, uint64(45_124), "fee charging is outside EVM gas")
+	assert.Equal(len(out.Logs), 1, "only UserTokenSet, no fee transfer")
 }

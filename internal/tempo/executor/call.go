@@ -12,6 +12,8 @@ type Simulation struct {
 	Sender           Address
 	SkipNonceCheck   bool
 	SkipBalanceCheck bool
+	SkipGasCap       bool
+	SkipFeeCharge    bool
 }
 
 func (x *Executor) ApplyCall(st State, blk *types.Block, tx *types.Transaction, sim Simulation) (TxOutcome, error) {

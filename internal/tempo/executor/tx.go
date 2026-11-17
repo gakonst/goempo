@@ -101,7 +101,7 @@ func (r *txRun) skipBalance() bool {
 }
 
 func (r *txRun) zeroPriceCall() bool {
-	return r.env.Sim != nil && r.view.maxFee.IsZero()
+	return r.env.Sim != nil
 }
 
 func (r *txRun) validate() error {
@@ -112,7 +112,7 @@ func (r *txRun) validate() error {
 			return ErrValue
 		}
 	}
-	if v.gasLimit > rules.TxGasLimitCap() {
+	if v.gasLimit > rules.TxGasLimitCap() && !(r.env.Sim != nil && r.env.Sim.SkipGasCap) {
 		return ErrGasCap
 	}
 	baseFee := r.env.Block.BaseFee
@@ -192,6 +192,9 @@ func (r *txRun) chargeFee() error {
 	precompiles.SetTxOrigin(r.ctx, r.view.sender)
 	if err := r.useAccessKey(); err != nil {
 		return err
+	}
+	if r.env.Sim != nil && r.env.Sim.SkipFeeCharge {
+		r.maxFee = u256.Int{}
 	}
 	if r.maxFee.IsZero() {
 		return nil
@@ -374,6 +377,9 @@ func (r *txRun) settleGas(gasLeft uint64) uint64 {
 }
 
 func (r *txRun) refundFee(gasUsed uint64) error {
+	if r.maxFee.IsZero() {
+		return nil
+	}
 	actual := feeAmount(gasUsed, r.price)
 	if r.maxFee.Lt(actual) {
 		return errors.New("actual fee exceeds upfront fee")

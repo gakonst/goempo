@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"github.com/gakonst/goempo/internal/consensus"
 	"github.com/gakonst/goempo/internal/consensus/wire"
 	"github.com/gakonst/goempo/internal/dkg"
 	"github.com/gakonst/goempo/internal/types"
@@ -17,8 +18,10 @@ type ceremony struct {
 	myLog    *dkg.SignedDealerLog
 	included bool
 	logs     map[PeerKey]dkg.SignedDealerLog
-	cached   *reckoning
+	cached   map[consensus.Digest]reckoning
 }
+
+const outcomesCached = 64
 
 type reckoning struct {
 	value     dkg.Outcome
@@ -40,7 +43,10 @@ func newCeremony(e *Engine, st *epochState) (*ceremony, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &ceremony{e: e, st: st, info: info, acked: map[PeerKey]bool{}, logs: map[PeerKey]dkg.SignedDealerLog{}}
+	c := &ceremony{
+		e: e, st: st, info: info, acked: map[PeerKey]bool{}, logs: map[PeerKey]dkg.SignedDealerLog{},
+		cached: map[consensus.Digest]reckoning{},
+	}
 	if _, ok := info.Players.Index(e.me); ok {
 		if c.player, err = dkg.NewPlayer(info, e.cfg.Key.Private()); err != nil {
 			return nil, err
@@ -114,11 +120,28 @@ func (c *ceremony) distribute() {
 	}
 }
 
-func (c *ceremony) logToInclude() []byte {
+func (c *ceremony) logToInclude(on Branch) []byte {
 	if c.myLog == nil || c.included {
 		return nil
 	}
+	for _, b := range on.Blocks {
+		if l, ok := c.logOf(b); ok && l.Dealer == c.e.me {
+			return nil
+		}
+	}
 	return c.myLog.Encode()
+}
+
+func (c *ceremony) logOf(b *types.Block) (dkg.SignedDealerLog, bool) {
+	extra := b.Header.Inner.ExtraData
+	if len(extra) == 0 || c.e.cfg.Epocher.IsLast(b.Header.Inner.Number) {
+		return dkg.SignedDealerLog{}, false
+	}
+	l, err := dkg.DecodeSignedDealerLog(extra)
+	if err != nil || !c.info.CheckSignedDealerLog(l) {
+		return dkg.SignedDealerLog{}, false
+	}
+	return l, true
 }
 
 func (c *ceremony) receive(from PeerKey, frame []byte) {
@@ -170,13 +193,9 @@ func (c *ceremony) onFinalized(b *types.Block) {
 }
 
 func (c *ceremony) record(b *types.Block) {
-	c.cached = nil
-	extra := b.Header.Inner.ExtraData
-	if len(extra) == 0 || c.e.cfg.Epocher.IsLast(b.Header.Inner.Number) {
-		return
-	}
-	l, err := dkg.DecodeSignedDealerLog(extra)
-	if err != nil || !c.info.CheckSignedDealerLog(l) {
+	clear(c.cached)
+	l, ok := c.logOf(b)
+	if !ok {
 		return
 	}
 	if _, ok := c.logs[l.Dealer]; !ok {
@@ -187,25 +206,40 @@ func (c *ceremony) record(b *types.Block) {
 	}
 }
 
-func (c *ceremony) entries() []dkg.DealerEntry {
-	out := make([]dkg.DealerEntry, 0, len(c.logs))
+func (c *ceremony) entries(on Branch) []dkg.DealerEntry {
+	notarized := map[PeerKey]dkg.SignedDealerLog{}
+	for _, b := range on.Blocks {
+		l, ok := c.logOf(b)
+		if !ok {
+			continue
+		}
+		if _, seen := notarized[l.Dealer]; !seen {
+			notarized[l.Dealer] = l
+		}
+	}
+	out := make([]dkg.DealerEntry, 0, len(c.info.Dealers))
 	for _, d := range c.info.Dealers {
 		if l, ok := c.logs[d]; ok {
+			out = append(out, dkg.DealerEntry{Dealer: d, Log: l.Log})
+			continue
+		}
+		if l, ok := notarized[d]; ok {
 			out = append(out, dkg.DealerEntry{Dealer: d, Log: l.Log})
 		}
 	}
 	return out
 }
 
-func (c *ceremony) outcome() (reckoning, error) {
-	if c.cached != nil {
-		return *c.cached, nil
+func (c *ceremony) outcome(on Branch) (reckoning, error) {
+	key := consensus.Digest(on.Parent.Hash())
+	if r, ok := c.cached[key]; ok {
+		return r, nil
 	}
-	in, err := c.e.cfg.Chain.OutcomeInputs()
+	in, err := c.e.cfg.Chain.OutcomeInputs(on)
 	if err != nil {
 		return reckoning{}, err
 	}
-	entries := c.entries()
+	entries := c.entries(on)
 	r := reckoning{entries: entries}
 	r.value = dkg.Outcome{Epoch: c.st.epoch + 1, Output: c.st.outcome.Output, NextPlayers: in.NextPlayers, NextFullDKG: in.FullDKG}
 	sel, err := c.info.Select(entries)
@@ -220,7 +254,10 @@ func (c *ceremony) outcome() (reckoning, error) {
 		r.value.Output = out
 	}
 	r.encoded = r.value.Encode()
-	c.cached = &r
+	if len(c.cached) >= outcomesCached {
+		clear(c.cached)
+	}
+	c.cached[key] = r
 	return r, nil
 }
 

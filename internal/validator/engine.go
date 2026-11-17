@@ -58,13 +58,23 @@ type OutcomeInputs struct {
 	FullDKG     bool
 }
 
+type Branch struct {
+	Parent *types.Block
+	Blocks []*types.Block
+}
+
+type branchWalk struct {
+	on      Branch
+	verdict consensus.Verdict
+}
+
 type Chain interface {
 	Head() *types.Block
 	BlockByNumber(number uint64) (*types.Block, bool)
-	Build(parent *types.Block, attrs Attributes) (*types.Block, error)
-	Execute(block *types.Block) error
+	Build(on Branch, attrs Attributes) (*types.Block, error)
+	Execute(on Branch, block *types.Block) error
 	Commit(block *types.Block) error
-	OutcomeInputs() (OutcomeInputs, error)
+	OutcomeInputs(on Branch) (OutcomeInputs, error)
 }
 
 type Rules struct {
@@ -518,6 +528,36 @@ func (e *Engine) block(d consensus.Digest) (*types.Block, bool) {
 	return nil, false
 }
 
+func (e *Engine) branch(d consensus.Digest) branchWalk {
+	head := e.cfg.Chain.Head()
+	base := consensus.Digest(head.Hash())
+	var rev []*types.Block
+	cur := d
+	for range pendingWalkMax {
+		if cur == base {
+			if len(rev) == 0 {
+				return branchWalk{on: Branch{Parent: head}, verdict: consensus.Accept}
+			}
+			slices.Reverse(rev)
+			return branchWalk{on: Branch{Parent: rev[len(rev)-1], Blocks: rev}, verdict: consensus.Accept}
+		}
+		b, ok := e.blocks[cur]
+		if !ok {
+			if consensus.Digest(e.cur.boundary.Hash()) == cur {
+				return branchWalk{verdict: consensus.Reject}
+			}
+			e.request(cur)
+			return branchWalk{verdict: consensus.Undecided}
+		}
+		if b.Header.Inner.Number <= head.Header.Inner.Number {
+			return branchWalk{verdict: consensus.Reject}
+		}
+		rev = append(rev, b)
+		cur = consensus.Digest(b.Header.Inner.ParentHash)
+	}
+	return branchWalk{verdict: consensus.Undecided}
+}
+
 func (e *Engine) onFinalized(f consensus.Finalized) {
 	d := f.Proposal.Payload
 	b, ok := e.block(d)
@@ -600,8 +640,10 @@ func (e *Engine) commit(b *types.Block) {
 	st := e.cur
 	n := b.Header.Inner.Number
 	boundary := e.cfg.Epocher.IsLast(n)
+	var r reckoning
 	if boundary {
-		r, err := st.round.outcome()
+		var err error
+		r, err = st.round.outcome(Branch{Parent: e.cfg.Chain.Head()})
 		if err != nil {
 			e.err = err
 			return
@@ -625,7 +667,7 @@ func (e *Engine) commit(b *types.Block) {
 	e.pruneFinals(n)
 	st.round.onFinalized(b)
 	if boundary {
-		e.transition(b)
+		e.transition(b, r)
 	}
 }
 
@@ -637,13 +679,8 @@ func (e *Engine) pruneFinals(n uint64) {
 	}
 }
 
-func (e *Engine) transition(boundary *types.Block) {
+func (e *Engine) transition(boundary *types.Block, r reckoning) {
 	st := e.cur
-	r, err := st.round.outcome()
-	if err != nil {
-		e.err = err
-		return
-	}
 	share, err := st.round.nextShare(r)
 	if err != nil {
 		e.err = err

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gakonst/goempo/internal/consensus"
+	"github.com/gakonst/goempo/internal/consensus/wire"
 	"github.com/gakonst/goempo/internal/dkg"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/validator"
@@ -45,7 +46,11 @@ func (c *memChain) BlockByNumber(n uint64) (*types.Block, bool) {
 	return c.blocks[n], true
 }
 
-func (c *memChain) Build(parent *types.Block, attrs validator.Attributes) (*types.Block, error) {
+func (c *memChain) Build(on validator.Branch, attrs validator.Attributes) (*types.Block, error) {
+	if err := c.linked(on); err != nil {
+		return nil, err
+	}
+	parent := on.Parent
 	ctx := attrs.Consensus
 	h := types.Header{
 		GeneralGasLimit: netGasLimit, TimestampMillisPart: attrs.TimestampMillis % millisPerSec,
@@ -59,23 +64,43 @@ func (c *memChain) Build(parent *types.Block, attrs validator.Attributes) (*type
 	return &types.Block{Header: h, HasWithdrawals: parent.HasWithdrawals}, nil
 }
 
-func (c *memChain) Execute(b *types.Block) error {
+func (c *memChain) linked(on validator.Branch) error {
+	parent := c.Head()
+	for _, b := range on.Blocks {
+		if b.Header.Inner.ParentHash != parent.Hash() {
+			return errNotNext
+		}
+		parent = b
+	}
+	if parent.Hash() != on.Parent.Hash() {
+		return errNotNext
+	}
+	return nil
+}
+
+func (c *memChain) Execute(on validator.Branch, b *types.Block) error {
 	c.execs++
-	if b.Header.Inner.ParentHash != c.Head().Hash() {
+	if err := c.linked(on); err != nil {
+		return err
+	}
+	if b.Header.Inner.ParentHash != on.Parent.Hash() {
 		return errNotNext
 	}
 	return nil
 }
 
 func (c *memChain) Commit(b *types.Block) error {
-	if err := c.Execute(b); err != nil {
+	if err := c.Execute(validator.Branch{Parent: c.Head()}, b); err != nil {
 		return err
 	}
 	c.blocks = append(c.blocks, b)
 	return nil
 }
 
-func (c *memChain) OutcomeInputs() (validator.OutcomeInputs, error) {
+func (c *memChain) OutcomeInputs(on validator.Branch) (validator.OutcomeInputs, error) {
+	if err := c.linked(on); err != nil {
+		return validator.OutcomeInputs{}, err
+	}
 	return validator.OutcomeInputs{NextPlayers: c.players}, nil
 }
 
@@ -103,6 +128,7 @@ type cluster struct {
 	queue   []packet
 	now     consensus.Millis
 	down    map[int]bool
+	drop    func(packet) bool
 }
 
 type genesis struct {
@@ -209,6 +235,9 @@ func (c *cluster) step() {
 	if c.down[p.from] {
 		return
 	}
+	if c.drop != nil && c.drop(p) {
+		return
+	}
 	targets := p.to
 	if targets == nil {
 		targets = c.pubs
@@ -311,4 +340,97 @@ func TestEngineBackfillsAfterDowntime(_ *testing.T) {
 		assert.Equal(b.Hash(), a.Hash(), "backfilled chain matches")
 	}
 	assert.Ok(c.engines[last].Epoch() >= 1, "it crossed the epoch it missed")
+}
+
+func finalizeOf(r consensus.Round) func(packet) bool {
+	return func(p packet) bool {
+		if p.channel == wire.ChannelVotes {
+			v, err := wire.DecodeVote(p.msg)
+			return err == nil && v.Epoch == r.Epoch && v.Vote.Kind == consensus.KindFinalize && v.Vote.Proposal.Round.View == r.View
+		}
+		if p.channel == wire.ChannelCertificates {
+			ce, err := wire.DecodeCertificate(p.msg)
+			return err == nil && ce.Epoch == r.Epoch && ce.Certified.Kind == consensus.KindFinalize && ce.Certified.Proposal.Round.View == r.View
+		}
+		return false
+	}
+}
+
+func TestEngineBuildsOnNotarizedUnfinalizedParent(_ *testing.T) {
+	const stuckView = 5
+	c := newCluster()
+	c.drop = finalizeOf(consensus.Round{Epoch: 0, View: stuckView})
+	c.runUntil(c.allAt(stuckView + 5))
+	c.drop = finalizeOf(consensus.Round{Epoch: 1, View: stuckView})
+	c.runUntil(c.allAt(netEpochLength + stuckView + 5))
+	for i := range c.engines {
+		for h := range uint64(netEpochLength + stuckView + 6) {
+			a, _ := c.chains[0].BlockByNumber(h)
+			b, _ := c.chains[i].BlockByNumber(h)
+			assert.Equal(b.Hash(), a.Hash(), "every validator commits the same chain")
+		}
+	}
+	assert.Ok(c.engines[0].Epoch() >= 1, "the epoch turned while a notarized block waited for finality")
+}
+
+type heightDrop struct {
+	heights map[consensus.Digest]uint64
+	from    uint64
+	to      uint64
+}
+
+func (h *heightDrop) drop(p packet) bool {
+	switch p.channel {
+	case wire.ChannelBroadcast:
+		raw, err := wire.DecodeBlock(p.msg)
+		if err != nil {
+			return false
+		}
+		b, err := types.DecodeBlock(raw)
+		if err == nil {
+			h.heights[consensus.Digest(b.Hash())] = b.Header.Inner.Number
+		}
+		return false
+	case wire.ChannelVotes:
+		v, err := wire.DecodeVote(p.msg)
+		return err == nil && v.Vote.Kind == consensus.KindFinalize && h.hit(v.Vote.Proposal.Payload)
+	case wire.ChannelCertificates:
+		ce, err := wire.DecodeCertificate(p.msg)
+		return err == nil && ce.Certified.Kind == consensus.KindFinalize && h.hit(ce.Certified.Proposal.Payload)
+	default:
+		return false
+	}
+}
+
+func (h *heightDrop) hit(d consensus.Digest) bool {
+	n, ok := h.heights[d]
+	return ok && n >= h.from && n <= h.to
+}
+
+func TestEngineConcludesDKGOnNotarizedBranch(_ *testing.T) {
+	c := newCluster()
+	h := &heightDrop{heights: map[consensus.Digest]uint64{}, from: netEpochLength/2 + 1, to: netEpochLength - 2}
+	c.drop = h.drop
+	c.runUntil(func() bool { return c.height(0) > h.to })
+	assert.Equal(c.height(0), uint64(netEpochLength-1), "the logs' blocks were finalized only with the boundary")
+	c.runUntil(c.allAt(netEpochLength + 2))
+	b, _ := c.chains[0].BlockByNumber(netEpochLength - 1)
+	o, err := dkg.DecodeOutcome(b.Header.Inner.ExtraData)
+	assert.NoError(err, "boundary outcome")
+	assert.Equal(o.Epoch, uint64(1), "outcome epoch")
+	logs := 0
+	for n := h.from; n <= h.to; n++ {
+		blk, _ := c.chains[0].BlockByNumber(n)
+		if len(blk.Header.Inner.ExtraData) > 0 {
+			logs++
+		}
+	}
+	assert.Equal(logs, netValidators, "every dealer log landed in a block that was only notarized")
+	assert.Equal(len(o.Output.Dealers), netValidators-1, "the boundary outcome selected the required logs from notarized blocks")
+	for i := range c.engines {
+		assert.Equal(c.engines[i].Epoch(), uint64(1), "every validator turned the epoch")
+		got, _ := c.chains[i].BlockByNumber(netEpochLength + 2)
+		want, _ := c.chains[0].BlockByNumber(netEpochLength + 2)
+		assert.Equal(got.Hash(), want.Hash(), "same chain")
+	}
 }

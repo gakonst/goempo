@@ -24,10 +24,12 @@ func (a *app) Propose(ctx consensus.ProposeContext) (consensus.Digest, bool) {
 	if parent.Header.Inner.Number == a.last() {
 		return ctx.ParentDigest, true
 	}
-	if parent.Hash() != e.cfg.Chain.Head().Hash() {
+	w := e.branch(ctx.ParentDigest)
+	if w.verdict != consensus.Accept {
 		return consensus.Digest{}, false
 	}
-	extra, ok := a.extraFor(parent.Header.Inner.Number + 1)
+	on := w.on
+	extra, ok := a.extraFor(on)
 	if !ok {
 		return consensus.Digest{}, false
 	}
@@ -36,7 +38,7 @@ func (a *app) Propose(ctx consensus.ProposeContext) (consensus.Digest, bool) {
 		ExtraData:       extra,
 		Consensus:       types.ConsensusContext{Epoch: a.st.epoch, View: ctx.Round.View, ParentView: ctx.Parent, Proposer: e.proposer(a.st, ctx.Leader)},
 	}
-	b, err := e.cfg.Chain.Build(parent, attrs)
+	b, err := e.cfg.Chain.Build(on, attrs)
 	if err != nil {
 		return consensus.Digest{}, false
 	}
@@ -47,15 +49,15 @@ func (a *app) Propose(ctx consensus.ProposeContext) (consensus.Digest, bool) {
 	return d, true
 }
 
-func (a *app) extraFor(height uint64) ([]byte, bool) {
-	if height == a.last() {
-		r, err := a.st.round.outcome()
+func (a *app) extraFor(on Branch) ([]byte, bool) {
+	if on.Parent.Header.Inner.Number+1 == a.last() {
+		r, err := a.st.round.outcome(on)
 		if err != nil {
 			return nil, false
 		}
 		return r.encoded, true
 	}
-	return a.st.round.logToInclude(), true
+	return a.st.round.logToInclude(on), true
 }
 
 func (a *app) Verify(ctx consensus.ProposeContext, payload consensus.Digest) consensus.Verdict {
@@ -95,17 +97,15 @@ func (a *app) verify(ctx consensus.ProposeContext, payload consensus.Digest) con
 	if v := a.checkHeader(ctx, link{parent: parent, child: b}); v != consensus.Accept {
 		return v
 	}
-	head := e.cfg.Chain.Head()
-	if parent.Hash() != head.Hash() {
-		if parent.Header.Inner.Number <= head.Header.Inner.Number {
-			return consensus.Reject
-		}
-		return consensus.Undecided
+	w := e.branch(ctx.ParentDigest)
+	if w.verdict != consensus.Accept {
+		return w.verdict
 	}
-	if v := a.checkExtra(ctx, b); v != consensus.Accept {
+	on := w.on
+	if v := a.checkExtra(on, b); v != consensus.Accept {
 		return v
 	}
-	if e.cfg.Chain.Execute(b) != nil {
+	if e.cfg.Chain.Execute(on, b) != nil {
 		return consensus.Reject
 	}
 	return consensus.Accept
@@ -140,10 +140,10 @@ func (a *app) checkHeader(ctx consensus.ProposeContext, l link) consensus.Verdic
 	return consensus.Accept
 }
 
-func (a *app) checkExtra(ctx consensus.ProposeContext, b *types.Block) consensus.Verdict {
+func (a *app) checkExtra(on Branch, b *types.Block) consensus.Verdict {
 	extra := b.Header.Inner.ExtraData
 	if b.Header.Inner.Number == a.last() {
-		r, err := a.st.round.outcome()
+		r, err := a.st.round.outcome(on)
 		if err != nil {
 			return consensus.Undecided
 		}

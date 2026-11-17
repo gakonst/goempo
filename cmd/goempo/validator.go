@@ -136,10 +136,10 @@ type chain struct {
 	fee   primitives.Address
 }
 
-func (c *chain) Build(parent *types.Block, attrs validator.Attributes) (*types.Block, error) {
+func (c *chain) Build(on validator.Branch, attrs validator.Attributes) (*types.Block, error) {
 	var out *types.Block
-	err := c.WithHead(func(st *state.State, head *types.Block, getHash func(uint64) primitives.Hash) error {
-		if head.Hash() != parent.Hash() {
+	err := c.WithBranch(on.Blocks, func(st *state.State, parent *types.Block, getHash func(uint64) primitives.Hash) error {
+		if on.Parent.Hash() != parent.Hash() {
 			return node.ErrLocalParent
 		}
 		ctx := attrs.Consensus
@@ -156,8 +156,12 @@ func (c *chain) Build(parent *types.Block, attrs validator.Attributes) (*types.B
 	return out, err
 }
 
-func (c *chain) OutcomeInputs() (validator.OutcomeInputs, error) {
-	cfg, err := c.DkgConfig()
+func (c *chain) Execute(on validator.Branch, b *types.Block) error {
+	return c.ExecuteOn(on.Blocks, b)
+}
+
+func (c *chain) OutcomeInputs(on validator.Branch) (validator.OutcomeInputs, error) {
+	cfg, err := c.DkgConfigOn(on.Blocks)
 	if err != nil {
 		return validator.OutcomeInputs{}, err
 	}
@@ -169,7 +173,7 @@ func (c *chain) OutcomeInputs() (validator.OutcomeInputs, error) {
 		}
 	}
 	epoch := c.Executor().EpochLength
-	head := c.Head().Header.Inner.Number
+	head := on.Parent.Header.Inner.Number
 	next := uint64(0)
 	if epoch > 0 {
 		next = head/epoch + 1

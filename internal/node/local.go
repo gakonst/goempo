@@ -27,15 +27,19 @@ const (
 	localBlockSuffix      = ".block"
 	localBlockBytesMax    = 64 << 20
 	localReadGas          = 1 << 40
+	LocalBranchMax        = 8 * BatchMax
 )
 
 const _ = uint(localBlockBytesMax - archiveBlockBytes)
+
+const _ = uint(LocalBranchMax - hashWindow)
 
 var (
 	ErrLocalGenesis = errors.New("node: stored genesis differs from the genesis file")
 	ErrLocalBlock   = errors.New("node: local block store is missing a block")
 	ErrLocalParent  = errors.New("node: block does not extend the local head")
 	ErrLocalRoot    = errors.New("node: block state root differs from execution")
+	ErrLocalBranch  = errors.New("node: pending branch is longer than the limit")
 )
 
 func GenesisBlock(g *genesis.Genesis) types.Block {
@@ -253,31 +257,101 @@ func (l *Local) run(b *types.Block) (*state.State, error) {
 		return nil, ErrLocalParent
 	}
 	st := l.db.State()
-	res, err := l.exec.Execute(st, executor.Input{Block: b, GetHash: l.getHash, Senders: blockSenders(b)})
-	if err != nil {
+	if err := l.apply(st, b, l.getHash); err != nil {
 		st.Discard()
-		return nil, &BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"}
-	}
-	if e := compareBlock(h, &res); e != nil {
-		st.Discard()
-		return nil, e
+		return nil, err
 	}
 	return st, nil
 }
 
-func (l *Local) Execute(b *types.Block) error {
+func (l *Local) apply(st *state.State, b *types.Block, getHash func(uint64) primitives.Hash) error {
+	h := &b.Header.Inner
+	res, err := l.exec.Execute(st, executor.Input{Block: b, GetHash: getHash, Senders: blockSenders(b)})
+	if err != nil {
+		return &BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"}
+	}
+	if e := compareBlock(h, &res); e != nil {
+		return e
+	}
+	return nil
+}
+
+type branchRun struct {
+	st      *state.State
+	parent  *types.Block
+	getHash func(uint64) primitives.Hash
+}
+
+func (l *Local) branch(pending []*types.Block) (branchRun, error) {
+	if len(pending) > LocalBranchMax {
+		return branchRun{}, ErrLocalBranch
+	}
+	base := l.head.Header.Inner.Number
+	getHash := func(n uint64) primitives.Hash {
+		if n > base && n-base <= uint64(len(pending)) {
+			return pending[n-base-1].Hash()
+		}
+		return l.getHash(n)
+	}
+	st := l.db.State()
+	parent := l.head
+	for _, b := range pending {
+		h := &b.Header.Inner
+		if h.ParentHash != parent.Hash() || h.Number != parent.Header.Inner.Number+1 {
+			st.Discard()
+			return branchRun{}, ErrLocalParent
+		}
+		if err := l.apply(st, b, getHash); err != nil {
+			st.Discard()
+			return branchRun{}, err
+		}
+		root, err := st.PendingRoot()
+		if err != nil {
+			st.Discard()
+			return branchRun{}, err
+		}
+		if root != h.StateRoot {
+			st.Discard()
+			return branchRun{}, ErrLocalRoot
+		}
+		parent = b
+	}
+	return branchRun{st: st, parent: parent, getHash: getHash}, nil
+}
+
+func (l *Local) WithBranch(pending []*types.Block, fn func(st *state.State, parent *types.Block, getHash func(uint64) primitives.Hash) error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	st, err := l.run(b)
+	r, err := l.branch(pending)
 	if err != nil {
 		return err
 	}
-	defer st.Discard()
-	root, err := st.PendingRoot()
+	defer r.st.Discard()
+	return fn(r.st, r.parent, r.getHash)
+}
+
+func (l *Local) Execute(b *types.Block) error { return l.ExecuteOn(nil, b) }
+
+func (l *Local) ExecuteOn(pending []*types.Block, b *types.Block) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	r, err := l.branch(pending)
 	if err != nil {
 		return err
 	}
-	if root != b.Header.Inner.StateRoot {
+	defer r.st.Discard()
+	h := &b.Header.Inner
+	if h.ParentHash != r.parent.Hash() || h.Number != r.parent.Header.Inner.Number+1 {
+		return ErrLocalParent
+	}
+	if err := l.apply(r.st, b, r.getHash); err != nil {
+		return err
+	}
+	root, err := r.st.PendingRoot()
+	if err != nil {
+		return err
+	}
+	if root != h.StateRoot {
 		return ErrLocalRoot
 	}
 	return nil
@@ -311,12 +385,18 @@ func (l *Local) Commit(b *types.Block) error {
 	return nil
 }
 
-func (l *Local) DkgConfig() (precompiles.DkgCeremonyConfig, error) {
+func (l *Local) DkgConfig() (precompiles.DkgCeremonyConfig, error) { return l.DkgConfigOn(nil) }
+
+func (l *Local) DkgConfigOn(pending []*types.Block) (precompiles.DkgCeremonyConfig, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	st := l.db.State()
+	r, err := l.branch(pending)
+	if err != nil {
+		return precompiles.DkgCeremonyConfig{}, err
+	}
+	st := r.st
 	defer st.Discard()
-	h := l.head.Header.Inner
+	h := r.parent.Header.Inner
 	c := precompiles.NewContext(st, hardfork.At(l.exec.ChainID, h.Timestamp), localReadGas)
 	c.Block.Number = h.Number
 	return precompiles.DkgCeremonyConfigV2(c, h.Number)

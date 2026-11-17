@@ -70,7 +70,30 @@ func (r *txRun) resolveFeeToken() (Address, error) {
 	if !token.IsZero() {
 		return token, nil
 	}
-	return precompiles.PathUSDAddress, nil
+	return r.fallbackFeeToken()
+}
+
+var OUSDAddress = Address{
+	0x20, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x6a, 0x37, 0xda, 0x5c, 0x99, 0x68, 0x74, 0xbe,
+}
+
+func (r *txRun) fallbackFeeToken() (Address, error) {
+	limit := feeAmount(r.view.gasLimit, r.view.maxFee)
+	if !r.env.Rules.AtLeast(hardfork.T13) || limit.IsZero() {
+		return precompiles.PathUSDAddress, nil
+	}
+	candidates := [...]Address{precompiles.PathUSDAddress, OUSDAddress}
+	for i := range candidates {
+		balance, err := precompiles.TIP20(r.ctx, candidates[i]).BalanceOf(r.view.feePayer)
+		if err != nil {
+			return Address{}, err
+		}
+		if !balance.Lt(limit) {
+			return candidates[i], nil
+		}
+	}
+	return Address{}, ErrFeeBalance
 }
 
 func (r *txRun) setUserTokenInference() (Address, bool) {

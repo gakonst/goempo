@@ -113,7 +113,7 @@ func RecoverPublicKey(hash primitives.Hash, sig Signature) (PublicKey, error) {
 	u1 := curveOrder.Sub(z.MulFull(rinv).Mod(curveOrder)).Mod(curveOrder)
 	u2 := s.MulFull(rinv).Mod(curveOrder)
 	big := affine{x: x, y: y}
-	q := shamir(u1, pointScalar{point: big.toJacobian(), scalar: u2}).toAffine()
+	q := shamirGLV(u1, pointScalar{point: big.toJacobian(), scalar: u2}).toAffine()
 	if q.infinity {
 		return PublicKey{}, ErrInvalidPublicKey
 	}

@@ -36,3 +36,4 @@
   - ./internal/primitives
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
+"./internal/crypto/p256": []

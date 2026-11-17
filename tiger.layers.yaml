@@ -124,3 +124,11 @@
   - ./internal/io
   - ./internal/p2p/rlpx
   - ./internal/tempo/hardfork
+"./internal/sync":
+  - ./internal/io
+  - ./internal/crypto/keccak
+  - ./internal/p2p
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/trie
+  - ./internal/types

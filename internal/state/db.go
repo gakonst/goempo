@@ -28,6 +28,7 @@ const (
 	accountNodesDefault     defaultLimit = 1 << 20
 	storageTriesDefault     defaultLimit = 1 << 12
 	storageNodesDefault     defaultLimit = 1 << 14
+	storageTotalDefault     defaultLimit = 1 << 21
 	codeCacheBytesDefault   defaultLimit = 64 << 20
 	trieKeepDepthDefault    defaultLimit = 5
 	storageKeepDepthDefault              = 2
@@ -39,14 +40,15 @@ const _ = uint(math.MaxInt - cacheLimitMax)
 type defaultLimit int
 
 type Options struct {
-	MemtableBytes  int
-	CacheAccounts  int
-	CacheSlots     int
-	AccountNodes   int
-	StorageTries   int
-	StorageNodes   int
-	CodeCacheBytes int
-	TrieKeepDepth  int
+	MemtableBytes     int
+	CacheAccounts     int
+	CacheSlots        int
+	AccountNodes      int
+	StorageTries      int
+	StorageNodes      int
+	StorageNodesTotal int
+	CodeCacheBytes    int
+	TrieKeepDepth     int
 }
 
 func (o Options) withDefaults() Options {
@@ -55,6 +57,7 @@ func (o Options) withDefaults() Options {
 	o.AccountNodes = clampOption(o.AccountNodes, accountNodesDefault)
 	o.StorageTries = clampOption(o.StorageTries, storageTriesDefault)
 	o.StorageNodes = clampOption(o.StorageNodes, storageNodesDefault)
+	o.StorageNodesTotal = clampOption(o.StorageNodesTotal, storageTotalDefault)
 	o.CodeCacheBytes = clampOption(o.CodeCacheBytes, codeCacheBytesDefault)
 	o.TrieKeepDepth = clampOption(o.TrieKeepDepth, trieKeepDepthDefault)
 	return o
@@ -80,6 +83,7 @@ type DB struct {
 	head         Head
 	accounts     *trie.Trie
 	storageTries map[Address]*trie.Trie
+	storageNodes int
 	codes        map[Hash][]byte
 	codeBytes    int
 	state        *State
@@ -156,8 +160,7 @@ func (s *State) loadGenesisAccount(a *genesis.Account) {
 	o.codeLoaded = true
 	o.codeDirty = true
 	for _, slot := range a.Storage {
-		o.committed[slot.Key] = u256.FromBytes32(slot.Value)
-		o.changed[slot.Key] = struct{}{}
+		o.setChanged(slot.Key, u256.FromBytes32(slot.Value))
 	}
 	s.blockDirty[a.Address] = struct{}{}
 }

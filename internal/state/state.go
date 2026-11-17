@@ -46,14 +46,46 @@ type object struct {
 }
 
 func newObject(addr Address, b base) *object {
-	return &object{
-		addr:      addr,
-		codeHash:  emptyCodeHash,
-		base:      b,
-		committed: make(map[Hash]u256.Int),
-		dirty:     make(map[Hash]u256.Int),
-		changed:   make(map[Hash]struct{}),
+	return &object{addr: addr, codeHash: emptyCodeHash, base: b}
+}
+
+func (o *object) setCommitted(key Hash, v u256.Int) {
+	if o.committed == nil {
+		o.committed = make(map[Hash]u256.Int)
 	}
+	o.committed[key] = v
+}
+
+func (o *object) setChanged(key Hash, v u256.Int) {
+	o.setCommitted(key, v)
+	if o.changed == nil {
+		o.changed = make(map[Hash]struct{})
+	}
+	o.changed[key] = struct{}{}
+}
+
+func (o *object) foldDirty() {
+	if len(o.dirty) == 0 {
+		return
+	}
+	if o.committed == nil {
+		o.committed = make(map[Hash]u256.Int, len(o.dirty))
+	}
+	if o.changed == nil {
+		o.changed = make(map[Hash]struct{}, len(o.dirty))
+	}
+	for k, v := range o.dirty {
+		o.committed[k] = v
+		o.changed[k] = struct{}{}
+	}
+	clear(o.dirty)
+}
+
+func (o *object) setDirty(key Hash, v u256.Int) {
+	if o.dirty == nil {
+		o.dirty = make(map[Hash]u256.Int)
+	}
+	o.dirty[key] = v
 }
 
 func (o *object) empty() bool {
@@ -307,7 +339,7 @@ func (s *State) committedValue(o *object, key Hash) u256.Int {
 		s.fail(err)
 		return u256.Zero()
 	}
-	o.committed[key] = v
+	o.setCommitted(key, v)
 	s.cachedSlots++
 	return v
 }
@@ -334,7 +366,7 @@ func (s *State) OriginalStorage(addr Address, key Hash) u256.Int {
 func (s *State) SetStorage(addr Address, key Hash, value u256.Int) {
 	o := s.account(addr)
 	prev, had := o.dirty[key]
-	o.dirty[key] = value
+	o.setDirty(key, value)
 	s.record(entry{kind: entryStorage, obj: o, slot: slotKey{addr: addr, key: key}, value: prev, had: had})
 	if !o.inTx {
 		o.inTx = true
@@ -456,11 +488,7 @@ func (s *State) FinalizeTx() {
 		if s.accounts[o.addr] != o {
 			continue
 		}
-		for k, v := range o.dirty {
-			o.committed[k] = v
-			o.changed[k] = struct{}{}
-		}
-		clear(o.dirty)
+		o.foldDirty()
 	}
 	s.resetTx()
 }

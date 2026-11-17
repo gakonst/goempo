@@ -70,7 +70,6 @@ func BenchmarkCommitBlock(b *testing.B) {
 		_, err := st.Commit(number)
 		must(b, err)
 	}
-	b.ReportMetric(float64(db.Store().Stats().BytesWritten)/float64(b.N), "storeB/block")
 	must(b, db.Close())
 }
 
@@ -99,6 +98,44 @@ func BenchmarkColdAccountRead(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		st.Balance(benchAddr(rng.IntN(benchAccounts)))
 		st.Discard()
+	}
+	must(b, db.Close())
+}
+
+func BenchmarkCommitEmptyBlock(b *testing.B) {
+	fs := goio.NewMemFS()
+	populate(b, fs)
+	db := openDB(b, fs, state.Options{})
+	st := db.State()
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		_, err := st.Commit(uint64(n) + 2)
+		must(b, err)
+	}
+	must(b, db.Close())
+}
+
+func BenchmarkCommitSmallBlock(b *testing.B) {
+	fs := goio.NewMemFS()
+	populate(b, fs)
+	db := openDB(b, fs, state.Options{})
+	st := db.State()
+	rng := rand.New(rand.NewPCG(7, 8))
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		for i := 0; i < 3; i++ {
+			a := benchAddr(rng.IntN(benchAccounts))
+			st.AddBalance(a, u256.FromUint64(1))
+			st.SetNonce(a, st.Nonce(a)+1)
+		}
+		for i := 0; i < 10; i++ {
+			a := benchAddr(rng.IntN(benchContracts / 50))
+			k := benchSlot(rng.IntN(benchSlots * 2))
+			st.SetStorage(a, k, st.Storage(a, k).Add(u256.FromUint64(1)))
+		}
+		st.FinalizeTx()
+		_, err := st.Commit(uint64(n) + 2)
+		must(b, err)
 	}
 	must(b, db.Close())
 }

@@ -61,7 +61,10 @@ func (s *State) trimCaches() {
 		db.accounts.Evict(db.opts.TrieKeepDepth)
 	}
 	if len(db.storageTries) > db.opts.StorageTries {
-		clear(db.storageTries)
+		db.dropStorageTries()
+	}
+	if db.storageNodes > db.opts.StorageNodesTotal {
+		db.shrinkStorageTries()
 	}
 	if len(s.accounts) > db.opts.CacheAccounts {
 		clear(s.accounts)
@@ -77,7 +80,7 @@ func (db *DB) commitObject(o *object, b *storage.Batch) (Hash, error) {
 	assert.Ok(o != nil, "state commits an account it never loaded")
 	hashed := db.hasher.Hash(o.addr[:])
 	if o.wiped {
-		delete(db.storageTries, o.addr)
+		db.forgetStorageTrie(o.addr)
 		if err := db.wipeSlots(o, b); err != nil {
 			return Hash{}, err
 		}
@@ -128,10 +131,42 @@ func (db *DB) wipeSlots(o *object, b *storage.Batch) error {
 	if o.base.storageRoot == emptyRoot {
 		return nil
 	}
-	return db.store.Iterate(slotPrefix(o.addr), func(e storage.Entry) error {
+	del := func(e storage.Entry) error {
 		b.Delete(e.Key)
 		return nil
-	})
+	}
+	if err := db.store.Iterate(slotPrefix(o.addr), del); err != nil {
+		return err
+	}
+	return db.store.Iterate(storageNodePrefix(o.addr), del)
+}
+
+func (db *DB) forgetStorageTrie(addr Address) {
+	t, ok := db.storageTries[addr]
+	if !ok {
+		return
+	}
+	db.storageNodes -= t.Nodes()
+	assert.Ok(db.storageNodes >= 0, "storage trie node count went negative")
+	delete(db.storageTries, addr)
+}
+
+func (db *DB) dropStorageTries() {
+	clear(db.storageTries)
+	db.storageNodes = 0
+}
+
+func (db *DB) shrinkStorageTries() {
+	total := 0
+	for _, addr := range sortedAddresses(db.storageTries) {
+		t := db.storageTries[addr]
+		t.Evict(storageKeepDepthDefault)
+		total += t.Nodes()
+	}
+	db.storageNodes = total
+	if total > db.opts.StorageNodesTotal/2 {
+		db.dropStorageTries()
+	}
 }
 
 func (db *DB) storageTrie(o *object, root Hash) *trie.Trie {
@@ -141,6 +176,7 @@ func (db *DB) storageTrie(o *object, root Hash) *trie.Trie {
 	}
 	t := trie.Open(root, nodeReader{store: db.store, prefix: storageNodePrefix(o.addr)})
 	db.storageTries[o.addr] = t
+	db.storageNodes += t.Nodes()
 	return t
 }
 
@@ -153,6 +189,7 @@ func (db *DB) commitStorage(o *object, b *storage.Batch) (Hash, error) {
 		return baseRoot, nil
 	}
 	t := db.storageTrie(o, baseRoot)
+	before := t.Nodes()
 	keys := sortedHashes(o.changed)
 	for _, k := range keys {
 		if err := db.commitSlot(slotWrite{t: t, o: o, key: k}, b); err != nil {
@@ -163,6 +200,7 @@ func (db *DB) commitStorage(o *object, b *storage.Batch) (Hash, error) {
 	if t.Nodes() > db.opts.StorageNodes {
 		t.Evict(storageKeepDepthDefault)
 	}
+	db.storageNodes += t.Nodes() - before
 	return root, nil
 }
 
@@ -187,7 +225,7 @@ func (db *DB) commitSlot(w slotWrite, b *storage.Batch) error {
 	return w.t.Set(hk[:], db.enc.Encoded())
 }
 
-func sortedAddresses(m map[Address]struct{}) []Address {
+func sortedAddresses[V any](m map[Address]V) []Address {
 	keys := make([]Address, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

@@ -94,7 +94,7 @@ func (s *State) undo(e *entry) {
 
 func (s *State) undoStorage(e *entry) {
 	if e.had {
-		e.obj.dirty[e.slot.key] = e.value
+		e.obj.setDirty(e.slot.key, e.value)
 		return
 	}
 	delete(e.obj.dirty, e.slot.key)

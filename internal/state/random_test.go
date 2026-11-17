@@ -290,14 +290,15 @@ func TestRandomBlocksMatchRebuiltTrie(t *testing.T) {
 
 func TestRandomBlocksWithTinyCaches(t *testing.T) {
 	opts := state.Options{
-		MemtableBytes:  4 << 10,
-		CacheAccounts:  4,
-		CacheSlots:     8,
-		AccountNodes:   4,
-		StorageTries:   2,
-		StorageNodes:   2,
-		CodeCacheBytes: 4,
-		TrieKeepDepth:  1,
+		MemtableBytes:     4 << 10,
+		CacheAccounts:     4,
+		CacheSlots:        8,
+		AccountNodes:      4,
+		StorageTries:      2,
+		StorageNodes:      2,
+		StorageNodesTotal: 3,
+		CodeCacheBytes:    4,
+		TrieKeepDepth:     1,
 	}
 	for seed := uint64(100); seed <= 120; seed++ {
 		runFuzz(t, seed, opts, 40)

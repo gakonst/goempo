@@ -145,8 +145,8 @@ func (c *Certifier) fetch(from uint64, count int) ([][]byte, error) {
 		return nil, ErrCertifyBatch
 	}
 	out := make([][]byte, 0, count)
-	for i := 0; i < count; i += UpstreamBatchMax {
-		part, err := c.src.Finalizations(from+uint64(i), min(UpstreamBatchMax, count-i))
+	for i := 0; i < count; i += UpstreamParallel * UpstreamBatchMax {
+		part, err := c.src.Finalizations(from+uint64(i), min(UpstreamParallel*UpstreamBatchMax, count-i))
 		if err != nil {
 			return nil, err
 		}

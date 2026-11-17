@@ -14,6 +14,7 @@ import (
 type servePaths struct {
 	blocks      string
 	chunks      string
+	datadir     string
 	proofWindow uint64
 }
 
@@ -24,10 +25,12 @@ func runServe(args []string) int {
 	chunks := fs.String("chunks", defaultChunkDir(), "raw block chunks for replay (fetch-range)")
 	to := fs.Uint64("state", 0, "replay state up to this block and serve state methods there")
 	window := fs.Uint64("proof-window", 0, "blocks behind the head that eth_getProof serves (0: the reference's 5000)")
+	datadir := fs.String("datadir", "", "start from the replay state kept here (replay -datadir) instead of genesis; the served state lives in memory")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	srv, err := buildServer(servePaths{blocks: *blocks, chunks: *chunks, proofWindow: *window}, min(*to, diffBlocksMax))
+	paths := servePaths{blocks: *blocks, chunks: *chunks, datadir: *datadir, proofWindow: *window}
+	srv, err := buildServer(paths, min(*to, replayBlocksMax))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		return 1
@@ -47,15 +50,16 @@ func runServe(args []string) int {
 }
 
 func buildServer(paths servePaths, to uint64) (*rpc.Server, error) {
+	r, err := newReplayerStore(paths.chunks, storeConfig{datadir: paths.datadir})
+	if err != nil {
+		return nil, err
+	}
+	to = max(min(to, r.head+diffBlocksMax, replayBlocksMax), r.head)
 	chain := rpc.NewMemChain()
 	if err := loadFetchedBlocks(chain, paths.blocks); err != nil {
 		return nil, err
 	}
-	if err := loadChunkBlocks(chain, paths.chunks, to); err != nil {
-		return nil, err
-	}
-	r, err := newReplayer(paths.chunks)
-	if err != nil {
+	if err := loadChunkBlocks(chain, paths.chunks, chunkSpan{start: r.head, to: to}); err != nil {
 		return nil, err
 	}
 	view := newChunkChain(chain, paths.chunks)

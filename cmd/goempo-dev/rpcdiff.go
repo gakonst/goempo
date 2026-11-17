@@ -302,7 +302,7 @@ func rpcDiff(paths diffPaths) (*r5Result, error) {
 		}
 	}
 	stateTo = min(stateTo, diffBlocksMax)
-	if err := loadChunkBlocks(chain, chunkDir, stateTo); err != nil {
+	if err := loadChunkBlocks(chain, chunkDir, chunkSpan{to: stateTo}); err != nil {
 		return nil, err
 	}
 	if err := loadAuxBlocks(chain, entries); err != nil {
@@ -402,9 +402,11 @@ func loadFetchedBlocks(chain *rpc.MemChain, dir string) error {
 	return nil
 }
 
-func loadChunkBlocks(chain *rpc.MemChain, dir string, to uint64) error {
-	for c := range to/chunkBlocks + 1 {
-		start := c * chunkBlocks
+func loadChunkBlocks(chain *rpc.MemChain, dir string, span chunkSpan) error {
+	first := span.start / chunkBlocks
+	count := min(span.to/chunkBlocks-first+1, chunksMax)
+	for c := range count {
+		start := (first + c) * chunkBlocks
 		raws, err := readChunk(dir, start)
 		if err != nil {
 			return err

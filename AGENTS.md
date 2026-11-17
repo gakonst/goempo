@@ -8,7 +8,7 @@ GOAL.md is the target, LOOP.md the procedure, FRONTIER.md where we are.
 - **Assertions on in production**, through `github.com/kapetan-io/tiger/assert` (tiger knows it by that path). No naked `panic`. Every closed switch ends in `assert.Unreachable`.
 - **Determinism.** Code under `internal/` that consensus, storage or execution runs never reads the clock, randomness, files or the network directly: it takes them through the interfaces in `internal/io`. `tiger.layers.yaml` enforces this: `os`, `net`, `math/rand` and `crypto/rand` appear only in `cmd/` and `internal/io/...` entries.
 - **Bounded.** Every loop has a bound, every queue a capacity, every goroutine an owner that waits for it. Allocate at startup where you can.
-- **No outside code for the node's logic.** No go-ethereum, reth, revm, holiman/uint256 or other EVM libraries. Allowed modules: the standard library, `golang.org/x/crypto`, `golang.org/x/sys`, `github.com/kapetan-io/tiger`. Anything else needs an entry in docs/DEVIATIONS.md with a reason, and a layer entry.
+- **No outside code for the node's logic.** No go-ethereum, reth, revm, holiman/uint256 or other EVM libraries. Allowed modules: the standard library, `golang.org/x/crypto`, `golang.org/x/sys`, `github.com/kapetan-io/tiger`, and in tests only `go.uber.org/goleak` (tiger TS-C03 asks for it wherever a package starts goroutines). Anything else needs an entry in docs/DEVIATIONS.md with a reason, and a layer entry.
 - **Differential.** A result that the reference can produce is tested against the reference: recorded RPC answers, traces, test vectors (ethereum/tests, execution-spec-tests). A fixture records where it came from.
 - **Record deviations** from the reference in docs/DEVIATIONS.md, numbered, never renumbered.
 

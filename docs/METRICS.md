@@ -92,6 +92,19 @@ goempo 5faaace (before this round's speedups), medians of 5 (min-max):
 
 Rust's stage medians, busy: Headers 2.0 s, Bodies 1.9, SenderRecovery 3.8, Execution 11.4, MerkleExecute 2.6, TransactionLookup 0.6, IndexStorageHistory 4.7; recent: Headers 1.8, Execution 6.3, MerkleExecute 1.6, IndexStorageHistory 3.0, IndexAccountHistory 2.9. So goempo wins wall time where blocks are light (early: 9.4x; recent: 2.4x, and exec alone 1.2x), and loses on transaction-heavy blocks (busy: 2.0x slower wall, 4.3x slower than Rust's execution plus one Merkle pass). Part of the busy gap is the work split: goempo computes the state root after each of the 20,000 blocks (state commit was 15% of the busy profile), Rust once for the range; the rest is sender recovery in pure Go (secp256k1 recovery was 52% of goempo's busy CPU) and execution.
 
+After this round's speedups, goempo a01c695 (same harness, same cores, 5 interleaved rounds; every goempo run exited 0 at the target height with every block's roots checked):
+
+| range | node | wall s | exec s | CPU s | peak RSS MB | blocks/s (exec) | Mgas/s (exec) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| early | goempo | 3.77 (3.65-4.10) | 3.75 | 9.7 | 149 | 266k | 36.0 |
+| early | Rust | 34.81 (34.32-35.82) | 11.38 | 39.4 | 6,891 | 88k | 11.9 |
+| busy | goempo | 47.19 (45.64-48.82) | 45.97 | 96.3 | 1,907 | 435 | 685 |
+| busy | Rust | 30.03 (28.51-32.00) | 13.77 | 55.3 | 3,179 | 1,453 | 2,288 |
+| recent | goempo | 6.46 (6.28-6.83) | 6.18 | 9.0 | 476 | 6,643 | 626 |
+| recent | Rust | 16.11 (15.09-16.40) | 7.45 | 15.3 | 4,869 | 5,513 | 520 |
+
+goempo against Rust, wall: 9.2x faster on early and 2.5x faster on recent (1.2x on exec alone), 1.57x slower on busy (it was 1.96x slower at 5faaace). On every range goempo uses less CPU and less memory: it peaks at 0.4x to 0.1x Rust's RSS. The busy-range gains (60.6 s to 47.2 s) came from 1adfd56 (execute each block as soon as it is decoded), efd955d (cached mapping-slot hashes), 425c3d7 and a01c695 (secp256k1 recovery 117 to 75 us). The recent-range gains, from 19.9 s to 6.2 s exec on a 4-core dev host, came from d88983d, ad93652 and dca9c3e. Commands are exactly as above, with `-goempo ./goempo-dev` built at a01c695; the raw results are run-exec.py JSON lines on the build machine.
+
 RPC, both nodes serving height 49,449,999 from their datadirs on the same 8 threads (`taskset -c 0-3,16-19`; Rust `tempo node` with networking off and `--follow` pointed at nothing; goempo `goempo-dev serve -datadir`), scripts/bench/rpc-load.py from 8 other threads, 3 interleaved rounds, a corpus of 400 requests per method over blocks 49,449,000..49,449,999 (eth_call is TIP-20 balanceOf at a random recent block; eth_getLogs over one block). Answers compared first (rpc-load.py diff). Medians, req/s and p50/p99 ms:
 
 | method | conc | goempo req/s | Rust req/s | goempo/Rust | goempo p50/p99 | Rust p50/p99 |

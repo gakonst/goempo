@@ -11,7 +11,7 @@ In commands below, <private-mainnet-rpc> is a private mainnet RPC node used for 
 | R4 Follow | executes every block at the live mainnet tip (gas, receipts root, bloom, state root) with finalization certificates verified, JSON-RPC over the live state (cmd/goempo from climber's genesis-replayed datadir) | 67d1f54 | 2026-11-17 |
 | R5 RPC | 111/111 methods, 3378/3378 cases (100%); 121/121 reference methods served | ab9f4ae | 2026-11-17 |
 | R6 Validator | simplex+DKG reshare in local sim (4-7 nodes, faults), certificates accepted by consensus.Chain | 625567f | 2026-11-17 |
-| R7 Speed | 59.0k blocks/s, 30.3 Mgas/s on 1..4,165,926 (32-core build machine, 4 pinned cores; 1.9x vs 18796f8); 5.3-5.7k blocks/s, 253-267 Mgas/s on 23.5M..24.3M (4-core dev host) | c9f76cf | 2026-11-17 |
+| R7 Speed | 59.0k blocks/s, 30.3 Mgas/s on 1..4,165,926 (32-core build machine, 4 pinned cores; 1.9x vs 18796f8); 5.3-5.7k blocks/s, 253-267 Mgas/s on 23.5M..24.3M (4-core dev host); vs Rust tempo 1.18.4 on the same 8 pinned threads (a01c695): early 1..1M 9.2x faster wall, recent 49.41M..49.45M 2.5x faster, busy 9.89M..9.91M 1.57x slower (47.2 s vs 30.0 s); RPC single-client 1.1-2.0x faster, 16-64 clients tie or trail | a01c695 | 2026-11-17 |
 
 R2 passes (d1c1553, 2026-11-17): `go run ./cmd/goempo-dev genesis` computes the mainnet block 0 state root 0x83408974323f63ab969b23f0fe1dba30d7ee5dc5c524a975bae38187eaa2c7f6 from the embedded presto genesis, equal to eth_getBlockByNumber("0x0").stateRoot on https://rpc.tempo.xyz. The testnet (moderato, chain 42431) genesis also matches rpc.moderato.tempo.xyz: 0x3952ff0c60a3f215ab11a3a2c7698126b7911da84faf5cb66bdbcb0c605738c4.
 

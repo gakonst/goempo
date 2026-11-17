@@ -11,6 +11,8 @@ goempo is a Tempo node written in Go. Tempo's reference node is written in Rust 
 
 See [FRONTIER.md](FRONTIER.md) for the current height on each rung of the ladder in [GOAL.md](GOAL.md).
 
+`scripts/metrics.sh` prints the current numbers (code size, tests, each rung's score, replay throughput); [docs/METRICS.md](docs/METRICS.md) explains them. [docs/HOW-IT-WAS-BUILT.md](docs/HOW-IT-WAS-BUILT.md) tells how the agents built goempo and how every result was checked against mainnet.
+
 ## Build and test
 
 ```

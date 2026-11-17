@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis|follow|rpcdiff>")
+		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis|follow|rpcdiff|serve>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -25,6 +25,8 @@ func main() {
 		os.Exit(runFollow(os.Args[2:]))
 	case "replay":
 		os.Exit(runReplay(os.Args[2:]))
+	case "serve":
+		os.Exit(runServe(os.Args[2:]))
 	case "rpcdiff":
 		os.Exit(runRPCDiff(os.Args[2:]))
 	case "score":

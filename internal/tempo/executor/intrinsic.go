@@ -120,6 +120,9 @@ func aaExtraGas(v *txView, rules chain.Rules) uint64 {
 			gas += rules.NewAccountNonceGas()
 		}
 	}
+	if v.aa.KeyAuthorization != nil {
+		gas += keyAuthorizationGas(v.aa.KeyAuthorization, rules)
+	}
 	return gas + nonceGas(v, rules)
 }
 

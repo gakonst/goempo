@@ -94,6 +94,11 @@ const (
 
 func writeBlock(w *writer, b *BlockData, full txDetail) {
 	w.objOpen()
+	writeBlockFields(w, b, full)
+	w.objClose()
+}
+
+func writeBlockFields(w *writer, b *BlockData, full txDetail) {
 	writeHeaderFields(w, &b.Block.Header, b.Hash)
 	w.kQuantity("size", uint64(len(b.Raw)))
 	w.kQuantity("timestampMillis", b.Block.Header.TimestampMillis())
@@ -127,7 +132,6 @@ func writeBlock(w *writer, b *BlockData, full txDetail) {
 		}
 		w.arrClose()
 	}
-	w.objClose()
 }
 
 func effectiveGasPrice(tx types.Transaction, baseFee uint64) u256.Int {

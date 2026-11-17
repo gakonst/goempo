@@ -180,6 +180,7 @@
 "./internal/rpcexec":
   - ./internal/tempo/executor
   - ./internal/tracing
+  - ./internal/trie
   - ./internal/genesis
   - ./internal/io
   - ./internal/state

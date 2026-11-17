@@ -60,6 +60,7 @@ type Executor interface {
 	TraceBlockParity(block uint64) ([]json.RawMessage, error)
 	TraceCall(block uint64, req *CallRequest, opts *TraceOptions) (json.RawMessage, error)
 	CreateAccessList(block uint64, req *CallRequest, gasCap uint64) (AccessListResult, error)
+	SimulateV1(block uint64, req *SimulateRequest) ([]SimulatedBlock, error)
 }
 
 type AccessListResult struct {

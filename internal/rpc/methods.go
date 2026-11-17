@@ -109,7 +109,7 @@ func methodTable() map[string]handler {
 		"txpool_content":                             constant([]byte(`{"pending":{},"queued":{}}`)),
 		"txpool_inspect":                             constant([]byte(`{"pending":{},"queued":{}}`)),
 		"txpool_contentFrom":                         txpoolContentFrom,
-		"eth_simulateV1":                             notServed("eth_simulateV1"),
+		"eth_simulateV1":                             ethSimulateV1,
 		"eth_callMany":                               notServed("eth_callMany"),
 		"consensus_getLatest":                        consensusGetLatest,
 		"consensus_getFinalization":                  notServed("consensus_getFinalization"),

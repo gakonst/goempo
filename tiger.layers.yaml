@@ -117,3 +117,10 @@
   - ./internal/tempo/hardfork
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
+"./internal/p2p":
+  - ./internal/crypto/secp256k1
+  - ./internal/primitives
+  - ./internal/rlp
+  - ./internal/io
+  - ./internal/p2p/rlpx
+  - ./internal/tempo/hardfork

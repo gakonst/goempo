@@ -6,3 +6,4 @@
 {"date":"2026-11-17","rung":"R3","score":"3864","commit":"6ebe692","note":"createToken (agent 5) and CREATE match; first mismatch block 3865: keychain authorizeKey missing"}
 {"date":"2026-11-17","rung":"R3","score":"836358","commit":"752eb25","note":"key authorizations match; first mismatch block 836359 TIP-403 registry ABI"}
 {"date":"2026-11-17","rung":"R3","score":"3209999","commit":"b32dede","note":"all blocks 1..3209999 match (end of local cache); TIP-403 by agent 5"}
+{"date":"2026-11-17","rung":"R3","score":"4165888","commit":"d022c29","note":"first mismatch block 4165889: ValidatorConfig 0xa1b3f4a9 not implemented"}

@@ -1,7 +1,7 @@
 import json, sys, urllib.request
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 L = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18545"
-U = sys.argv[2] if len(sys.argv) > 2 else "http://100.98.157.16:8545"
+U = sys.argv[2] if len(sys.argv) > 2 else "https://rpc.tempo.xyz"
 def call(url, m, p):
     req = urllib.request.Request(url, json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(), {"content-type":"application/json"})
     r = json.load(opener.open(req, timeout=60))

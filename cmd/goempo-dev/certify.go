@@ -28,7 +28,7 @@ const (
 	certifySpanMax     = certifyItemBlocks - 1
 	certifyItemsMax    = certifyBlocksMax/certifyItemBlocks + 2
 	certifyEpochsMax   = certifyWindowItems*certifyItemBlocks/consensus.MainnetEpochLength + 2
-	tailnetRPC         = "http://100.98.157.16:8545"
+	publicRPC          = "https://rpc.tempo.xyz"
 )
 
 const _ = uint(certifyWindowItems - certifyWorkersMax)
@@ -104,7 +104,7 @@ type certifySummary struct {
 func runCertify(args []string) int {
 	var o certifyOptions
 	fs := flag.NewFlagSet("certify", flag.ContinueOnError)
-	fs.StringVar(&o.rpc, "rpc", tailnetRPC, "node answering consensus_getFinalization and debug_getRawBlock")
+	fs.StringVar(&o.rpc, "rpc", publicRPC, "node answering consensus_getFinalization and debug_getRawBlock")
 	fs.StringVar(&o.dir, "dir", defaultChunkDir(), "block chunk cache (blocks not in it are fetched)")
 	fs.Uint64Var(&o.from, "from", 44107200-consensus.MainnetEpochLength, "first block")
 	fs.Uint64Var(&o.to, "to", 44107200+consensus.MainnetEpochLength-1, "last block")

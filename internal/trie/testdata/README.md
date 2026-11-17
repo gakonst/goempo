@@ -1,1 +1,3 @@
 trietest.json, trieanyorder.json, trietest_secureTrie.json, trieanyorder_secureTrie.json, hex_encoded_securetrie_test.json: ethereum/tests develop branch, TrieTests/ (https://github.com/ethereum/tests/tree/develop/TrieTests), fetched 2026-11-17.
+blocks/mainnet_41788340.json: debug_getRawBlock, eth_getBlockByNumber (transactionsRoot, receiptsRoot) and eth_getBlockReceipts (type, status, cumulativeGasUsed, logs; other fields dropped) for mainnet block 41788340 from https://rpc.tempo.xyz, fetched 2026-11-17.
+blocks/moderato_41543965.json: the same for testnet block 41543965 from https://rpc.moderato.tempo.xyz, fetched 2026-11-17.

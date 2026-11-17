@@ -9,3 +9,8 @@
 "./internal/io/...":
   - os
   - crypto/rand
+"./internal/primitives": []
+"./internal/crypto/keccak":
+  - ./internal/primitives
+  - golang.org/x/crypto/sha3
+  - github.com/kapetan-io/tiger/assert

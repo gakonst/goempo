@@ -234,8 +234,8 @@ func (f *follower) Shutdown() error {
 		errs = append(errs, f.transport.Close())
 	}
 	f.serving.Wait()
-	if f.n.Failed() == nil {
-		errs = append(errs, f.n.Flush())
+	if err := f.n.Flush(); err != nil && !errors.Is(err, node.ErrTainted) {
+		errs = append(errs, err)
 	}
 	errs = append(errs, f.n.Close())
 	return errors.Join(errs...)

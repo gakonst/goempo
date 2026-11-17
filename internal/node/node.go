@@ -35,6 +35,7 @@ var (
 	ErrHealed     = errors.New("node: datadir was healed past a mismatch; its state is not trusted")
 	ErrNoState    = errors.New("node: state is kept at the head only")
 	ErrChainLink  = errors.New("node: block does not link to its parent")
+	ErrTainted    = errors.New("node: a mismatching block was committed; refusing to flush")
 )
 
 type BlockError struct {
@@ -93,6 +94,7 @@ type Node struct {
 	headHash primitives.Hash
 	start    uint64
 	failed   error
+	tainted  bool
 	stats    Stats
 }
 
@@ -264,6 +266,9 @@ func (n *Node) Recent() *Recent { return n.recent }
 func (n *Node) Flush() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.tainted {
+		return ErrTainted
+	}
 	return n.db.Flush()
 }
 
@@ -397,9 +402,11 @@ func (n *Node) execute(blk *types.Block, raw []byte) (*rpc.BlockData, error) {
 	}
 	root, err := st.Commit(h.Number)
 	if err != nil {
+		n.tainted = true
 		return nil, &BlockError{Number: h.Number, Field: "commit", Got: err.Error(), Want: "ok"}
 	}
 	if root != h.StateRoot {
+		n.tainted = true
 		return nil, &BlockError{Number: h.Number, Field: "stateRoot", Got: root.String(), Want: h.StateRoot.String()}
 	}
 	data, err := rpc.NewBlockData(blk, raw, res.Receipts)

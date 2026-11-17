@@ -151,6 +151,7 @@ func TestBadReceiptsRootLatches(t *testing.T) {
 	_, err = n.Advance(node.Target{To: 10, Tip: 10})
 	assert.Ok(errors.As(err, &be), "errors.As(err be)")
 	assert.Equal(n.Failed(), err, "err n.Failed()")
+	assert.NoError(n.Flush(), "a block refused before commit leaves the state flushable")
 }
 
 func TestBrokenLinkDoesNotLatch(t *testing.T) {

@@ -47,11 +47,12 @@ func identityFor(epoch uint64) consensus.Identity {
 		assert.NoError(err, "decode 2042 identity")
 		return id
 	}
-	raw, err := os.ReadFile("testdata/mainnet_block_42098399_extradata.hex")
+	boundary := map[uint64]string{1949: "42098399", 2041: "44085599"}[epoch]
+	raw, err := os.ReadFile("testdata/mainnet_block_" + boundary + "_extradata.hex")
 	assert.NoError(err, "read boundary extra data")
 	outcome, err := dkg.Decode(unhex(string(raw)))
 	assert.NoError(err, "decode outcome")
-	assert.Equal(outcome.Epoch, uint64(1949), "outcome epoch")
+	assert.Equal(outcome.Epoch, epoch, "outcome epoch")
 	id, err := consensus.DecodeIdentity(outcome.Identity[:])
 	assert.NoError(err, "decode outcome identity")
 	return id
@@ -60,7 +61,7 @@ func identityFor(epoch uint64) consensus.Identity {
 func TestMainnetFinalizationsVerify(t *testing.T) {
 	ns := consensus.NewNamespace(consensus.TempoNamespace)
 	fixtures := loadFixtures()
-	assert.Equal(len(fixtures), 3, "fixture count")
+	assert.Equal(len(fixtures), 4, "fixture count")
 	for _, fx := range fixtures {
 		raw := unhex(fx.Certificate)
 		f, err := consensus.DecodeFinalization(raw)
@@ -89,4 +90,15 @@ func TestDecodeFinalizationRejects(t *testing.T) {
 	assert.Equal(err, consensus.ErrLeftover, "left over")
 	_, err = consensus.DecodeFinalization([]byte{0x80, 0x00})
 	assert.Equal(err, consensus.ErrVarint, "non-canonical varint")
+}
+
+func BenchmarkVerifyFinalization(b *testing.B) {
+	ns := consensus.NewNamespace(consensus.TempoNamespace)
+	fx := loadFixtures()[2]
+	f, err := consensus.DecodeFinalization(unhex(fx.Certificate))
+	assert.NoError(err, "decode")
+	id := identityFor(fx.Epoch)
+	for i := 0; i < b.N; i++ {
+		assert.NoError(consensus.VerifyFinalization(id, ns, f), "verify")
+	}
 }

@@ -100,14 +100,14 @@ func hashToFieldFp2(dst DST, msg []byte) [hashFieldCount]fp2 {
 
 func HashToG1(dst DST, msg []byte) G1 {
 	u := hashToFieldFp(dst, msg)
-	q0 := iso11(sswuG1(u[0])).jac()
-	q1 := iso11(sswuG1(u[1])).jac()
+	q0 := iso11(sswuG1(u[0]))
+	q1 := iso11(sswuG1(u[1]))
 	return G1{p: q0.add(q1).mulUint64(g1Cofactor)}
 }
 
 func HashToG2(dst DST, msg []byte) G2 {
 	u := hashToFieldFp2(dst, msg)
-	q0 := iso3(sswuG2(u[0])).jac()
-	q1 := iso3(sswuG2(u[1])).jac()
+	q0 := iso3(sswuG2(u[0]))
+	q1 := iso3(sswuG2(u[1]))
 	return G2{p: q0.add(q1).mulBytes(g2CofactorBytes[:])}
 }

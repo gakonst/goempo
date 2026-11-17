@@ -193,6 +193,17 @@ func (p G2) Neg() G2 { return G2{p: p.p.neg()} }
 
 func (p G1) Mul(k Scalar) G1 { return G1{p: p.p.mulBytes(k[:])} }
 
+func MultiExpG1(points []G1, scalars []Scalar, width int) G1 {
+	assert.Ok(len(points) == len(scalars), "bls12381: one scalar per point")
+	jac := make([]g1Jac, len(points))
+	raw := make([][]byte, len(points))
+	for i := range points {
+		jac[i] = points[i].p
+		raw[i] = scalars[i][:]
+	}
+	return G1{p: msmG1Bits(jac, raw, width)}
+}
+
 func (p G2) Mul(k Scalar) G2 { return G2{p: p.p.mulBytes(k[:])} }
 
 func (p G1) Equal(q G1) bool { return p.p.equal(q.p) }

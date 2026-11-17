@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis|follow|rpcdiff|serve>")
+		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis|follow|certify|rpcdiff|serve>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -21,6 +21,8 @@ func main() {
 		os.Exit(runFetch(os.Args[2:]))
 	case "fetch-range":
 		os.Exit(runFetchRange(os.Args[2:]))
+	case "certify":
+		os.Exit(runCertify(os.Args[2:]))
 	case "follow":
 		os.Exit(runFollow(os.Args[2:]))
 	case "replay":

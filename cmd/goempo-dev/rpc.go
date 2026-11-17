@@ -84,6 +84,14 @@ func (c *rpcClient) batchOnce(reqs []rpcRequest) ([]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	raw, err := c.post(body)
+	if err != nil {
+		return nil, err
+	}
+	return orderResponses(raw, len(reqs))
+}
+
+func (c *rpcClient) post(body []byte) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -102,7 +110,7 @@ func (c *rpcClient) batchOnce(reqs []rpcRequest) ([]json.RawMessage, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("rpc: http %d", resp.StatusCode)
 	}
-	return orderResponses(raw, len(reqs))
+	return raw, nil
 }
 
 func orderResponses(raw []byte, count int) ([]json.RawMessage, error) {

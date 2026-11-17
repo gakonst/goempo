@@ -2,19 +2,24 @@ package consensus
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 
 	"github.com/gakonst/goempo/internal/crypto/bls12381"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
-	notarizeSuffix   = "_NOTARIZE"
-	nullifySuffix    = "_NULLIFY"
-	finalizeSuffix   = "_FINALIZE"
-	seedSuffix       = "_SEED"
-	combinerBytes    = 16
-	TempoNamespace   = "TEMPO"
-	messageDSTString = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_"
+	notarizeSuffix     = "_NOTARIZE"
+	nullifySuffix      = "_NULLIFY"
+	finalizeSuffix     = "_FINALIZE"
+	seedSuffix         = "_SEED"
+	combinerBytes      = 16
+	combinerBits       = combinerBytes * 8
+	combinerIndexBytes = 4
+	combinerIndexMax   = 1 << 16
+	TempoNamespace     = "TEMPO"
+	messageDSTString   = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_"
 )
 
 var (
@@ -78,12 +83,14 @@ func verifySameSigner(id Identity, entries []signed) error {
 		h.Write(unionUnique(e.namespace, e.message))
 	}
 	seed := h.Sum(nil)
-	var aggSig, aggMsg bls12381.G1
+	ks := make([]bls12381.Scalar, len(entries))
+	msgs := make([]bls12381.G1, len(entries))
 	for i, e := range entries {
-		k := combiner(seed, i)
-		aggSig = aggSig.Add(sigs[i].Mul(k))
-		aggMsg = aggMsg.Add(bls12381.HashToG1(messageDST, unionUnique(e.namespace, e.message)).Mul(k))
+		ks[i] = combiner(seed, i)
+		msgs[i] = bls12381.HashToG1(messageDST, unionUnique(e.namespace, e.message))
 	}
+	aggSig := bls12381.MultiExpG1(sigs, ks, combinerBits)
+	aggMsg := bls12381.MultiExpG1(msgs, ks, combinerBits)
 	if aggSig.IsIdentity() || aggMsg.IsIdentity() {
 		return ErrCertificate
 	}
@@ -101,15 +108,22 @@ func combiner(seed []byte, i int) bls12381.Scalar {
 	if i == 0 {
 		return bls12381.ScalarFromUint64(1)
 	}
-	d := sha256.Sum256(append(append([]byte(nil), seed...), byte(i)))
+	assert.Ok(i < combinerIndexMax, "consensus: combiner index within bound")
+	var index [combinerIndexBytes]byte
+	binary.BigEndian.PutUint32(index[:], uint32(i))
+	d := sha256.Sum256(append(append([]byte(nil), seed...), index[:]...))
 	return bls12381.ScalarFromWide(d[:combinerBytes])
 }
 
-func VerifyFinalization(id Identity, ns Namespace, f Finalization) error {
-	return verifySameSigner(id, []signed{
+func finalizationEntries(ns Namespace, f Finalization) []signed {
+	return []signed{
 		{namespace: ns.Finalize, message: f.Proposal.Encode(), signature: f.Certificate.Vote},
 		{namespace: ns.Seed, message: f.Proposal.Round.Encode(), signature: f.Certificate.Seed},
-	})
+	}
+}
+
+func VerifyFinalization(id Identity, ns Namespace, f Finalization) error {
+	return verifySameSigner(id, finalizationEntries(ns, f))
 }
 
 func VerifyNotarization(id Identity, ns Namespace, p Proposal, c Certificate) error {

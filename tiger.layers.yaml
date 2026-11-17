@@ -3,6 +3,7 @@
   - ./internal/version
 "./cmd/goempo-dev":
   - ./internal/io
+  - ./internal/consensus
   - ./internal/p2p
   - ./internal/p2p/rlpx
   - ./internal/sync

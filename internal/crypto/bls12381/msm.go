@@ -1,6 +1,10 @@
 package bls12381
 
-import "math/bits"
+import (
+	"math/bits"
+
+	"github.com/kapetan-io/tiger/assert"
+)
 
 const (
 	scalarBits    = ScalarLength * 8
@@ -35,10 +39,16 @@ func windowValue(scalar []byte, w scalarWindow) int {
 }
 
 func msmG1(points []g1Jac, scalars [][]byte) g1Jac {
+	return msmG1Bits(points, scalars, scalarBits)
+}
+
+func msmG1Bits(points []g1Jac, scalars [][]byte, width int) g1Jac {
+	assert.Ok(width > 0, "bls12381: msm width is positive")
+	assert.Ok(width <= scalarBits, "bls12381: msm width within scalar bits")
 	n := min(len(points), len(scalars))
 	c := windowBits(n)
 	buckets := make([]g1Jac, (1<<c)-1)
-	windows := (scalarBits + c - 1) / c
+	windows := (width + c - 1) / c
 	result := g1Jac{}
 	for w := windows - 1; w >= 0; w-- {
 		for d := 0; d < c; d++ {

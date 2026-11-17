@@ -29,9 +29,10 @@ var (
 	caConfigDomain          = []byte("tempo:configurable-account:config")
 	ConfigurableAccountCode = []byte{0xef}
 
-	slotCATxOrigin   = slotOf(0)
-	slotCADirect     = slotOf(1)
-	slotCAEligiblity = slotOf(2)
+	slotCATxOrigin  = slotOf(0)
+	slotCAAuthority = slotOf(1)
+	fCADirect       = field{offset: 0, size: 20}
+	fCAEligibility  = field{offset: 20, size: 1}
 
 	evCAConfigUpdated = topic("ConfigurableAccountConfigUpdated(address,bytes32,uint64,uint8,(address,uint8)[])")
 	evCAUpgraded      = topic("AccountUpgraded(address,bytes32,bytes32,uint8,(address,uint8)[])")
@@ -70,8 +71,8 @@ type ConfigurableAuthority struct {
 
 func SetConfigurableAuthority(c *Context, a ConfigurableAuthority) {
 	c.State.SetTransientStorage(ConfigurableAccountAddress, Hash(slotCATxOrigin), toWord(addressWord(a.Origin)))
-	c.State.SetTransientStorage(ConfigurableAccountAddress, Hash(slotCADirect), toWord(addressWord(a.Direct)))
-	c.State.SetTransientStorage(ConfigurableAccountAddress, Hash(slotCAEligiblity), u256.FromUint64(uint64(a.Eligibility)))
+	authority := pack(Word{}).with(fCADirect, toWord(addressWord(a.Direct))).with(fCAEligibility, u256.FromUint64(uint64(a.Eligibility)))
+	c.State.SetTransientStorage(ConfigurableAccountAddress, Hash(slotCAAuthority), authority.w)
 }
 
 func caErrInvalidOwner() error { return errSel("InvalidConfigurableAccountOwner()") }
@@ -324,10 +325,11 @@ func (c *Context) caUpdateConfig(u caUpdate) error {
 	if sender == (Address{}) {
 		return errSel("UnauthorizedConfigurableAccountCaller()")
 	}
-	direct, err := c.tload(ConfigurableAccountAddress, slotCADirect)
+	authority, err := c.tload(ConfigurableAccountAddress, slotCAAuthority)
 	if err != nil {
 		return err
 	}
+	direct := fCADirect.of(authority)
 	if wordAddress(toHash(direct)) != sender {
 		return errSel("UnauthorizedConfigurableAccountCaller()")
 	}
@@ -368,11 +370,11 @@ func (c *Context) caUpgradeChecks(sender Address) error {
 	if wordAddress(toHash(origin)) != sender {
 		return errSel("UpgradeMustBeDirectCall()")
 	}
-	elig, err := c.tload(ConfigurableAccountAddress, slotCAEligiblity)
+	authority, err := c.tload(ConfigurableAccountAddress, slotCAAuthority)
 	if err != nil {
 		return err
 	}
-	if err := caEligibilityError(UpgradeEligibility(elig.Uint64())); err != nil {
+	if err := caEligibilityError(UpgradeEligibility(fCAEligibility.u64(authority))); err != nil {
 		return err
 	}
 	if err := c.loadAccountGas(sender); err != nil {

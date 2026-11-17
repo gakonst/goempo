@@ -57,12 +57,3 @@ keychain/delegate-committed-no-marker/T14
 keychain/authorize-committed-parent/T14
 tip20/permit/T14
 tip20/permit-retired-owner/T14
-aacc/upgradeAccount/T14
-aacc/upgradeAccount-root-owner/T14
-aacc/upgradeAccount-not-primitive-root/T14
-aacc/upgradeAccount-has-code/T14
-aacc/upgradeAccount-configured/T14
-aacc/upgradeAccount-committed-no-marker/T14
-aacc/upgradeAccount-marker-no-commitment/T14
-aacc/upgradeAccount-invalid-config/T14
-aacc/upgradeAccount-low-gas/T14

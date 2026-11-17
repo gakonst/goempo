@@ -128,6 +128,8 @@ func (x Int) BitLen() int {
 	return 0
 }
 
+func (x Int) Clz() Int { return FromUint64(uint64(Bits - x.BitLen())) }
+
 func (x Int) ByteLen() int { return (x.BitLen() + limbBytes - 1) / limbBytes }
 
 func (x Int) IsZero() bool { return x[0]|x[1]|x[2]|x[3] == 0 }

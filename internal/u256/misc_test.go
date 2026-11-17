@@ -83,6 +83,9 @@ func TestMetrics(t *testing.T) {
 	if u256.Zero().BitLen() != 0 || u256.Max().BitLen() != 256 || u256.FromUint64(256).ByteLen() != 2 {
 		t.Fatal("bitlen")
 	}
+	if u256.Zero().Clz() != u256.FromUint64(256) || u256.Max().Clz() != u256.Zero() || u256.One().Clz() != u256.FromUint64(255) {
+		t.Fatal("clz")
+	}
 	if !u256.FromUint64(5).IsUint64() || u256.MinSigned().IsUint64() {
 		t.Fatal("isuint64")
 	}

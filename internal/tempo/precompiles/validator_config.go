@@ -343,12 +343,15 @@ var validatorConfigTable = register(ValidatorConfigAddress, newTable(
 		return retWord(w), err
 	}).before(hardfork.T15),
 	view("validatorsArray(uint256)", []abiType{tU256}, func(c *Context, a []abiValue) ([]byte, error) {
+		i := a[0].u256()
+		if !i.IsUint64() {
+			return nil, revert(abiError(selPanic, wordOfU64(0x32)))
+		}
 		n, err := c.validatorCount()
 		if err != nil {
 			return nil, err
 		}
-		i := a[0].u256()
-		if !i.IsUint64() || i.Uint64() >= n {
+		if i.Uint64() >= n {
 			return nil, revert(abiError(selPanic, wordOfU64(0x32)))
 		}
 		v, err := c.loadAddress(ValidatorConfigAddress, c.validatorArraySlot(i.Uint64()))

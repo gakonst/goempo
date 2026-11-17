@@ -303,6 +303,26 @@ func (t Token) claimRewards(sender Address) (Word, error) {
 	return amount, t.emitTransfer(transferEvent{from: t.addr, to: sender, amount: amount})
 }
 
+func (t Token) selfAccrued(account Address, info rewardInfo) (Word, error) {
+	bal, err := t.balance(account)
+	if err != nil || bal.IsZero() {
+		return info.balance, err
+	}
+	global, err := t.load(slotGlobalRPT)
+	if err != nil {
+		return Word{}, err
+	}
+	delta, err := num(global).sub(info.rewardPerToken)
+	if err != nil {
+		return Word{}, err
+	}
+	acc, err := ratio{num: delta, den: accPrecision}.of(bal)
+	if err != nil {
+		return Word{}, err
+	}
+	return num(info.balance).add(acc)
+}
+
 func (t Token) pendingRewards(account Address) (Word, error) {
 	info, err := t.readRewardInfo(account)
 	if err != nil {
@@ -310,19 +330,7 @@ func (t Token) pendingRewards(account Address) (Word, error) {
 	}
 	pending := info.balance
 	if !t.c.at(hardfork.T8) && info.recipient == account {
-		global, err := t.load(slotGlobalRPT)
-		if err != nil {
-			return Word{}, err
-		}
-		delta, err := num(global).sub(info.rewardPerToken)
-		if err != nil {
-			return Word{}, err
-		}
-		acc, err := t.accrued(account, delta)
-		if err != nil {
-			return Word{}, err
-		}
-		if pending, err = num(pending).add(acc); err != nil {
+		if pending, err = t.selfAccrued(account, info); err != nil {
 			return Word{}, err
 		}
 	}

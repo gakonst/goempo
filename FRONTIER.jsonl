@@ -13,3 +13,4 @@
 {"date":"2026-11-17","rung":"R5","score":"53/57 methods, 2920/2925 cases","commit":"3b70b6e","note":"eth_getProof/eth_getAccount served at the replayed head; proofs verified against mainnet stateRoot of block 5000 with an independent keccak/RLP checker"}
 {"date":"2026-11-17","rung":"R5","score":"56/57 methods, 2924/2925 cases","commit":"6e0de5c","note":"eth_call/estimateGas/createAccessList/debug_traceCall through executor.ApplyCall (fee-token balance warming, no gas cap, no fee charge)"}
 {"date":"2026-11-17","rung":"R5","score":"57/57 methods, 2925/2925 cases","commit":"49fabb5","note":"eth_simulateV1 matches (simulated block hash, roots, call results); every recorded case identical"}
+{"date":"2026-11-17","rung":"R5","score":"66/66 methods, 3114/3114 cases","commit":"6b23d44","note":"trace_* family, callMany, simulateV1 variants; +189 recorded cases (corpus-i)"}

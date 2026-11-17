@@ -17,6 +17,8 @@ var (
 	ErrFeeCap      = errors.New("executor: max fee below base fee")
 	ErrValidWindow = errors.New("executor: transaction outside its validity window")
 	ErrBlockGas    = errors.New("executor: block gas limit exceeded")
+	ErrFeeToken    = errors.New("executor: fee token is not a USD TIP-20")
+	ErrFeeBalance  = errors.New("executor: fee payer balance below the maximum fee")
 )
 
 type call struct {

@@ -141,6 +141,9 @@ func (r *txRun) chargeFee() error {
 	}
 	r.token = token
 	r.maxFee = feeAmount(r.view.gasLimit, r.price)
+	if err := r.checkFeeToken(); err != nil {
+		return err
+	}
 	r.set.Env.FeePayer = r.view.feePayer
 	r.set.Env.FeeToken = token
 	r.set.Env.NonCreditable = nil
@@ -162,6 +165,31 @@ func (r *txRun) chargeFee() error {
 		Beneficiary: r.env.Block.Coinbase,
 	})
 	return err
+}
+
+func (r *txRun) checkFeeToken() error {
+	if !precompiles.IsTIP20(r.token) {
+		return ErrFeeToken
+	}
+	limit := feeAmount(r.view.gasLimit, r.view.maxFee)
+	if limit.IsZero() {
+		return nil
+	}
+	valid, err := precompiles.IsValidFeeToken(r.ctx, r.token)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrFeeToken
+	}
+	balance, err := precompiles.TIP20(r.ctx, r.token).BalanceOf(r.view.feePayer)
+	if err != nil {
+		return err
+	}
+	if balance.Lt(limit) {
+		return ErrFeeBalance
+	}
+	return nil
 }
 
 func (r *txRun) warm() {

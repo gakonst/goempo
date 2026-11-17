@@ -33,7 +33,7 @@ func dexRevert(err error) string {
 
 func TestDEXConstants(t *testing.T) {
 	cases := []struct {
-		sig  string
+		name string
 		want []byte
 	}{
 		{"MIN_TICK()", int16Arg(-2000)},
@@ -46,9 +46,9 @@ func TestDEXConstants(t *testing.T) {
 		{"nextOrderId()", amount(1)},
 	}
 	for _, tc := range cases {
-		out, err := dexView(hardfork.T13, calldata(tc.sig))
-		assert.NoError(err, tc.sig)
-		assert.Equal(string(out), string(tc.want), tc.sig)
+		out, err := dexView(hardfork.T13, calldata(tc.name))
+		assert.NoError(err, tc.name)
+		assert.Equal(string(out), string(tc.want), tc.name)
 	}
 }
 
@@ -92,5 +92,6 @@ func TestDEXStaticCallRejectsMutation(t *testing.T) {
 	c.Static = true
 	_, err = precompiles.Call(c, precompiles.StablecoinDEXAddress, calldata("cancel(uint128)", amount(1)))
 	_, isRevert := err.(*precompiles.Revert)
-	assert.Ok(err != nil && !isRevert, "static cancel halts from T12")
+	assert.Ok(err != nil, "static cancel fails from T12")
+	assert.Ok(!isRevert, "static cancel halts rather than reverts from T12")
 }

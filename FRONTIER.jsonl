@@ -1,2 +1,3 @@
 {"date":"2026-11-17","rung":"R2","score":"yes","commit":"d1c1553","note":"mainnet genesis state root matches rpc.tempo.xyz block 0"}
 {"date":"2026-11-17","rung":"R1","score":"100%","commit":"a5aa2d9","note":"632/632 sampled mainnet blocks across T0..T13 (860 txs): byte-exact re-encode, block hash, tx root, tx hashes, senders, receipts root, fee payers; testnet 512/512 blocks, 31059 txs"}
+{"date":"2026-11-17","rung":"R4","score":"headers+bodies","commit":"dc3d3d3","note":"goempo-dev follow: 1082 mainnet blocks from 1000 below the tip linked, bodies checked against headers, all hashes equal to rpc.tempo.xyz, then followed the tip; no execution yet; devp2p tested only in simulation (no route to mainnet peers)"}

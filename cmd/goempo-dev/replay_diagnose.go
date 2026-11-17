@@ -74,11 +74,6 @@ func (r *replayer) diagnoseReceipts(c *rpcClient) {
 	for i := 0; i < count; i++ {
 		g := &got[i]
 		w := &want[i]
-		wantCum, err := strconv.ParseUint(w.CumulativeGasUsed, 0, 64)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "diagnose: receipt:", err)
-			return
-		}
 		gasUsed := g.CumulativeGasUsed - prev
 		prev = g.CumulativeGasUsed
 		wantGas, err := strconv.ParseUint(w.GasUsed, 0, 64)
@@ -90,7 +85,7 @@ func (r *replayer) diagnoseReceipts(c *rpcClient) {
 		if g.Success {
 			status = "0x1"
 		}
-		if g.CumulativeGasUsed == wantCum && status == w.Status && len(g.Logs) == len(w.Logs) {
+		if gasUsed == wantGas && status == w.Status && len(g.Logs) == len(w.Logs) {
 			continue
 		}
 		if gasUsed != wantGas {

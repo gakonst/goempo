@@ -129,5 +129,5 @@ func (c *Context) isRetiredRoot(owner Address) (bool, error) {
 	if !c.at(hardfork.T14) {
 		return false, nil
 	}
-	return false, errFatal
+	return c.isRetiredRootT14(owner)
 }

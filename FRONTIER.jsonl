@@ -11,3 +11,4 @@
 {"date":"2026-11-17","rung":"R5","score":"52/57 methods, 2919/2925 cases","commit":"e034b7b","note":"geth tracers + parity trace_block for user txs match recorded corpus (+264 trace cases)"}
 {"date":"2026-11-17","rung":"R5","score":"53/57 methods, 2920/2925 cases","commit":"61a8c1f","note":"Tempo precompile custom errors (161, 19 groups) rendered in revert messages"}
 {"date":"2026-11-17","rung":"R5","score":"53/57 methods, 2920/2925 cases","commit":"3b70b6e","note":"eth_getProof/eth_getAccount served at the replayed head; proofs verified against mainnet stateRoot of block 5000 with an independent keccak/RLP checker"}
+{"date":"2026-11-17","rung":"R5","score":"56/57 methods, 2924/2925 cases","commit":"6e0de5c","note":"eth_call/estimateGas/createAccessList/debug_traceCall through executor.ApplyCall (fee-token balance warming, no gas cap, no fee charge)"}

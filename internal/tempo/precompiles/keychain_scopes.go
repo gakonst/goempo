@@ -7,6 +7,7 @@ import (
 
 const (
 	maxSetItems      = 1 << 16
+	maxStoredLen     = 1<<32 - 1
 	gasDedupPerItem  = 20
 	addressesPerSlot = 1
 	selectorsPerSlot = 8
@@ -35,7 +36,7 @@ func (s storedSet) length() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !w.IsUint64() || w.Uint64() > maxSetItems {
+	if !w.IsUint64() || w.Uint64() > maxStoredLen {
 		return 0, underOverflow()
 	}
 	return int(w.Uint64()), nil
@@ -64,8 +65,7 @@ func (s storedSet) read() ([]Hash, error) {
 	if err != nil {
 		return nil, err
 	}
-	n = min(n, maxSetItems)
-	out := make([]Hash, 0, n)
+	out := make([]Hash, 0, min(n, maxSetItems))
 	for i := 0; i < n; i++ {
 		w, err := s.c.loadField(s.addr, s.elemSlot(i), s.elemField(i))
 		if err != nil {

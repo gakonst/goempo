@@ -247,6 +247,10 @@ var keychainTable = register(AccountKeychainAddress, newTable(
 		v, err := c.effectiveLimit(viewKeyArgs(a), a[2].addr())
 		return encodeWords(toHash(v.remaining), wordOfU64(v.periodEnd)), err
 	}).from(hardfork.T3),
+	view("getAllowedCalls(address,address)", []abiType{tAddress, tAddress}, func(c *Context, a []abiValue) ([]byte, error) {
+		scoped, scopes, err := c.allowedCalls(viewKeyArgs(a))
+		return encodeAllowedCalls(scoped, scopes), err
+	}).from(hardfork.T3),
 	view("isKeyAuthorizationWitnessBurned(address,bytes32)", []abiType{tAddress, tB32}, func(c *Context, a []abiValue) ([]byte, error) {
 		b, err := c.loadBool(AccountKeychainAddress, c.witnessSlot(a[0].addr(), a[1].bytes32()))
 		return retBool(flag(b)), err

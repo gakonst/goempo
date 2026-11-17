@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	stepsMax   = 1 << 40
-	retriesMax = 20
-	backoffMax = 10 * time.Second
-	logEvery   = 10 * time.Second
-	tipRefresh = 15 * time.Second
-	nearTip    = 64
-	fileMode   = 0o644
+	stepsMax      = 1 << 40
+	retriesMax    = 20
+	backoffMax    = 10 * time.Second
+	logEvery      = 10 * time.Second
+	tipRefresh    = 15 * time.Second
+	nearTip       = 64
+	fileMode      = 0o644
+	flushInterval = 5 * time.Minute
 )
 
 const _ = uint(stepsMax - retriesMax)
@@ -42,6 +43,7 @@ type follower struct {
 	began     time.Time
 	lastLog   time.Time
 	flushed   uint64
+	flushedAt time.Time
 	retries   int
 }
 
@@ -109,7 +111,7 @@ func (f *follower) loop(ctx context.Context) error {
 			return failed
 		}
 		f.retries++
-		if f.retries > retriesMax {
+		if f.retries > retriesMax && f.o.to != 0 {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "goempo: retry %d: %v\n", f.retries, err)
@@ -160,10 +162,11 @@ func (f *follower) report(b *rpc.BlockData) {
 }
 
 func (f *follower) maybeFlush(head uint64) error {
-	if f.o.flushEvery == 0 || head < f.flushed+f.o.flushEvery {
+	due := head >= f.flushed+f.o.flushEvery || (head > f.flushed && time.Since(f.flushedAt) >= flushInterval)
+	if f.o.flushEvery == 0 || !due {
 		return nil
 	}
-	f.flushed = head
+	f.flushed, f.flushedAt = head, time.Now()
 	return f.n.Flush()
 }
 

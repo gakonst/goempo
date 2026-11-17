@@ -121,7 +121,7 @@ func run(args []string) int {
 	}
 	head := n.Head()
 	fmt.Fprintf(os.Stderr, "goempo: state at block %d %s\n", head.Number, head.Hash)
-	f := &follower{o: &o, n: n, up: up, began: time.Now(), lastLog: time.Now()}
+	f := &follower{o: &o, n: n, up: up, began: time.Now(), lastLog: time.Now(), flushed: head.Number, flushedAt: time.Now()}
 	if err := f.serve(); err != nil {
 		fmt.Fprintln(os.Stderr, "goempo: rpc:", errors.Join(err, n.Close()))
 		return 1

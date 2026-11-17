@@ -38,7 +38,7 @@ func (t Token) readRewardInfo(holder Address) (rewardInfo, error) {
 
 func (t Token) writeRewardInfo(holder Address, info rewardInfo) error {
 	base := t.rewardSlot(holder)
-	if err := t.c.storeAddress(t.addr, base, info.recipient); err != nil {
+	if err := t.c.storeRun(t.addr, base, lane{f: fNextQuote, v: toWord(addressWord(info.recipient))}); err != nil {
 		return err
 	}
 	if err := t.store(base.plus(1), info.rewardPerToken); err != nil {

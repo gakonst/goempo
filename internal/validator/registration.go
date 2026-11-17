@@ -24,6 +24,16 @@ const (
 
 const _ = uint(baseBytesMax - u64Bytes - 2*addressBytes - endpointFields*(1+endpointMax))
 
+const (
+	addHeadWords            = 6
+	endpointPaddedMax       = (endpointMax + wordBytes) / wordBytes * wordBytes
+	RegistrationCalldataMax = selectorBytes + addHeadWords*wordBytes + endpointFields*(wordBytes+endpointPaddedMax) + wordBytes + SignatureBytes
+)
+
+const _ = uint(endpointPaddedMax - endpointMax)
+
+const _ = uint(RegistrationCalldataMax - endpointFields*endpointPaddedMax)
+
 var (
 	ErrIngress   = errors.New("validator: ingress is not ip:port")
 	ErrEgress    = errors.New("validator: egress is not an ip")

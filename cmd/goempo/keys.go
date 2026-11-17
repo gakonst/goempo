@@ -86,6 +86,7 @@ type registrationFlags struct {
 	egress  string
 	fee     string
 	index   uint64
+	rpc     string
 }
 
 func keysRegistration(out io.Writer, kind string, args []string) error {
@@ -98,6 +99,7 @@ func keysRegistration(out io.Writer, kind string, args []string) error {
 	fs.StringVar(&f.egress, "egress", "", "p2p egress ip")
 	fs.StringVar(&f.fee, "fee-recipient", "", "fee recipient (add-validator)")
 	fs.Uint64Var(&f.index, "index", 0, "validator index (rotate-validator)")
+	fs.StringVar(&f.rpc, "simulate-rpc", "", "add-validator: eth_call the registration from the config owner on this JSON-RPC node (never sends a transaction)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -124,7 +126,19 @@ func keysRegistration(out io.Writer, kind string, args []string) error {
 	}
 	msg := r.AddMessage(fee)
 	sig := r.SignAdd(k, fee)
-	return printRegistration(out, registrationOutput{message: msg[:], signature: sig[:], calldata: r.AddCalldata(fee, sig[:])})
+	if err := printRegistration(out, registrationOutput{message: msg[:], signature: sig[:], calldata: r.AddCalldata(fee, sig[:])}); err != nil {
+		return err
+	}
+	if f.rpc == "" {
+		return nil
+	}
+	j, err := validator.CheckJoin(newRPCCaller(f.rpc), r, fee, sig[:])
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "simulated: chain %d owner %s validators %d: addValidator from the owner would succeed as index %d using %d gas\n",
+		j.ChainID, j.Owner, j.Count, j.SimulatedIndex, j.Gas)
+	return err
 }
 
 type registrationOutput struct {

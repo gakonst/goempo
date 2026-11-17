@@ -16,8 +16,9 @@ const serveConnsMax = 1 << 30
 const _ = uint(serveConnsMax - diffBlocksMax)
 
 type servePaths struct {
-	blocks string
-	chunks string
+	blocks      string
+	chunks      string
+	proofWindow uint64
 }
 
 func runServe(args []string) int {
@@ -26,10 +27,11 @@ func runServe(args []string) int {
 	blocks := fs.String("blocks", defaultBlockDir(), "fetched blocks with receipts (fetch)")
 	chunks := fs.String("chunks", defaultChunkDir(), "raw block chunks for replay (fetch-range)")
 	to := fs.Uint64("state", 0, "replay state up to this block and serve state methods there")
+	window := fs.Uint64("proof-window", 0, "blocks behind the head that eth_getProof serves (0: the reference's 5000)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	srv, err := buildServer(servePaths{blocks: *blocks, chunks: *chunks}, min(*to, diffBlocksMax))
+	srv, err := buildServer(servePaths{blocks: *blocks, chunks: *chunks, proofWindow: *window}, min(*to, diffBlocksMax))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		return 1
@@ -67,7 +69,11 @@ func buildServer(paths servePaths, to uint64) (*rpc.Server, error) {
 	if err := replayTo(r, chain, to); err != nil {
 		return nil, err
 	}
+	if r.failed != nil {
+		fmt.Fprintf(os.Stderr, "serve: replay stopped at block %d: %s\n", r.head, r.failed.String())
+	}
+	fmt.Fprintln(os.Stderr, "serve: state replayed to block", r.head)
 	states := &replayState{r: r}
 	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec}
-	return rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, states, exec), nil
+	return rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID, ProofWindow: paths.proofWindow}, view, states, exec), nil
 }

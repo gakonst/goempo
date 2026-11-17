@@ -728,19 +728,19 @@ func ethGetAccountInfo(s *Server, p *params) ([]byte, error) {
 	}), nil
 }
 
-func (s *Server) proofWindow(p *params, name string) error {
+func (s *Server) proofWindow(p *params, name string) (uint64, error) {
 	ref, err := blockIDParam(p.optional(name))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	n, err := s.stateBlock(ref)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if s.chain.Head()-n > s.cfg.ProofWindow {
-		return newError(CodeProofWindow, "distance to target block exceeds maximum proof window")
+		return 0, newError(CodeProofWindow, "distance to target block exceeds maximum proof window")
 	}
-	return nil
+	return n, nil
 }
 
 func ethGetAccount(s *Server, p *params) ([]byte, error) {
@@ -748,13 +748,73 @@ func ethGetAccount(s *Server, p *params) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := addressParam(raw); err != nil {
+	addr, err := addressParam(raw)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.proofWindow(p, "block"); err != nil {
+	at, err := s.proofWindow(p, "block")
+	if err != nil {
 		return nil, err
 	}
-	return nil, internalError("eth_getAccount needs account proofs, which goempo does not serve yet")
+	proof, err := s.accountProof(at, addr, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !proof.Exists {
+		return resultNull, nil
+	}
+	return encode(func(w *writer) {
+		w.objOpen()
+		w.kQuantity("nonce", proof.Nonce)
+		w.kQuantity256("balance", proof.Balance)
+		w.kHash("storageRoot", proof.StorageRoot)
+		w.kHash("codeHash", proof.CodeHash)
+		w.objClose()
+	}), nil
+}
+
+func (s *Server) accountProof(at uint64, addr primitives.Address, keys []storageKeyArg) (AccountProof, error) {
+	src, ok := s.state.(ProofSource)
+	if !ok {
+		return AccountProof{}, internalError("account proofs are not available")
+	}
+	hashes := make([]primitives.Hash, len(keys))
+	for i, k := range keys {
+		hashes[i] = k.hash
+	}
+	proof, err := src.ProofAt(at, addr, hashes)
+	if err != nil {
+		return AccountProof{}, internalError(err.Error())
+	}
+	for i := range proof.Storage {
+		proof.Storage[i].Key = keys[i].text
+	}
+	return proof, nil
+}
+
+type storageKeyArg struct {
+	hash primitives.Hash
+	text string
+}
+
+func storageKeysParam(raw json.RawMessage) ([]storageKeyArg, error) {
+	var strs []json.RawMessage
+	if err := json.Unmarshal(raw, &strs); err != nil {
+		return nil, invalidParams("invalid storage keys")
+	}
+	out := make([]storageKeyArg, len(strs))
+	for i, k := range strs {
+		v, err := quantity256Param(k)
+		if err != nil {
+			return nil, err
+		}
+		b := v.Bytes32()
+		out[i] = storageKeyArg{hash: b, text: v.Hex()}
+		if len(k) == 4+2*primitives.HashLength {
+			out[i].text = primitives.Hash(b).Hex()
+		}
+	}
+	return out, nil
 }
 
 func ethGetProof(s *Server, p *params) ([]byte, error) {
@@ -762,16 +822,56 @@ func ethGetProof(s *Server, p *params) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := addressParam(raw); err != nil {
+	addr, err := addressParam(raw)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := p.required("keys"); err != nil {
+	rawKeys, err := p.required("keys")
+	if err != nil {
 		return nil, err
 	}
-	if err := s.proofWindow(p, "block_number"); err != nil {
+	keys, err := storageKeysParam(rawKeys)
+	if err != nil {
 		return nil, err
 	}
-	return nil, internalError("eth_getProof is not served by goempo yet")
+	at, err := s.proofWindow(p, "block_number")
+	if err != nil {
+		return nil, err
+	}
+	proof, err := s.accountProof(at, addr, keys)
+	if err != nil {
+		return nil, err
+	}
+	return encode(func(w *writer) {
+		w.objOpen()
+		w.kAddress("address", addr)
+		w.kQuantity256("balance", proof.Balance)
+		w.kHash("codeHash", proof.CodeHash)
+		w.kQuantity("nonce", proof.Nonce)
+		w.kHash("storageHash", proof.StorageRoot)
+		w.key("accountProof")
+		writeProofNodes(w, proof.Proof)
+		w.key("storageProof")
+		w.arrOpen()
+		for _, sp := range proof.Storage {
+			w.objOpen()
+			w.kStr("key", sp.Key)
+			w.kQuantity256("value", sp.Value)
+			w.key("proof")
+			writeProofNodes(w, sp.Proof)
+			w.objClose()
+		}
+		w.arrClose()
+		w.objClose()
+	}), nil
+}
+
+func writeProofNodes(w *writer, nodes [][]byte) {
+	w.arrOpen()
+	for _, n := range nodes {
+		w.data(n)
+	}
+	w.arrClose()
 }
 
 func rawBlockArg(s *Server, p *params) (*BlockData, error) {

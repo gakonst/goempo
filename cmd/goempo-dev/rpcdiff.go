@@ -199,6 +199,29 @@ func (s *replayState) ExecState(number uint64) (rpcexec.State, error) {
 	return s.r.db.State(), nil
 }
 
+func (s *replayState) ProofAt(number uint64, addr primitives.Address, keys []primitives.Hash) (rpc.AccountProof, error) {
+	if number != s.r.head {
+		return rpc.AccountProof{}, errStateMissing
+	}
+	p, err := s.r.db.Proof(addr, keys)
+	if err != nil {
+		return rpc.AccountProof{}, err
+	}
+	out := rpc.AccountProof{
+		Exists:      p.Exists,
+		Balance:     p.Balance,
+		Nonce:       p.Nonce,
+		CodeHash:    p.CodeHash,
+		StorageRoot: p.StorageRoot,
+		Proof:       p.AccountProof,
+		Storage:     make([]rpc.StorageProof, len(p.Storage)),
+	}
+	for i, sp := range p.Storage {
+		out.Storage[i] = rpc.StorageProof{Value: sp.Value, Proof: sp.Proof}
+	}
+	return out, nil
+}
+
 func (s *replayState) StateAt(number uint64) (rpc.StateReader, error) {
 	if number != s.r.head {
 		return nil, errStateMissing

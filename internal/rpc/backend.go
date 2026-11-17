@@ -41,6 +41,26 @@ type StateReader interface {
 	Storage(addr primitives.Address, key primitives.Hash) u256.Int
 }
 
+type StorageProof struct {
+	Key   string
+	Value u256.Int
+	Proof [][]byte
+}
+
+type AccountProof struct {
+	Exists      bool
+	Balance     u256.Int
+	Nonce       uint64
+	CodeHash    primitives.Hash
+	StorageRoot primitives.Hash
+	Proof       [][]byte
+	Storage     []StorageProof
+}
+
+type ProofSource interface {
+	ProofAt(number uint64, addr primitives.Address, keys []primitives.Hash) (AccountProof, error)
+}
+
 type StateSource interface {
 	StateAt(number uint64) (StateReader, error)
 }

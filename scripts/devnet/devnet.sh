@@ -128,8 +128,27 @@ start_goempo() {
 	echo "devnet: slot $i goempo pid $! rpc http://127.0.0.1:$(port $i 5)"
 }
 
+slot_running() {
+	local d
+	d=$(slot_dir "$1")
+	[ -f "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null
+}
+
+port_busy() {
+	ss -Htln "sport = :$1" 2>/dev/null | grep -q .
+}
+
 start_slot() {
+	if slot_running "$1"; then
+		echo "devnet: slot $1 already running (pid $(cat "$(slot_dir "$1")/pid"))"
+		return 0
+	fi
+	if port_busy "$(port "$1" 0)" || port_busy "$(port "$1" 5)"; then
+		die "slot $1: port $(port "$1" 0) or $(port "$1" 5) is in use by a process this harness does not track"
+	fi
 	if is_goempo "$1"; then start_goempo "$1"; else start_rust "$1"; fi
+	sleep 1
+	kill -0 "$(cat "$(slot_dir "$1")/pid")" 2>/dev/null || { tail -5 "$(slot_dir "$1")/node.log"; die "slot $1 exited at start"; }
 }
 
 stop_slot() {

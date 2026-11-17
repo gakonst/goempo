@@ -1,0 +1,19 @@
+[package]
+name = "cwp2p-harness"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+commonware-codec = "=2026.10.0"
+commonware-math = "=2026.10.0"
+commonware-cryptography = { version = "=2026.10.0" }
+commonware-p2p = "=2026.10.0"
+commonware-runtime = "=2026.10.0"
+commonware-stream = "=2026.10.0"
+commonware-utils = "=2026.10.0"
+rand_core = "0.10"
+hex = "0.4"
+serde_json = "1"
+futures = "0.3"
+

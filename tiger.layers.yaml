@@ -215,6 +215,13 @@
 "./internal/consensus/wire":
   - ./internal/consensus
   - github.com/kapetan-io/tiger/assert
+"./internal/crypto/blake3":
+  - github.com/kapetan-io/tiger/assert
+"./internal/cwp2p":
+  - ./internal/crypto/blake3
+  - ./internal/io
+  - golang.org/x/crypto/chacha20poly1305
+  - github.com/kapetan-io/tiger/assert
 "./internal/consensus":
   - ./internal/crypto/bls12381
   - ./internal/dkg

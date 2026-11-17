@@ -1,0 +1,1 @@
+sake_cups_vectors.json: produced by the Rust harness on dev-georgios (~/goempo-work/cwp2p/harness, `cwp2p-harness vectors`) against commonware-cryptography/stream 2026.10.0, the version tempo pins: SAKE dial/listen with ed25519 seeds 0x01*32 and 0x02*32, counter entropy starting at 10 and 100, namespace union_unique("TEMPO","_P2P"), then the first CUPS records each way.

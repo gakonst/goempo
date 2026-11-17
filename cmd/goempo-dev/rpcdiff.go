@@ -22,15 +22,16 @@ import (
 )
 
 const (
-	corpusFileName      = "corpus.jsonl"
-	stateCorpusFileName = "corpus-b.jsonl"
-	extraCorpusFileName = "corpus-d.jsonl"
-	auxCorpusFileName   = "corpus-e.jsonl"
-	statusForbidden     = 403
-	corpusEntriesMax    = 1 << 20
-	corpusBytesMax      = 1 << 34
-	diffShown           = 400
-	percent             = 100
+	corpusFileName          = "corpus.jsonl"
+	stateCorpusFileName     = "corpus-b.jsonl"
+	extraCorpusFileName     = "corpus-d.jsonl"
+	auxCorpusFileName       = "corpus-e.jsonl"
+	userTraceCorpusFileName = "corpus-f.jsonl"
+	statusForbidden         = 403
+	corpusEntriesMax        = 1 << 20
+	corpusBytesMax          = 1 << 34
+	diffShown               = 400
+	percent                 = 100
 )
 
 const _ = uint(corpusBytesMax - corpusEntriesMax)
@@ -87,6 +88,7 @@ func defaultCorpusPath() string {
 		filepath.Join(dir, stateCorpusFileName),
 		filepath.Join(dir, extraCorpusFileName),
 		filepath.Join(dir, auxCorpusFileName),
+		filepath.Join(dir, userTraceCorpusFileName),
 	}, ",")
 }
 

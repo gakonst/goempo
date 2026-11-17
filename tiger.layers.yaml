@@ -31,3 +31,8 @@
   - ./internal/rlp
   - ./internal/crypto/keccak
   - ./internal/trie
+"./internal/crypto/secp256k1":
+  - ./internal/crypto/keccak
+  - ./internal/primitives
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert

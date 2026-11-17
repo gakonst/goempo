@@ -1,0 +1,4 @@
+# secp256k1 fixtures
+
+- tempo_mainnet_senders.txt: 12 legacy (EIP-155, chain 4217) and 12 EIP-1559 transactions from Tempo mainnet blocks 0x2000000-0x2f19028, fetched with eth_getBlockByNumber and eth_getRawTransactionByHash from https://rpc.tempo.xyz. Columns: raw signed transaction, sender (from), hash, block number.
+- eest_senders.txt: 160 signed transactions (40 each of pre-EIP-155 legacy, EIP-155 legacy, type 1, type 2) and 40 EIP-7702 authorizations with their senders/signers, taken from the ethereum/execution-spec-tests stable blockchain_tests fixtures (fields re-encoded to raw RLP). Columns: "tx raw sender" or "auth chainId address nonce yParity r s signer".

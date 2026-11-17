@@ -1,22 +1,4 @@
 # Oracle cases (zempo src/tempo/precompiles/testdata) that still differ from the reference; remove a line when it passes.
-sigver/verifyConfigurableAccount-first-use/T14
-sigver/verifyConfigurableAccount-registered/T14
-sigver/verifyConfigurableAccount-stale/T14
-sigver/verifyConfigurableAccount-other-account/T14
-sigver/verifyConfigurableAccount-other-registered-account/T14
-sigver/verifyConfigurableAccount-first-use-version-1/T14
-sigver/verifyConfigurableAccount-code-no-commitment/T14
-sigver/verifyConfigurableAccount-marker-no-commitment/T14
-sigver/verifyConfigurableAccount-below-threshold/T14
-sigver/verifyConfigurableAccount-two-owners/T14
-sigver/verifyConfigurableAccount-not-owner/T14
-sigver/verifyConfigurableAccount-malformed/T14
-sigver/verifyConfigurableAccount-empty/T14
-sigver/verifyConfigurableAccount-precompile-account/T14
-sigver/verifyConfigurableAccount-primitive/T14
-sigver/verifyConfigurableAccount-keychain/T14
-sigver/verifyConfigurableAccount-low-gas/T14
-sigver/verifyConfigurableAccount-beyond-cap/T14
 keychain/authorize-unlimited/T14
 keychain/authorize-duplicate-targets/T14
 keychain/authorize-type0/T14

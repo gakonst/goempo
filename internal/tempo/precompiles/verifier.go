@@ -123,7 +123,28 @@ var verifierTable = register(SignatureVerifierAddress, newTable(
 		ok, err := c.verifyKeychain(keychainArgs(a, true))
 		return retBool(flag(ok)), err
 	}).from(hardfork.T6),
+	view("verifyConfigurableAccount(address,bytes32,bytes)", []abiType{tAddress, tB32, tBytes}, func(c *Context, a []abiValue) ([]byte, error) {
+		ok, err := c.verifyConfigurableSignature(caShimCheck{account: a[0].addr(), hash: a[1].bytes32(), raw: a[2].data})
+		return retBool(flag(ok)), err
+	}).from(hardfork.T14),
 ))
+
+var verifierUncappedSelectors = [][4]byte{
+	selector("verifyConfigurableAccount(address,bytes32,bytes)"),
+	selector("verifyKeychain(address,bytes32,bytes)"),
+}
+
+func verifierUncapped(c *Context, input []byte) bool {
+	if !c.at(hardfork.T14) || len(input) < 4 {
+		return false
+	}
+	for _, s := range verifierUncappedSelectors {
+		if [4]byte(input[:4]) == s {
+			return true
+		}
+	}
+	return false
+}
 
 func (c *Context) isRetiredRoot(owner Address) (bool, error) {
 	if !c.at(hardfork.T14) {

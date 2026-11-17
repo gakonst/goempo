@@ -178,7 +178,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		if found.deleted {
 			return nil, ErrNotFound
 		}
-		return append([]byte(nil), found.value...), nil
+		return found.value, nil
 	}
 	return nil, ErrNotFound
 }

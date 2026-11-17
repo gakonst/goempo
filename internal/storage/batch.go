@@ -64,6 +64,12 @@ func (b *Batch) Delete(key []byte) {
 
 func (b *Batch) Len() int { return len(b.ops) }
 
+// Append moves other's operations to the end of b, in order.
+func (b *Batch) Append(other *Batch) {
+	b.ops = append(b.ops, other.ops...)
+	b.bytes += other.bytes
+}
+
 func (b *Batch) Bytes() int { return b.bytes }
 
 func (b *Batch) Reset() {

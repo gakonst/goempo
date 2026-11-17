@@ -2,7 +2,13 @@ package state
 
 import (
 	"bytes"
+	"runtime"
 	"slices"
+	"sync"
+	"sync/atomic"
+
+	"github.com/gakonst/goempo/internal/crypto/keccak"
+	"github.com/gakonst/goempo/internal/rlp"
 
 	"github.com/gakonst/goempo/internal/storage"
 	"github.com/gakonst/goempo/internal/trie"
@@ -26,8 +32,17 @@ func (s *State) Commit(number uint64) (Hash, error) {
 	b := &db.batch
 	b.Reset()
 	roots := make([]Hash, len(addrs))
+	jobs, err := db.prepareStorage(s, addrs, b)
+	if err != nil {
+		db.err = err
+		return Hash{}, err
+	}
+	if err := runStorageJobs(jobs, db.opts.StorageNodes); err != nil {
+		db.err = err
+		return Hash{}, err
+	}
 	for i, addr := range addrs {
-		root, err := db.commitObject(s.accounts[addr], b)
+		root, err := db.finishObject(s.accounts[addr], jobs[i], b)
 		if err != nil {
 			db.err = err
 			return Hash{}, err
@@ -79,15 +94,138 @@ func (s *State) trimCaches() {
 	}
 }
 
-func (db *DB) commitObject(o *object, b *storage.Batch) (Hash, error) {
-	assert.Ok(o != nil, "state commits an account it never loaded")
-	hashed := db.hasher.Hash(o.addr[:])
+// storageJob is one account's storage trie update, run on a worker.
+type storageJob struct {
+	o      *object
+	t      *trie.Trie
+	before int
+	slots  int
+	root   Hash
+	batch  storage.Batch
+	err    error
+}
+
+// prepareStorage wipes destructed accounts' storage and opens the storage
+// trie of every account with changed slots, in address order. It returns one
+// job per address, nil where the storage root does not change.
+func (db *DB) prepareStorage(s *State, addrs []Address, b *storage.Batch) ([]*storageJob, error) {
+	jobs := make([]*storageJob, len(addrs))
+	for i, addr := range addrs {
+		o := s.accounts[addr]
+		assert.Ok(o != nil, "state commits an account it never loaded")
+		if o.wiped {
+			db.forgetStorageTrie(o.addr)
+			if err := db.wipeSlots(o, b); err != nil {
+				return nil, err
+			}
+		}
+		if !o.exists || len(o.changed) == 0 {
+			continue
+		}
+		t := db.storageTrie(o, storageBase(o))
+		jobs[i] = &storageJob{o: o, t: t, before: t.Nodes(), slots: len(o.changed)}
+	}
+	return jobs, nil
+}
+
+func storageBase(o *object) Hash {
 	if o.wiped {
-		db.forgetStorageTrie(o.addr)
-		if err := db.wipeSlots(o, b); err != nil {
-			return Hash{}, err
+		return emptyRoot
+	}
+	return o.base.storageRoot
+}
+
+// parallelSlotsMin is the number of changed slots in a block below which
+// storage tries are updated on the calling goroutine.
+const parallelSlotsMin = 64
+
+// runStorageJobs updates every job's storage trie and computes its root.
+// Each account's trie, slots and batch are its own, so jobs run in parallel;
+// the largest start first.
+func runStorageJobs(all []*storageJob, nodesMax int) error {
+	jobs := make([]*storageJob, 0, len(all))
+	slots := 0
+	for _, j := range all {
+		if j != nil {
+			jobs = append(jobs, j)
+			slots += j.slots
 		}
 	}
+	workers := min(runtime.GOMAXPROCS(0), len(jobs))
+	if workers <= 1 || slots < parallelSlotsMin {
+		w := newStorageWorker()
+		for _, j := range jobs {
+			w.run(j, nodesMax)
+			if j.err != nil {
+				return j.err
+			}
+		}
+		return nil
+	}
+	slices.SortFunc(jobs, func(a, b *storageJob) int { return b.slots - a.slots })
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			w := newStorageWorker()
+			for {
+				k := int(next.Add(1) - 1)
+				if k >= len(jobs) {
+					return
+				}
+				w.run(jobs[k], nodesMax)
+			}
+		})
+	}
+	wg.Wait()
+	for _, j := range jobs {
+		if j.err != nil {
+			return j.err
+		}
+	}
+	return nil
+}
+
+type storageWorker struct {
+	hasher *keccak.Hasher
+	enc    *rlp.Encoder
+}
+
+func newStorageWorker() storageWorker {
+	return storageWorker{hasher: keccak.New(), enc: rlp.NewEncoder(64)}
+}
+
+func (w storageWorker) run(j *storageJob, nodesMax int) {
+	o := j.o
+	for _, k := range sortedHashes(o.changed) {
+		v := o.committed[k]
+		hk := w.hasher.Hash(k[:])
+		sk := slotKeyBytes(o.addr, k)
+		if v.IsZero() {
+			j.batch.Delete(sk)
+			if j.err = j.t.Unset(hk[:]); j.err != nil {
+				return
+			}
+			continue
+		}
+		enc := encodeSlot(v)
+		j.batch.Put(sk, enc)
+		w.enc.Reset()
+		w.enc.WriteBytes(enc)
+		if j.err = j.t.Set(hk[:], w.enc.Encoded()); j.err != nil {
+			return
+		}
+	}
+	j.root = j.t.Commit(nodeWriter{batch: &j.batch, prefix: storageNodePrefix(o.addr)})
+	if j.t.Nodes() > nodesMax {
+		j.t.Evict(storageKeepDepthDefault)
+	}
+}
+
+// finishObject writes one account after its storage job ran: its storage
+// writes, code, flat entry and account trie leaf, in address order.
+func (db *DB) finishObject(o *object, j *storageJob, b *storage.Batch) (Hash, error) {
+	hashed := db.hasher.Hash(o.addr[:])
 	if !o.exists {
 		if !o.base.exists {
 			return emptyRoot, nil
@@ -95,9 +233,11 @@ func (db *DB) commitObject(o *object, b *storage.Batch) (Hash, error) {
 		b.Delete(accountKey(o.addr))
 		return emptyRoot, db.accounts.Unset(hashed[:])
 	}
-	root, err := db.commitStorage(o, b)
-	if err != nil {
-		return Hash{}, err
+	root := storageBase(o)
+	if j != nil {
+		b.Append(&j.batch)
+		db.storageNodes += j.t.Nodes() - j.before
+		root = j.root
 	}
 	if o.codeDirty {
 		db.putCode(o, b)

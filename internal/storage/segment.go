@@ -6,12 +6,17 @@ import (
 	"hash/crc32"
 	"math"
 	"sort"
+	"sync"
 
 	goio "github.com/gakonst/goempo/internal/io"
 	"github.com/kapetan-io/tiger/assert"
 )
 
 const blockRecordsMax = 64
+
+// blockBufs holds block read buffers, so gets are safe from several
+// goroutines at once (state commits read storage tries in parallel).
+var blockBufs = sync.Pool{New: func() any { b := make([]byte, 0, 4096); return &b }}
 
 const blockBytesTarget = 4096
 
@@ -42,7 +47,6 @@ type indexEntry struct {
 }
 
 type segment struct {
-	scratch []byte
 	name    string
 	file    goio.File
 	size    int64
@@ -292,11 +296,13 @@ func (s *segment) get(key []byte) (lookup, error) {
 	if i < 0 {
 		return lookup{}, nil
 	}
-	block, err := s.readBlock(i, s.scratch)
+	bp := blockBufs.Get().(*[]byte)
+	defer blockBufs.Put(bp)
+	block, err := s.readBlock(i, *bp)
 	if err != nil {
 		return lookup{}, err
 	}
-	s.scratch = block
+	*bp = block
 	r := reader{b: block}
 	for range s.index[i].records {
 		rec := nextRecord(&r)
@@ -305,7 +311,8 @@ func (s *segment) get(key []byte) (lookup, error) {
 		}
 		c := bytes.Compare(rec.key, key)
 		if c == 0 {
-			return lookup{value: rec.value, found: true, deleted: rec.deleted}, nil
+			// The block buffer goes back to the pool, so the value is copied out.
+			return lookup{value: append([]byte(nil), rec.value...), found: true, deleted: rec.deleted}, nil
 		}
 		if c > 0 {
 			return lookup{}, nil

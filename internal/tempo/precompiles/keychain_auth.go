@@ -82,7 +82,10 @@ func (c *Context) ensureAdminCaller(sender Address) error {
 
 func (c *Context) isAdminKey(k keyRef) (bool, error) {
 	if k.keyID == k.account {
-		return true, nil
+		retired, err := c.isRetiredRoot(k.account)
+		if err != nil || !retired {
+			return !retired, err
+		}
 	}
 	key, err := c.loadActiveKey(k)
 	if err != nil {
@@ -180,7 +183,7 @@ func AuthorizeKey(c *Context, g KeyGrant) error {
 	}
 	k := keyRef{account: g.Account, keyID: g.KeyID}
 	key := authorizedKey{sigType: g.SigType, expiry: r.Expiry, enforceLimits: r.EnforceLimits, admin: g.Admin}
-	if err := c.sstore(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(key)); err != nil {
+	if err := c.storePackedGroup(AccountKeychainAddress, c.keySlot(k), encodeAuthorizedKey(key)); err != nil {
 		return err
 	}
 	if !g.Admin {

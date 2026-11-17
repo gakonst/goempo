@@ -78,6 +78,7 @@ type Context struct {
 	Caller             Address
 	Static             bool
 	SkipStorageCredits bool
+	Trace              func(op string, addr Address, key Hash, gasUsed uint64)
 	ChainID            Word
 	self               Address
 	gasLimit           uint64
@@ -152,6 +153,9 @@ func (c *Context) sload(addr Address, s slot) (Word, error) {
 	}
 	cold := !c.warmSlot(addr, s)
 	value := c.State.Storage(addr, Hash(s))
+	if c.Trace != nil {
+		c.Trace("sload", addr, Hash(s), c.gasUsed)
+	}
 	if !c.at(hardfork.T4) {
 		if err := c.charge(gasWarmRead); err != nil {
 			return Word{}, err
@@ -266,6 +270,9 @@ func (c *Context) sstore(addr Address, s slot, value Word) error {
 		}
 	}
 	v := c.journalWrite(addr, s, value)
+	if c.Trace != nil {
+		c.Trace("sstore", addr, Hash(s), c.gasUsed)
+	}
 	if !c.at(hardfork.T4) {
 		if err := c.charge(gasWarmRead); err != nil {
 			return err

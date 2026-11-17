@@ -94,7 +94,7 @@ func (c *Context) writeLimit(s slot, l spendingLimit) error {
 		return err
 	}
 	w := pack(Word{}).with(fLimitMax, l.max).withU64(fLimitPeriod, l.period).withU64(fLimitPerEnd, l.periodEnd).w
-	return c.sstore(AccountKeychainAddress, s.plus(1), w)
+	return c.storePackedGroup(AccountKeychainAddress, s.plus(1), w)
 }
 
 func (l spendingLimit) nextPeriodEnd(now uint64) uint64 {

@@ -65,6 +65,7 @@ type replayKeyAuth struct {
 }
 
 type replayFixture struct {
+	NonceKey     string                       `json:"nonceKey"`
 	KeyAuth      *replayKeyAuth               `json:"keyAuth"`
 	KeyID        string                       `json:"keyId"`
 	SigType      uint8                        `json:"sigType"`
@@ -153,7 +154,9 @@ func replay(t *testing.T, path string) {
 	st := run.st
 	st.WarmAddress(mustAddr(fx.Sender))
 	st.WarmAddress(mustAddr(fx.Coinbase))
+	st.WarmSlot(mustAddr(fx.FeeToken), primitives.Hash{31: 4})
 	h := run.context(handlerGas)
+	precompiles.SetTxOrigin(h, mustAddr(fx.Sender))
 	sameTx := fx.KeyAuth != nil && fx.KeyAuth.KeyID == fx.KeyID
 	if fx.KeyID != "" && !sameTx {
 		precompiles.SetTxOrigin(h, mustAddr(fx.Sender))
@@ -171,6 +174,10 @@ func replay(t *testing.T, path string) {
 	}
 	if run.fork >= hardfork.T7 {
 		precompiles.MarkFeeSlotsNonCreditable(h, precompiles.FeeSlots{FeePayer: mustAddr(fx.FeePayer), FeeToken: mustAddr(fx.FeeToken)})
+	}
+	if fx.NonceKey != "" {
+		_, err := precompiles.IncrementNonce(h, mustAddr(fx.Sender), mustWord(fx.NonceKey))
+		assert.NoError(err, "2d nonce")
 	}
 	if fx.ExpiringHash != "" {
 		assert.NoError(precompiles.CheckAndMarkExpiringNonce(h, mustHash(fx.ExpiringHash), fx.ValidBefore), "expiring nonce")

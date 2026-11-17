@@ -46,35 +46,40 @@ func (c *Context) addLiquidity(id Hash, holder Address, amount Word) error {
 	return c.sstore(FeeManagerAddress, s, nb)
 }
 
-func (c *Context) mintedLiquidity(id Hash, p pool, amount Word) (Word, error) {
+type minted struct {
+	liquidity Word
+	supply    Word
+}
+
+func (c *Context) mintedLiquidity(id Hash, p pool, amount Word) (minted, error) {
 	supply, err := c.sload(FeeManagerAddress, c.totalSupplySlot(id))
 	if err != nil {
-		return Word{}, err
+		return minted{}, err
 	}
 	if p.reserveUser.IsZero() && p.reserveValidator.IsZero() {
 		half := amount.Div(u256.FromUint64(2))
 		if !half.Gt(ammMinLiquidity) {
-			return Word{}, errSel("InsufficientLiquidity()")
+			return minted{}, errSel("InsufficientLiquidity()")
 		}
 		ns, err := num(supply).add(ammMinLiquidity)
 		if err != nil {
-			return Word{}, err
+			return minted{}, err
 		}
 		if err := c.sstore(FeeManagerAddress, c.totalSupplySlot(id), ns); err != nil {
-			return Word{}, err
+			return minted{}, err
 		}
-		return half.Sub(ammMinLiquidity), nil
+		return minted{liquidity: half.Sub(ammMinLiquidity), supply: ns}, nil
 	}
 	product := ammN.Mul(p.reserveUser).Div(ammScale)
 	denom := p.reserveValidator.Add(product)
 	if denom.IsZero() {
-		return Word{}, errSel("DivisionByZero()")
+		return minted{}, errSel("DivisionByZero()")
 	}
 	numerator := amount.Mul(supply)
 	if !supply.IsZero() && numerator.Div(supply) != amount {
-		return Word{}, errSel("InvalidSwapCalculation()")
+		return minted{}, errSel("InvalidSwapCalculation()")
 	}
-	return numerator.Div(denom), nil
+	return minted{liquidity: numerator.Div(denom), supply: supply}, nil
 }
 
 func ammMint(c *Context, r ammReq) (Word, error) {
@@ -102,10 +107,11 @@ func ammMint(c *Context, r ammReq) (Word, error) {
 	if err != nil {
 		return Word{}, err
 	}
-	liquidity, err := c.mintedLiquidity(id, p, r.amount)
+	m, err := c.mintedLiquidity(id, p, r.amount)
 	if err != nil {
 		return Word{}, err
 	}
+	liquidity := m.liquidity
 	if liquidity.IsZero() {
 		return Word{}, errSel("InsufficientLiquidity()")
 	}
@@ -120,11 +126,7 @@ func ammMint(c *Context, r ammReq) (Word, error) {
 	if err := c.writePool(id, p); err != nil {
 		return Word{}, err
 	}
-	supply, err := c.sload(FeeManagerAddress, c.totalSupplySlot(id))
-	if err != nil {
-		return Word{}, err
-	}
-	ns, err := num(supply).add(liquidity)
+	ns, err := num(m.supply).add(liquidity)
 	if err != nil {
 		return Word{}, err
 	}

@@ -286,6 +286,10 @@ func decodeReceiveConfig(w Word) receiveConfig {
 
 const recoveryModeMax = recoveryReceiver + 1
 
+const _ = uint(fieldByteMax - recoveryModeMax)
+
+const fieldByteMax = 0xff
+
 func (c *Context) readReceiveConfig(account Address) (receiveConfig, error) {
 	w, err := c.sload(TIP403RegistryAddress, c.receivePolicySlot(account))
 	if err != nil {

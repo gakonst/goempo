@@ -112,7 +112,6 @@ func (c *Context) GasLeft() uint64 { return c.gasLimit - c.gasUsed }
 func (c *Context) at(f hardfork.Fork) bool { return c.Fork >= f }
 
 func (c *Context) outOfGas() error {
-	c.gasUsed = c.gasLimit
 	return errOutOfGas
 }
 

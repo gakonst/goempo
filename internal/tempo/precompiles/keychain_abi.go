@@ -111,9 +111,9 @@ func (c *Context) updateSpendingLimit(sp spend) error {
 		if sp.amount.Gt(u128Max) {
 			return errSel("InvalidSpendingLimit()")
 		}
-		limit, err := c.readLimit(s)
-		if err != nil {
-			return err
+		limit, rerr := c.readLimit(s)
+		if rerr != nil {
+			return rerr
 		}
 		limit.remaining = sp.amount
 		limit.max = sp.amount

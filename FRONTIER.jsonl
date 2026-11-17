@@ -1,1 +1,2 @@
 {"date":"2026-11-17","rung":"R2","score":"yes","commit":"d1c1553","note":"mainnet genesis state root matches rpc.tempo.xyz block 0"}
+{"date":"2026-11-17","rung":"R1","score":"100%","commit":"a5aa2d9","note":"632/632 sampled mainnet blocks across T0..T13 (860 txs): byte-exact re-encode, block hash, tx root, tx hashes, senders, receipts root, fee payers; testnet 512/512 blocks, 31059 txs"}

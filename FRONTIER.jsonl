@@ -9,3 +9,4 @@
 {"date":"2026-11-17","rung":"R3","score":"4165888","commit":"d022c29","note":"first mismatch block 4165889: ValidatorConfig 0xa1b3f4a9 not implemented"}
 {"date":"2026-11-17","rung":"R5","score":"50/57 methods, 2671/2697 cases","commit":"b4e8f48","note":"recorded mainnet corpus; traces for user txs, createAccessList, simulateV1, proofs not yet"}
 {"date":"2026-11-17","rung":"R5","score":"52/57 methods, 2919/2925 cases","commit":"e034b7b","note":"geth tracers + parity trace_block for user txs match recorded corpus (+264 trace cases)"}
+{"date":"2026-11-17","rung":"R5","score":"53/57 methods, 2920/2925 cases","commit":"61a8c1f","note":"Tempo precompile custom errors (161, 19 groups) rendered in revert messages"}

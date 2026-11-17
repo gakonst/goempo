@@ -20,6 +20,7 @@ const (
 	futureMax      = 1024
 	requestEvery   = 500
 	backfillAfter  = 3000
+	backfillWindow = 16
 	settleMax      = 64
 	pendingWalkMax = 4096
 	RecoverMax     = 1 << 20
@@ -108,6 +109,7 @@ type Engine struct {
 	backfill  map[uint64]uint64
 	progress  consensus.Millis
 	askedAt   consensus.Millis
+	syncing   bool
 	verdicts  map[consensus.Digest]consensus.Verdict
 	nextID    uint64
 	cur       *epochState
@@ -235,20 +237,49 @@ func (e *Engine) Tick(now consensus.Millis) {
 }
 
 func (e *Engine) requestBackfill() {
-	if e.now < e.progress+backfillAfter || e.now < e.askedAt+requestEvery {
+	if !e.syncing && e.now < e.progress+backfillAfter {
 		return
 	}
-	e.askedAt = e.now
-	clear(e.backfill)
-	height := e.cfg.Chain.Head().Header.Inner.Number + 1
-	e.nextID++
-	e.backfill[e.nextID] = height
-	q := wire.MarshalRequest{ID: e.nextID, Key: wire.MarshalKey{Kind: wire.KeyFinalized, Height: height}}
-	e.cfg.Net.Send(wire.ChannelMarshal, nil, q.Encode())
+	if e.now >= e.askedAt+requestEvery {
+		clear(e.backfill)
+		e.syncing = false
+		e.askedAt = e.now
+	}
+	head := e.cfg.Chain.Head().Header.Inner.Number
+	peers := e.peersExceptMe()
+	if len(peers) == 0 {
+		return
+	}
+	outstanding := make(map[uint64]bool, len(e.backfill))
+	for _, h := range e.backfill {
+		outstanding[h] = true
+	}
+	span := min(e.cfg.Epocher.Last(e.cur.epoch)-min(head, e.cfg.Epocher.Last(e.cur.epoch)), backfillWindow)
+	for i := range span {
+		h := head + 1 + i
+		if outstanding[h] {
+			continue
+		}
+		e.nextID++
+		e.backfill[e.nextID] = h
+		q := wire.MarshalRequest{ID: e.nextID, Key: wire.MarshalKey{Kind: wire.KeyFinalized, Height: h}}
+		e.cfg.Net.Send(wire.ChannelMarshal, []PeerKey{peers[int(h%uint64(len(peers)))]}, q.Encode())
+	}
+}
+
+func (e *Engine) peersExceptMe() []PeerKey {
+	out := make([]PeerKey, 0, len(e.cur.participants))
+	for _, p := range e.cur.participants {
+		if p != e.me {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (e *Engine) onBackfill(height uint64, body []byte) {
-	if height != e.cfg.Chain.Head().Header.Inner.Number+1 {
+	head := e.cfg.Chain.Head().Header.Inner.Number
+	if height <= head {
 		return
 	}
 	cb, err := wire.DecodeCertifiedBlock(body, consensus.KindFinalize)
@@ -269,8 +300,8 @@ func (e *Engine) onBackfill(height uint64, body []byte) {
 	e.store(&b)
 	e.onFinalized(consensus.Finalized{Proposal: f.Proposal, Certificate: f.Certificate})
 	e.drain()
-	e.askedAt = 0
-	e.progress = 0
+	e.syncing = true
+	e.askedAt = e.now
 	e.requestBackfill()
 }
 

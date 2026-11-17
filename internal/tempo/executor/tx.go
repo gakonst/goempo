@@ -192,16 +192,17 @@ func (r *txRun) useAccessKey() error {
 		return err
 	}
 	r.keyID = key
-	if r.view.aa.KeyAuthorization == nil {
-		_, err = precompiles.ValidateKeychainAuthorization(r.ctx, precompiles.KeyUse{
-			Account: r.view.sender,
-			KeyID:   key,
-			SigType: uint8(sig.Inner.Kind),
-			Check:   r.env.Rules.AtLeast(hardfork.T1),
-		})
-		if err != nil {
-			return err
-		}
+	if auth := r.view.aa.KeyAuthorization; auth != nil && auth.Authorization.KeyID == key {
+		return nil
+	}
+	_, err = precompiles.ValidateKeychainAuthorization(r.ctx, precompiles.KeyUse{
+		Account: r.view.sender,
+		KeyID:   key,
+		SigType: uint8(sig.Inner.Kind),
+		Check:   r.env.Rules.AtLeast(hardfork.T1),
+	})
+	if err != nil {
+		return err
 	}
 	precompiles.SetTransactionKey(r.ctx, key)
 	return nil

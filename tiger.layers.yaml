@@ -111,3 +111,9 @@
   - ./internal/io
   - ./internal/p2p/snappy
   - golang.org/x/crypto/sha3
+"./internal/tempo/chain":
+  - ./internal/evm
+  - ./internal/primitives
+  - ./internal/tempo/hardfork
+  - ./internal/u256
+  - github.com/kapetan-io/tiger/assert

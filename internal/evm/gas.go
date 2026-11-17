@@ -24,6 +24,7 @@ type GasTable struct {
 	SstoreSet         uint64
 	SstoreReset       uint64
 	SstoreClearRefund uint64
+	SstoreSetRefund   uint64
 	SstoreSentry      uint64
 	CallValue         uint64
 	CallStipend       uint64
@@ -63,6 +64,7 @@ func OsakaGas() *GasTable {
 		SstoreSet:         20000,
 		SstoreReset:       2900,
 		SstoreClearRefund: 4800,
+		SstoreSetRefund:   19900,
 		SstoreSentry:      2300,
 		CallValue:         9000,
 		CallStipend:       2300,
@@ -105,6 +107,7 @@ func GasForFork(fork Fork) *GasTable {
 		table.ColdSload = 800
 		table.ColdAccountAccess = 700
 		table.SstoreReset = 5000
+		table.SstoreSetRefund = table.SstoreSet - table.WarmAccess
 	}
 	return table
 }

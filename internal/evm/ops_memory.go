@@ -148,7 +148,7 @@ func (e *EVM) sstoreCost(s slotValues) uint64 {
 	}
 	if s.original == s.value {
 		if s.original.IsZero() {
-			e.State.AddRefund(int64(g.SstoreSet - g.WarmAccess))
+			e.State.AddRefund(int64(g.SstoreSetRefund))
 		} else {
 			e.State.AddRefund(int64(g.SstoreReset - g.WarmAccess))
 		}

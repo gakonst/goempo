@@ -61,10 +61,16 @@ func (v *txView) isCreate() bool {
 	return len(v.calls) > 0 && v.calls[0].to == nil
 }
 
-func viewOf(tx *types.Transaction) (txView, error) {
-	sender, err := tx.Sender()
-	if err != nil {
-		return txView{}, err
+func viewOf(tx *types.Transaction, sim *Simulation) (txView, error) {
+	var sender Address
+	if sim != nil {
+		sender = sim.Sender
+	} else {
+		recovered, err := tx.Sender()
+		if err != nil {
+			return txView{}, err
+		}
+		sender = recovered
 	}
 	v := txView{kind: tx.Type(), sender: sender, feePayer: sender}
 	switch d := tx.Data.(type) {
@@ -81,7 +87,12 @@ func viewOf(tx *types.Transaction) (txView, error) {
 		v.dynamic(&d.DynamicFeeTx)
 		v.auths = ethAuthorizations(d.AuthorizationList)
 	case *types.TempoTx:
-		return v, v.tempo(d)
+		err := v.tempo(d)
+		if err != nil && sim != nil {
+			v.feePayer = sender
+			return v, nil
+		}
+		return v, err
 	default:
 		return txView{}, ErrTxKind
 	}

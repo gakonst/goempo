@@ -70,6 +70,7 @@ type TxEnv struct {
 	Block  *evm.BlockContext
 	Tx     *types.Transaction
 	Index  int
+	Sim    *Simulation
 }
 
 func (x *Executor) SystemSteps(st State, in Input) error {

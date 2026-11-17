@@ -38,7 +38,7 @@ func feeAmount(gas uint64, price u256.Int) u256.Int {
 }
 
 func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
-	v, err := viewOf(env.Tx)
+	v, err := viewOf(env.Tx, env.Sim)
 	if err != nil {
 		return TxOutcome{}, err
 	}
@@ -74,7 +74,9 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 		return TxOutcome{}, fmt.Errorf("fee refund: %w", err)
 	}
 	logs := env.State.Logs()
-	env.State.FinalizeTx()
+	if env.Sim == nil {
+		env.State.FinalizeTx()
+	}
 	return TxOutcome{GasUsed: gasUsed, Success: ran.success, Logs: logs}, nil
 }
 
@@ -84,8 +86,22 @@ func (r *txRun) finishOutOfGas() (TxOutcome, error) {
 		return TxOutcome{}, fmt.Errorf("fee refund: %w", err)
 	}
 	logs := r.env.State.Logs()
-	r.env.State.FinalizeTx()
+	if r.env.Sim == nil {
+		r.env.State.FinalizeTx()
+	}
 	return TxOutcome{GasUsed: gasUsed, Success: false, Logs: logs}, nil
+}
+
+func (r *txRun) skipNonce() bool {
+	return r.env.Sim != nil && r.env.Sim.SkipNonceCheck
+}
+
+func (r *txRun) skipBalance() bool {
+	return r.env.Sim != nil && r.env.Sim.SkipBalanceCheck
+}
+
+func (r *txRun) zeroPriceCall() bool {
+	return r.env.Sim != nil && r.view.maxFee.IsZero()
 }
 
 func (r *txRun) validate() error {
@@ -100,7 +116,7 @@ func (r *txRun) validate() error {
 		return ErrGasCap
 	}
 	baseFee := r.env.Block.BaseFee
-	if v.maxFee.Lt(baseFee) {
+	if v.maxFee.Lt(baseFee) && !r.zeroPriceCall() {
 		return ErrFeeCap
 	}
 	if v.isAA() {
@@ -145,13 +161,13 @@ func (r *txRun) applyNonce() error {
 		if err != nil {
 			return err
 		}
-		if got != v.nonce {
+		if got != v.nonce && !r.skipNonce() {
 			return fmt.Errorf("%w: key nonce %d, tx %d", ErrNonce, got, v.nonce)
 		}
 		_, err = precompiles.IncrementNonce(r.ctx, v.sender, v.nonceKey)
 		return err
 	}
-	if got := st.Nonce(v.sender); got != v.nonce {
+	if got := st.Nonce(v.sender); got != v.nonce && !r.skipNonce() {
 		return fmt.Errorf("%w: account nonce %d, tx %d", ErrNonce, got, v.nonce)
 	}
 	if !v.isCreate() {
@@ -244,7 +260,7 @@ func (r *txRun) checkFeeToken() error {
 	if err != nil {
 		return err
 	}
-	if balance.Lt(limit) {
+	if balance.Lt(limit) && !r.skipBalance() {
 		return ErrFeeBalance
 	}
 	return nil

@@ -236,6 +236,10 @@ var keychainTable = register(AccountKeychainAddress, newTable(
 		return encodeWords(wordOfU64(uint64(key.sigType)), addressWord(k.keyID), wordOfU64(key.expiry), flag(key.enforceLimits).hash(), flag(false).hash()), err
 	}),
 	view("getRemainingLimit(address,address,address)", []abiType{tAddress, tAddress, tAddress}, func(c *Context, a []abiValue) ([]byte, error) {
+		if !c.at(hardfork.T2) {
+			w, err := c.sload(AccountKeychainAddress, c.limitSlot(viewKeyArgs(a), a[2].addr()))
+			return retWord(w), err
+		}
 		v, err := c.effectiveLimit(viewKeyArgs(a), a[2].addr())
 		return retWord(v.remaining), err
 	}).before(hardfork.T3),

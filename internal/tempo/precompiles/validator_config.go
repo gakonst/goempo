@@ -240,13 +240,6 @@ func (c *Context) updateValidator(sender Address, r validatorRecord) error {
 }
 
 func (c *Context) writeArrayElem(i uint64, v Address) error {
-	n, err := c.validatorCount()
-	if err != nil {
-		return err
-	}
-	if i >= n {
-		return underOverflow()
-	}
 	return c.sstore(ValidatorConfigAddress, c.validatorArraySlot(i), toWord(addressWord(v)))
 }
 

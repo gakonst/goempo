@@ -205,6 +205,9 @@ func (c *Context) isAuthorizedAs(q authQuery, role authRole) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if !c.at(hardfork.T2) {
+		role = roleTransfer
+	}
 	if role == roleSender {
 		return c.authorizedSimple(authQuery{id: cp.sender, user: q.user})
 	}

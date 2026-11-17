@@ -398,6 +398,9 @@ func (t Token) completeQuoteTokenUpdate(sender Address) error {
 		if current == t.addr {
 			return errSel("InvalidQuoteToken()")
 		}
+		if !IsTIP20(current) {
+			return errSel("InvalidToken()")
+		}
 		if current, err = TIP20(t.c, current).quoteToken(); err != nil {
 			return err
 		}

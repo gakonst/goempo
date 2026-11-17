@@ -72,6 +72,17 @@ type TxEnv struct {
 	Index  int
 }
 
+func (x *Executor) SystemSteps(st State, in Input) error {
+	assert.Ok(in.Block != nil, "system steps need a block")
+	header := &in.Block.Header
+	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
+	set := precompiles.NewSet(rules.Fork, rules.EthereumPrecompiles())
+	ts := chain.Timestamp{Seconds: header.Inner.Timestamp, MillisPart: header.TimestampMillisPart}
+	sys := &systemEnv{config: rules.Config(ts.Millis(), set), block: blockContext(header, in.GetHash), header: header, rules: rules}
+	preBlock(st, sys)
+	return x.committeeCall(st, sys)
+}
+
 func (x *Executor) Execute(st State, in Input) (Result, error) {
 	assert.Ok(in.Block != nil, "executor needs a block")
 	header := &in.Block.Header

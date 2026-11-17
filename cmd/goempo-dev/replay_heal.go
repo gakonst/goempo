@@ -66,6 +66,9 @@ func (r *replayer) applyTrace(blk *types.Block) error {
 	h := &blk.Header.Inner
 	st := r.db.State()
 	st.Discard()
+	if err := r.exec.SystemSteps(st, executor.Input{Block: blk, GetHash: r.getHash}); err != nil {
+		return err
+	}
 	var traces []traceResult
 	opts := map[string]any{"tracer": "prestateTracer", "tracerConfig": map[string]any{"diffMode": true}}
 	q := rpcQuery{method: "debug_traceBlockByNumber", params: []any{blockTag(h.Number), opts}}

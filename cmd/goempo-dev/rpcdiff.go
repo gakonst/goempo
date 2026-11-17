@@ -32,6 +32,7 @@ const (
 	tracerCorpusFileName    = "corpus-g.jsonl"
 	aaTraceCorpusFileName   = "corpus-h.jsonl"
 	replayCorpusFileName    = "corpus-i.jsonl"
+	methodsCorpusFileName   = "corpus-j.jsonl"
 	statusForbidden         = 403
 	corpusEntriesMax        = 1 << 20
 	corpusBytesMax          = 1 << 34
@@ -104,6 +105,7 @@ func defaultCorpusPath() string {
 		filepath.Join(dir, tracerCorpusFileName),
 		filepath.Join(dir, aaTraceCorpusFileName),
 		filepath.Join(dir, replayCorpusFileName),
+		filepath.Join(dir, methodsCorpusFileName),
 	}, ",")
 }
 

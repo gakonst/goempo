@@ -47,6 +47,7 @@ func NewServer(cfg Config, chain Chain, state StateSource, exec Executor) *Serve
 	}
 	s := &Server{cfg: cfg, chain: chain, state: state, exec: exec, filters: newFilterTable()}
 	s.methods = methodTable()
+	addDebugStubs(s.methods)
 	return s
 }
 

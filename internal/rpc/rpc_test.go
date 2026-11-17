@@ -118,3 +118,7 @@ func TestMethodsAreSorted(t *testing.T) {
 		assert.Ok(names[i] < names[i+1], "methods sorted and unique")
 	}
 }
+
+func TestDebugExtensionMethods(t *testing.T) {
+	replay(t, rpc.NewServer(rpc.Config{}, loadChain(), nil, nil), loadCases("testdata/debugext.jsonl"))
+}

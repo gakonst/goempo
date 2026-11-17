@@ -14,3 +14,4 @@
 {"date":"2026-11-17","rung":"R5","score":"56/57 methods, 2924/2925 cases","commit":"6e0de5c","note":"eth_call/estimateGas/createAccessList/debug_traceCall through executor.ApplyCall (fee-token balance warming, no gas cap, no fee charge)"}
 {"date":"2026-11-17","rung":"R5","score":"57/57 methods, 2925/2925 cases","commit":"49fabb5","note":"eth_simulateV1 matches (simulated block hash, roots, call results); every recorded case identical"}
 {"date":"2026-11-17","rung":"R5","score":"66/66 methods, 3114/3114 cases","commit":"6b23d44","note":"trace_* family, callMany, simulateV1 variants; +189 recorded cases (corpus-i)"}
+{"date":"2026-11-17","rung":"R3","score":"4165926","commit":"d3b6743","note":"first mismatch 4165927: ValidatorConfig 0xffb4822e 100 gas short; 40 mismatching blocks in 1..10.3M, all precompile -100 gas"}

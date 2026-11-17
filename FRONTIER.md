@@ -5,7 +5,7 @@
 | R0 Gate | scaffold | - | 2026-11-17 |
 | R1 Decode | 100% (632/632 mainnet blocks) | a5aa2d9 | 2026-11-17 |
 | R2 Genesis | yes | d1c1553 | 2026-11-17 |
-| R3 Replay | 4165888 | 033b5e0 | 2026-11-17 |
+| R3 Replay | 4165926 | 033b5e0 | 2026-11-17 |
 | R4 Follow | headers+bodies (no execution) | dc3d3d3 | 2026-11-17 |
 | R5 RPC | 50/57 methods identical, 2671/2697 cases (99.0%) | b4e8f48 | 2026-11-17 |
 | R6 Validator | no | - | - |
@@ -39,4 +39,5 @@ R5 (2026-11-17, agent 10): 66/66 methods, 3114/3114 recorded cases identical. Ad
 
 
 R5 (2026-11-17, agent 10): goempo-dev serve now serves connections concurrently (rpc.Transport.Serve: up to rpc.ConnsActiveMax=256 at once, Close stops the listener, closes open connections and waits; goleak in rpc tests). Replayed state is guarded by one lock shared by rpcexec (Executor.Lock) and the state readers. Checked with a -race build of serve at block 5000 under 24 concurrent clients mixing eth_call/estimateGas/getProof/traces: no races, consistent answers.
+R3 = 4,165,926 (2026-11-17, d3b6743): ValidatorConfig changeValidatorStatus (agent 5) matches at 4165889. First mismatch: block 4165927 tx 0, ValidatorConfig selector 0xffb4822e charges 100 gas less than mainnet. A -heal survey of 1..10.3M finds 40 mismatching blocks, every one a precompile path 100 gas short (ValidatorConfig 0xffb4822e, TIP-20 transfer/0x372500ab at T1C from 10,129,394, mint, one DEX swap); the handler side shows no mismatch. Block cache is contiguous to 13.84M (fetch from the tailnet node at ~1.5k blocks/s continues); the in-memory replay state is the next limit for a full-chain run (internal/state on disk).
 

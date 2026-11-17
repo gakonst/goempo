@@ -19,6 +19,7 @@
   - ./internal/state
   - ./internal/tempo/executor
   - ./internal/u256
+  - ./internal/rpc
 "./internal/version": []
 "./internal/io/...":
   - net
@@ -158,4 +159,13 @@
   - ./internal/primitives
   - ./internal/tempo/hardfork
   - ./internal/u256
+  - github.com/kapetan-io/tiger/assert
+"./internal/rpc":
+  - ./internal/primitives
+  - ./internal/u256
+  - ./internal/types
+  - ./internal/rlp
+  - ./internal/crypto/keccak
+  - ./internal/tempo/hardfork
+  - ./internal/io
   - github.com/kapetan-io/tiger/assert

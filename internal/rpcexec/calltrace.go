@@ -17,8 +17,8 @@ func (x *Executor) TraceCall(block uint64, req *rpc.CallRequest, opts *rpc.Trace
 	if err != nil {
 		return nil, err
 	}
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return nil, err
@@ -37,8 +37,8 @@ func (x *Executor) TraceCall(block uint64, req *rpc.CallRequest, opts *rpc.Trace
 }
 
 func (x *Executor) CreateAccessList(block uint64, req *rpc.CallRequest, gasCap uint64) (rpc.AccessListResult, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return rpc.AccessListResult{}, err

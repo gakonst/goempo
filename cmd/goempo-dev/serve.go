@@ -11,10 +11,6 @@ import (
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 )
 
-const serveConnsMax = 1 << 30
-
-const _ = uint(serveConnsMax - diffBlocksMax)
-
 type servePaths struct {
 	blocks      string
 	chunks      string
@@ -23,7 +19,7 @@ type servePaths struct {
 
 func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8545", "address to serve JSON-RPC (HTTP and WebSocket) on, one connection at a time")
+	addr := fs.String("addr", "127.0.0.1:8545", "address to serve JSON-RPC (HTTP and WebSocket) on, serving up to rpc.ConnsActiveMax connections at once")
 	blocks := fs.String("blocks", defaultBlockDir(), "fetched blocks with receipts (fetch)")
 	chunks := fs.String("chunks", defaultChunkDir(), "raw block chunks for replay (fetch-range)")
 	to := fs.Uint64("state", 0, "replay state up to this block and serve state methods there")
@@ -43,12 +39,9 @@ func runServe(args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "serving JSON-RPC on", l.Address())
 	tr := rpc.NewTransport(srv)
-	for range serveConnsMax {
-		conn, err := l.Accept()
-		if err != nil {
-			break
-		}
-		tr.ServeConn(conn)
+	if err := tr.Serve(l); err != nil {
+		fmt.Fprintln(os.Stderr, "serve:", err)
+		return 1
 	}
 	return 0
 }
@@ -74,6 +67,6 @@ func buildServer(paths servePaths, to uint64) (*rpc.Server, error) {
 	}
 	fmt.Fprintln(os.Stderr, "serve: state replayed to block", r.head)
 	states := &replayState{r: r}
-	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec}
+	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec, Lock: &states.mu}
 	return rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID, ProofWindow: paths.proofWindow}, view, states, exec), nil
 }

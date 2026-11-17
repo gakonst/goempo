@@ -56,10 +56,14 @@ type Transport struct {
 	sockets   map[uint64]*socket
 	socketSeq uint64
 	subSeq    uint64
+	conns     map[uint64]io.Conn
+	connSeq   uint64
+	closed    bool
+	done      chan struct{}
 }
 
 func NewTransport(srv *Server) *Transport {
-	return &Transport{srv: srv, sockets: map[uint64]*socket{}}
+	return &Transport{srv: srv, sockets: map[uint64]*socket{}, conns: map[uint64]io.Conn{}, done: make(chan struct{})}
 }
 
 func (t *Transport) Shutdown() error {

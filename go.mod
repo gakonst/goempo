@@ -4,6 +4,7 @@ go 1.26.10
 
 require (
 	github.com/kapetan-io/tiger v0.0.0-20261116085932-9a3119cc8314
+	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.59.0
 )
 

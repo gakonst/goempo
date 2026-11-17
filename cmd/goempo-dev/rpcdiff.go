@@ -13,12 +13,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rpc"
 	"github.com/gakonst/goempo/internal/rpcexec"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
+	"github.com/gakonst/goempo/internal/u256"
 )
 
 const (
@@ -191,7 +193,37 @@ func loadCorpus(path string) ([]corpusEntry, error) {
 }
 
 type replayState struct {
-	r *replayer
+	r  *replayer
+	mu sync.Mutex
+}
+
+type lockedReader struct {
+	mu    *sync.Mutex
+	inner rpc.StateReader
+}
+
+func (l lockedReader) Balance(addr primitives.Address) u256.Int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inner.Balance(addr)
+}
+
+func (l lockedReader) Nonce(addr primitives.Address) uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inner.Nonce(addr)
+}
+
+func (l lockedReader) Code(addr primitives.Address) []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inner.Code(addr)
+}
+
+func (l lockedReader) Storage(addr primitives.Address, key primitives.Hash) u256.Int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inner.Storage(addr, key)
 }
 
 func (s *replayState) ExecState(number uint64) (rpcexec.State, error) {
@@ -205,6 +237,8 @@ func (s *replayState) ProofAt(number uint64, addr primitives.Address, keys []pri
 	if number != s.r.head {
 		return rpc.AccountProof{}, errStateMissing
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, err := s.r.db.Proof(addr, keys)
 	if err != nil {
 		return rpc.AccountProof{}, err
@@ -228,7 +262,9 @@ func (s *replayState) StateAt(number uint64) (rpc.StateReader, error) {
 	if number != s.r.head {
 		return nil, errStateMissing
 	}
-	return s.r.db.State(), nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return lockedReader{mu: &s.mu, inner: s.r.db.State()}, nil
 }
 
 type diffPaths struct {
@@ -273,7 +309,7 @@ func rpcDiff(paths diffPaths) (*r5Result, error) {
 		return nil, err
 	}
 	states := &replayState{r: r}
-	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec}
+	exec := &rpcexec.Executor{ChainID: hardfork.MainnetChainID, Chain: view, States: states, Blocks: r.exec, Lock: &states.mu}
 	srv := rpc.NewServer(rpc.Config{ChainID: rpc.MainnetChainID}, view, states, exec)
 	res := &r5Result{Rung: "R5", PerMethod: map[string]*methodScore{}}
 	for _, e := range scoreOrder(entries) {

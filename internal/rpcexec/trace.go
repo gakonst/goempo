@@ -274,8 +274,8 @@ func (x *Executor) TraceBlock(number uint64, opts *rpc.TraceOptions) ([]json.Raw
 	if err != nil {
 		return nil, err
 	}
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	run, err := x.replayBlock(number, cfg.steps)
 	if err != nil {
 		return nil, err

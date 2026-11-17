@@ -60,7 +60,17 @@ type Executor struct {
 	Chain   rpc.Chain
 	States  StateSource
 	Blocks  *executor.Executor
+	Lock    sync.Locker
 	mu      sync.Mutex
+}
+
+func (x *Executor) acquire() func() {
+	l := x.Lock
+	if l == nil {
+		l = &x.mu
+	}
+	l.Lock()
+	return l.Unlock
 }
 
 type env struct {

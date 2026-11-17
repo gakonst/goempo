@@ -27,8 +27,8 @@ func replayOf(t *tracing.TxTrace, info tracing.TxInfo, loc *tracing.Locator, dif
 }
 
 func (x *Executor) ReplayBlock(number uint64, stateDiff rpc.DiffMode) ([]*rpc.TxReplay, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	run, err := x.replayBlock(number, tracing.StepOptions{})
 	if err != nil {
 		return nil, err
@@ -42,8 +42,8 @@ func (x *Executor) ReplayBlock(number uint64, stateDiff rpc.DiffMode) ([]*rpc.Tx
 }
 
 func (x *Executor) TraceCalls(block uint64, reqs []*rpc.CallRequest, stateDiff rpc.DiffMode) ([]rpc.TxReplay, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return nil, err
@@ -74,8 +74,8 @@ func (x *Executor) TraceCalls(block uint64, reqs []*rpc.CallRequest, stateDiff r
 }
 
 func (x *Executor) CallMany(block uint64, bundles []rpc.CallBundle) ([][]rpc.CallResult, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	e, err := x.envAt(block)
 	if err != nil {
 		return nil, err

@@ -47,8 +47,8 @@ type simRun struct {
 }
 
 func (x *Executor) SimulateV1(block uint64, req *rpc.SimulateRequest) ([]rpc.SimulatedBlock, error) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
+	release := x.acquire()
+	defer release()
 	parent, ok := x.Chain.Block(block)
 	if !ok {
 		return nil, ErrNoBlock

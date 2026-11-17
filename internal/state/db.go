@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"math"
+	"sync"
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/genesis"
 	goio "github.com/gakonst/goempo/internal/io"
+	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
 	"github.com/gakonst/goempo/internal/storage"
 	"github.com/gakonst/goempo/internal/trie"
@@ -93,7 +95,14 @@ type DB struct {
 	hasher       *keccak.Hasher
 	err          error
 	// pending is the pipelined commit in flight (State.CommitAsync).
-	pending *pendingCommit
+	pending       *pendingCommit
+	commits       sync.WaitGroup
+	commit        pendingCommit
+	addrs         []Address
+	slotKeys      []Hash
+	keyHasher     *keccak.Batch
+	workers       []*storageWorker
+	accountWriter nodeWriter
 }
 
 func Open(fs goio.FS, opts Options) (*DB, error) {
@@ -122,7 +131,10 @@ func Open(fs goio.FS, opts Options) (*DB, error) {
 		codes:        make(map[Hash][]byte),
 		enc:          rlp.NewEncoder(128),
 		hasher:       keccak.New(),
+		keyHasher:    keccak.NewBatch(),
 	}
+	db.accountWriter.reset(nil, nil, prefixAccountNode, nil)
+	db.worker(0)
 	db.accounts = trie.Open(head.Root, nodeReader{store: store, prefix: []byte{prefixAccountNode}})
 	db.state = newState(db)
 	return db, nil
@@ -267,13 +279,66 @@ func (r nodeReader) ReadNode(path []byte) ([]byte, error) {
 
 type nodeWriter struct {
 	batch  *storage.Batch
-	prefix []byte
+	keys   *keyArena
+	prefix [1 + primitives.AddressLength]byte
+	plen   int
+	subs   []*splitPart
+	views  []trie.NodeWriter
+	split  int
 }
 
-func (w nodeWriter) WriteNode(n trie.StoredNode) {
-	key := make([]byte, 0, nodeKeyBytesMax)
-	key = append(key, w.prefix...)
-	w.batch.PutOwned(appendPath(key, nibbles(n.Path)), n.Encoded)
+type splitPart struct {
+	w     nodeWriter
+	batch storage.Batch
+	keys  keyArena
+}
+
+const splitPartsMax = 256
+
+const _ = uint(splitPartsMax - 16*16)
+
+func (w *nodeWriter) Split(n int) []trie.NodeWriter {
+	assert.Ok(n > 0, "node writer split into no parts")
+	assert.Ok(n <= splitPartsMax, "node writer split over splitPartsMax")
+	assert.Equal(w.split, 0, "node writer split twice before Join")
+	for i := len(w.subs); i < n; i++ {
+		w.subs = append(w.subs, &splitPart{})
+	}
+	w.views = w.views[:0]
+	for i := range n {
+		part := w.subs[i]
+		part.batch.Reset()
+		part.w.batch, part.w.keys = &part.batch, &part.keys
+		part.w.prefix, part.w.plen = w.prefix, w.plen
+		w.views = append(w.views, &part.w)
+	}
+	w.split = n
+	return w.views
+}
+
+func (w *nodeWriter) Join() {
+	for i := range w.split {
+		w.batch.Append(&w.subs[i].batch)
+		w.subs[i].batch.Reset()
+	}
+	clear(w.views)
+	w.views = w.views[:0]
+	w.split = 0
+}
+
+func (w *nodeWriter) reset(b *storage.Batch, keys *keyArena, kind byte, addr []byte) {
+	assert.Ok(len(addr) <= primitives.AddressLength, "node key prefix address too long")
+	w.batch, w.keys = b, keys
+	w.prefix[0] = kind
+	w.plen = 1 + copy(w.prefix[1:], addr)
+}
+
+func (w *nodeWriter) WriteNode(n trie.StoredNode) {
+	size := w.plen + (len(n.Path)+1)/2 + 1
+	key := append(w.keys.alloc(size)[:0], w.prefix[:w.plen]...)
+	key = appendPath(key, nibbles(n.Path))
+	assert.Equal(len(key), size, "node key size")
+	w.batch.PutOwned(key, n.Encoded)
 }
 
 func storageNodePrefix(addr Address) []byte {
@@ -294,3 +359,5 @@ func (db *DB) CodeByHash(h Hash) ([]byte, error) {
 	}
 	return c, err
 }
+
+var _ trie.SplitWriter = (*nodeWriter)(nil)

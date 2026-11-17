@@ -14,6 +14,9 @@ type rebuilder struct {
 }
 
 func (db *DB) RebuildRoot() (Hash, error) {
+	if err := db.settlePending(); err != nil {
+		return Hash{}, err
+	}
 	r := &rebuilder{db: db, accounts: trie.New()}
 	slotRoots := make(map[Address]Hash)
 	err := db.store.Iterate([]byte{prefixSlot}, func(e storage.Entry) error {

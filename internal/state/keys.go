@@ -126,3 +126,44 @@ func decodeSlot(b []byte) (u256.Int, error) {
 	}
 	return u256.FromBytes(b), nil
 }
+
+const keyArenaBytes = 16 << 10
+
+const _ = uint(keyArenaBytes - nodeKeyBytesMax)
+
+type keyArena struct {
+	buf []byte
+}
+
+func (a *keyArena) alloc(n int) []byte {
+	assert.Ok(n > 0, "key arena allocation empty")
+	assert.Ok(n <= nodeKeyBytesMax, "key arena allocation longer than nodeKeyBytesMax")
+	if cap(a.buf)-len(a.buf) < n {
+		a.buf = make([]byte, 0, keyArenaBytes)
+	}
+	start := len(a.buf)
+	a.buf = a.buf[:start+n]
+	return a.buf[start : start+n : start+n]
+}
+
+func (a *keyArena) accountKey(addr Address) []byte {
+	k := a.alloc(1 + primitives.AddressLength)
+	k[0] = prefixAccount
+	copy(k[1:], addr[:])
+	return k
+}
+
+func (a *keyArena) slotKey(addr Address, slot Hash) []byte {
+	k := a.alloc(1 + primitives.AddressLength + primitives.HashLength)
+	k[0] = prefixSlot
+	copy(k[1:], addr[:])
+	copy(k[1+primitives.AddressLength:], slot[:])
+	return k
+}
+
+func (a *keyArena) codeKey(h Hash) []byte {
+	k := a.alloc(1 + primitives.HashLength)
+	k[0] = prefixCode
+	copy(k[1:], h[:])
+	return k
+}

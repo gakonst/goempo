@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
+	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/rlp"
 	"github.com/gakonst/goempo/internal/storage"
 	"github.com/gakonst/goempo/internal/trie"
@@ -17,12 +18,15 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
-// Commit seals the block's changes, computes its state root and writes it.
+// Commit seals the block's changes, computes its state root and writes it,
+// on the caller's goroutine.
 func (s *State) Commit(number uint64) (Hash, error) {
-	if err := s.CommitAsync(number); err != nil {
+	p, err := s.sealBlock(number)
+	if err != nil {
 		return Hash{}, err
 	}
-	done, err := s.WaitCommit()
+	s.db.runCommit(p)
+	done, err := s.applyCommit(p)
 	if err != nil {
 		return Hash{}, err
 	}
@@ -66,16 +70,41 @@ type objectSnap struct {
 	codeHash   Hash
 	code       []byte
 	slots      []slotValue
+	job        *storageJob
 }
 
 type pendingCommit struct {
 	number uint64
 	snaps  []objectSnap
+	slots  []slotValue
 	roots  []Hash
+	hashed []Hash
+	msgs   [][]byte
+	jobs   []storageJob
+	order  []*storageJob
 	head   Head
 	batch  storage.Batch
+	keys   keyArena
 	err    error
-	done   chan struct{}
+}
+
+func (p *pendingCommit) reset(number uint64) {
+	clear(p.snaps)
+	p.snaps = p.snaps[:0]
+	p.slots = p.slots[:0]
+	p.roots = p.roots[:0]
+	p.hashed = p.hashed[:0]
+	clear(p.msgs)
+	p.msgs = p.msgs[:0]
+	for i := range p.jobs {
+		p.jobs[i].sn, p.jobs[i].t, p.jobs[i].batch, p.jobs[i].err = nil, nil, nil, nil
+		p.jobs[i].own.Reset()
+	}
+	p.jobs = p.jobs[:0]
+	clear(p.order)
+	p.order = p.order[:0]
+	p.batch.Reset()
+	p.number, p.head, p.err = number, Head{}, nil
 }
 
 // CommitAsync seals the block's changes and starts computing its state root
@@ -85,32 +114,13 @@ type pendingCommit struct {
 // one commit is in flight, and store writes happen only on the caller's
 // goroutine while none is.
 func (s *State) CommitAsync(number uint64) error {
-	s.FinalizeTx()
-	db := s.db
-	if _, err := s.WaitCommit(); err != nil && !errors.Is(err, errNothingPending) {
+	p, err := s.sealBlock(number)
+	if err != nil {
 		return err
 	}
-	if db.err != nil {
-		return db.err
-	}
-	if db.head.Loaded && number <= db.head.Number {
-		return ErrBlockOrder
-	}
-	if s.err != nil {
-		db.err = s.err
-		return s.err
-	}
-	p := &pendingCommit{number: number, done: make(chan struct{})}
-	addrs := sortedAddresses(s.blockDirty)
-	p.snaps = make([]objectSnap, len(addrs))
-	for i, addr := range addrs {
-		o := s.accounts[addr]
-		assert.Ok(o != nil, "state commits an account it never loaded")
-		p.snaps[i] = s.seal(o)
-	}
-	clear(s.blockDirty)
+	db := s.db
 	db.pending = p
-	go db.runCommit(p)
+	db.commits.Go(func() { db.runCommit(p) })
 	return nil
 }
 
@@ -124,8 +134,42 @@ func (s *State) WaitCommit() (Committed, error) {
 	if p == nil {
 		return Committed{}, errNothingPending
 	}
-	<-p.done
+	db.commits.Wait()
 	db.pending = nil
+	return s.applyCommit(p)
+}
+
+func (s *State) sealBlock(number uint64) (*pendingCommit, error) {
+	s.FinalizeTx()
+	db := s.db
+	if _, err := s.WaitCommit(); err != nil && !errors.Is(err, errNothingPending) {
+		return nil, err
+	}
+	if db.err != nil {
+		return nil, db.err
+	}
+	if db.head.Loaded && number <= db.head.Number {
+		return nil, ErrBlockOrder
+	}
+	if s.err != nil {
+		db.err = s.err
+		return nil, s.err
+	}
+	p := &db.commit
+	p.reset(number)
+	db.addrs = appendSortedAddresses(db.addrs[:0], s.blockDirty)
+	p.snaps = slices.Grow(p.snaps, len(db.addrs))
+	for _, addr := range db.addrs {
+		o := s.accounts[addr]
+		assert.Ok(o != nil, "state commits an account it never loaded")
+		p.snaps = append(p.snaps, s.seal(o, p))
+	}
+	clear(s.blockDirty)
+	return p, nil
+}
+
+func (s *State) applyCommit(p *pendingCommit) (Committed, error) {
+	db := s.db
 	if p.err != nil {
 		db.err = p.err
 		return Committed{}, p.err
@@ -154,17 +198,19 @@ func settleRoot(o *object, root Hash) {
 }
 
 // seal snapshots o for the commit and settles the live object provisionally.
-func (s *State) seal(o *object) objectSnap {
+func (s *State) seal(o *object, p *pendingCommit) objectSnap {
 	sn := objectSnap{
 		o: o, addr: o.addr, exists: o.exists, baseExists: o.base.exists, baseRoot: o.base.storageRoot,
 		wiped: o.wiped, codeDirty: o.codeDirty, nonce: o.nonce, balance: o.balance, codeHash: o.codeHash, code: o.code,
 	}
 	assert.Ok(sn.baseRoot != pendingRoot, "sealed account has an unsettled storage root")
 	if len(o.changed) > 0 && o.exists {
-		sn.slots = make([]slotValue, 0, len(o.changed))
-		for _, k := range sortedHashes(o.changed) {
-			sn.slots = append(sn.slots, slotValue{key: k, v: o.committed[k]})
+		s.db.slotKeys = appendSortedHashes(s.db.slotKeys[:0], o.changed)
+		start := len(p.slots)
+		for _, k := range s.db.slotKeys {
+			p.slots = append(p.slots, slotValue{key: k, v: o.committed[k]})
 		}
+		sn.slots = p.slots[start:len(p.slots):len(p.slots)]
 	}
 	if o.codeDirty && o.codeHash != emptyCodeHash {
 		s.db.cacheCode(o.codeHash, o.code)
@@ -200,46 +246,73 @@ func (s *State) trimCaches() {
 // runCommit computes a sealed block's storage roots, account trie root and
 // write batch. It reads the store and owns the tries; it writes nothing.
 func (db *DB) runCommit(p *pendingCommit) {
-	defer close(p.done)
 	defer func() {
 		if r := recover(); r != nil {
 			p.err = fmt.Errorf("state commit %d: %v", p.number, r)
 		}
 	}()
+	p.err = db.computeCommit(p)
+}
+
+func (db *DB) computeCommit(p *pendingCommit) error {
 	b := &p.batch
-	jobs := make([]*storageJob, len(p.snaps))
+	slots := 0
 	for i := range p.snaps {
 		sn := &p.snaps[i]
 		if sn.wiped {
 			db.forgetStorageTrie(sn.addr)
 			if err := db.wipeSlots(sn, b); err != nil {
-				p.err = err
-				return
+				return err
 			}
 		}
 		if !sn.exists || len(sn.slots) == 0 {
 			continue
 		}
 		t := db.storageTrie(sn.addr, snapBase(sn))
-		jobs[i] = &storageJob{sn: sn, t: t, before: t.Nodes()}
+		p.jobs = growJobs(p.jobs)
+		j := &p.jobs[len(p.jobs)-1]
+		j.sn, j.t, j.before = sn, t, t.Nodes()
+		slots += len(sn.slots)
 	}
-	if err := runStorageJobs(jobs, db.opts.StorageNodes); err != nil {
-		p.err = err
-		return
+	for i := range p.jobs {
+		p.jobs[i].sn.job = &p.jobs[i]
 	}
-	p.roots = make([]Hash, len(p.snaps))
+	if err := db.runStorageJobs(p, slots); err != nil {
+		return err
+	}
+	db.hashAddresses(p)
+	p.roots = slices.Grow(p.roots, len(p.snaps))[:len(p.snaps)]
 	for i := range p.snaps {
-		root, err := db.finishSnap(&p.snaps[i], jobs[i], b)
+		root, err := db.finishSnap(&p.snaps[i], p.hashed[i], p)
 		if err != nil {
-			p.err = err
-			return
+			return err
 		}
 		p.roots[i] = root
 	}
-	root := db.accounts.Commit(nodeWriter{batch: b, prefix: []byte{prefixAccountNode}})
+	db.accountWriter.batch, db.accountWriter.keys = b, &p.keys
+	root := db.accounts.Commit(&db.accountWriter)
 	p.head = Head{Number: p.number, Root: root, Loaded: true}
-	b.Put(headKey, encodeHead(p.head))
+	b.PutOwned(headKey, encodeHead(p.head))
 	db.trimTries()
+	return nil
+}
+
+func growJobs(jobs []storageJob) []storageJob {
+	if len(jobs) < cap(jobs) {
+		return jobs[:len(jobs)+1]
+	}
+	return append(jobs, storageJob{})
+}
+
+func (db *DB) hashAddresses(p *pendingCommit) {
+	p.msgs = p.msgs[:0]
+	for i := range p.snaps {
+		p.msgs = append(p.msgs, p.snaps[i].addr[:])
+	}
+	p.hashed = slices.Grow(p.hashed, len(p.snaps))[:len(p.snaps)]
+	db.keyHasher.Hash(p.msgs, p.hashed)
+	clear(p.msgs)
+	p.msgs = p.msgs[:0]
 }
 
 func (db *DB) trimTries() {
@@ -261,13 +334,16 @@ func snapBase(sn *objectSnap) Hash {
 	return sn.baseRoot
 }
 
-// storageJob is one account's storage trie update, run on a worker.
+// storageJob is one account's storage trie update. On one goroutine it writes
+// into the block's batch; on a worker into its own, which finishSnap appends
+// in address order.
 type storageJob struct {
 	sn     *objectSnap
 	t      *trie.Trie
 	before int
 	root   Hash
-	batch  storage.Batch
+	batch  *storage.Batch
+	own    storage.Batch
 	err    error
 }
 
@@ -275,46 +351,52 @@ type storageJob struct {
 // storage tries are updated on one goroutine.
 const parallelSlotsMin = 64
 
+const storageWorkersMax = 64
+
+const _ = uint(storageWorkersMax - keccak.BatchLanes)
+
+const _ = uint(parallelSlotsMin - keccak.BatchLanes)
+
 // runStorageJobs updates every job's storage trie and computes its root.
 // Each account's trie, slots and batch are its own, so jobs run in parallel;
 // the largest start first.
-func runStorageJobs(all []*storageJob, nodesMax int) error {
-	jobs := make([]*storageJob, 0, len(all))
-	slots := 0
-	for _, j := range all {
-		if j != nil {
-			jobs = append(jobs, j)
-			slots += len(j.sn.slots)
-		}
-	}
-	workers := min(runtime.GOMAXPROCS(0), len(jobs))
+func (db *DB) runStorageJobs(p *pendingCommit, slots int) error {
+	jobs := p.jobs
+	workers := min(runtime.GOMAXPROCS(0), len(jobs), storageWorkersMax)
 	if workers <= 1 || slots < parallelSlotsMin {
-		w := newStorageWorker()
-		for _, j := range jobs {
-			w.run(j, nodesMax)
+		w := db.worker(0)
+		for i := range jobs {
+			j := &jobs[i]
+			j.batch = &p.batch
+			w.run(j, &p.keys, db.opts.StorageNodes)
 			if j.err != nil {
 				return j.err
 			}
 		}
 		return nil
 	}
-	slices.SortFunc(jobs, func(a, b *storageJob) int { return len(b.sn.slots) - len(a.sn.slots) })
+	for i := range jobs {
+		jobs[i].batch = &jobs[i].own
+		p.order = append(p.order, &jobs[i])
+	}
+	order := p.order
+	slices.SortStableFunc(order, func(a, b *storageJob) int { return len(b.sn.slots) - len(a.sn.slots) })
 	var next atomic.Int64
 	var wg sync.WaitGroup
-	for range workers {
+	for k := range workers {
+		w := db.worker(k)
 		wg.Go(func() {
-			w := newStorageWorker()
-			for {
-				k := int(next.Add(1) - 1)
-				if k >= len(jobs) {
+			for range len(order) {
+				i := int(next.Add(1) - 1)
+				if i >= len(order) {
 					return
 				}
-				w.run(jobs[k], nodesMax)
+				w.run(order[i], &w.keys, db.opts.StorageNodes)
 			}
 		})
 	}
 	wg.Wait()
-	for _, j := range jobs {
+	for _, j := range order {
 		if j.err != nil {
 			return j.err
 		}
@@ -322,63 +404,86 @@ func runStorageJobs(all []*storageJob, nodesMax int) error {
 	return nil
 }
 
+func (db *DB) worker(k int) *storageWorker {
+	assert.Ok(k < storageWorkersMax, "storage worker index under storageWorkersMax")
+	for i := len(db.workers); i <= k; i++ {
+		db.workers = append(db.workers, newStorageWorker())
+	}
+	return db.workers[k]
+}
+
 type storageWorker struct {
-	hasher *keccak.Hasher
+	hasher *keccak.Batch
 	enc    *rlp.Encoder
+	msgs   [][]byte
+	hashed [keccak.BatchLanes]Hash
+	writer nodeWriter
+	keys   keyArena
 }
 
-func newStorageWorker() storageWorker {
-	return storageWorker{hasher: keccak.New(), enc: rlp.NewEncoder(64)}
+func newStorageWorker() *storageWorker {
+	return &storageWorker{hasher: keccak.NewBatch(), enc: rlp.NewEncoder(64), msgs: make([][]byte, 0, keccak.BatchLanes)}
 }
 
-func (w storageWorker) run(j *storageJob, nodesMax int) {
+func (w *storageWorker) run(j *storageJob, keys *keyArena, nodesMax int) {
 	sn := j.sn
-	for _, sv := range sn.slots {
-		hk := w.hasher.Hash(sv.key[:])
-		sk := slotKeyBytes(sn.addr, sv.key)
-		if sv.v.IsZero() {
-			j.batch.Delete(sk)
-			if j.err = j.t.Unset(hk[:]); j.err != nil {
+	for start := 0; start < len(sn.slots); start += keccak.BatchLanes {
+		end := min(start+keccak.BatchLanes, len(sn.slots))
+		w.msgs = w.msgs[:0]
+		for i := start; i < end; i++ {
+			w.msgs = append(w.msgs, sn.slots[i].key[:])
+		}
+		w.hasher.Hash(w.msgs, w.hashed[:end-start])
+		clear(w.msgs)
+		for i := start; i < end; i++ {
+			if j.err = w.update(j, keys, &sn.slots[i], &w.hashed[i-start]); j.err != nil {
 				return
 			}
-			continue
-		}
-		enc := encodeSlot(sv.v)
-		j.batch.Put(sk, enc)
-		w.enc.Reset()
-		w.enc.WriteBytes(enc)
-		if j.err = j.t.Set(hk[:], w.enc.Encoded()); j.err != nil {
-			return
 		}
 	}
-	j.root = j.t.Commit(nodeWriter{batch: &j.batch, prefix: storageNodePrefix(sn.addr)})
+	w.writer.reset(j.batch, keys, prefixStorageNode, sn.addr[:])
+	j.root = j.t.Commit(&w.writer)
 	if j.t.Nodes() > nodesMax {
 		j.t.Evict(storageKeepDepthDefault)
 	}
 }
 
-// finishSnap writes one account after its storage job ran: its storage
-// writes, code, flat entry and account trie leaf, in address order.
-func (db *DB) finishSnap(sn *objectSnap, j *storageJob, b *storage.Batch) (Hash, error) {
-	hashed := db.hasher.Hash(sn.addr[:])
+func (w *storageWorker) update(j *storageJob, keys *keyArena, sv *slotValue, hk *Hash) error {
+	sk := keys.slotKey(j.sn.addr, sv.key)
+	if sv.v.IsZero() {
+		j.batch.Delete(sk)
+		return j.t.Unset(hk[:])
+	}
+	enc := ownedSlot(sv.v)
+	j.batch.PutOwned(sk, enc)
+	w.enc.Reset()
+	w.enc.WriteBytes(enc)
+	return j.t.Set(hk[:], w.enc.Encoded())
+}
+
+func (db *DB) finishSnap(sn *objectSnap, hashed Hash, p *pendingCommit) (Hash, error) {
+	b := &p.batch
 	if !sn.exists {
 		if !sn.baseExists {
 			return emptyRoot, nil
 		}
-		b.Delete(accountKey(sn.addr))
+		b.Delete(p.keys.accountKey(sn.addr))
 		return emptyRoot, db.accounts.Unset(hashed[:])
 	}
 	root := snapBase(sn)
-	if j != nil {
-		b.Append(&j.batch)
+	if j := sn.job; j != nil {
+		if j.batch != b {
+			b.Append(j.batch)
+			j.batch.Reset()
+		}
 		db.storageNodes += j.t.Nodes() - j.before
 		root = j.root
 	}
 	if sn.codeDirty && sn.codeHash != emptyCodeHash {
-		b.Put(codeKey(sn.codeHash), sn.code)
+		b.PutOwned(p.keys.codeKey(sn.codeHash), sn.code)
 	}
 	fa := flatAccount{nonce: sn.nonce, balance: sn.balance, codeHash: sn.codeHash, storageRoot: root}
-	b.Put(accountKey(sn.addr), fa.encode())
+	b.PutOwned(p.keys.accountKey(sn.addr), fa.encode())
 	return root, db.accounts.Set(hashed[:], db.encodeAccount(&fa))
 }
 
@@ -448,7 +553,10 @@ func (db *DB) storageTrie(addr Address, root Hash) *trie.Trie {
 }
 
 func sortedAddresses[V any](m map[Address]V) []Address {
-	keys := make([]Address, 0, len(m))
+	return appendSortedAddresses(make([]Address, 0, len(m)), m)
+}
+
+func appendSortedAddresses[V any](keys []Address, m map[Address]V) []Address {
 	for k := range m {
 		keys = append(keys, k)
 	}
@@ -457,10 +565,21 @@ func sortedAddresses[V any](m map[Address]V) []Address {
 }
 
 func sortedHashes[V any](m map[Hash]V) []Hash {
-	keys := make([]Hash, 0, len(m))
+	return appendSortedHashes(make([]Hash, 0, len(m)), m)
+}
+
+func appendSortedHashes[V any](keys []Hash, m map[Hash]V) []Hash {
 	for k := range m {
 		keys = append(keys, k)
 	}
 	slices.SortFunc(keys, func(a, b Hash) int { return bytes.Compare(a[:], b[:]) })
 	return keys
+}
+
+func ownedSlot(v u256.Int) []byte {
+	b := v.Bytes32()
+	trimmed := primitives.TrimLeftZeros(b[:])
+	out := make([]byte, len(trimmed))
+	copy(out, trimmed)
+	return out
 }

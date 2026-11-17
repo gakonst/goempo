@@ -65,6 +65,7 @@ func (s storedSet) read() ([]Hash, error) {
 	if err != nil {
 		return nil, err
 	}
+	n = min(n, maxStoredLen)
 	out := make([]Hash, 0, min(n, maxSetItems))
 	for i := 0; i < n; i++ {
 		w, err := s.c.loadField(s.addr, s.elemSlot(i), s.elemField(i))

@@ -10,39 +10,44 @@ type callScopeView struct {
 	rules  []selectorRuleView
 }
 
-func (c *Context) allowedCalls(k keyRef) (bool, []callScopeView, error) {
+type allowedCallsView struct {
+	scoped flag
+	scopes []callScopeView
+}
+
+func (c *Context) allowedCalls(k keyRef) (allowedCallsView, error) {
 	if k.keyID == (Address{}) {
-		return false, nil, nil
+		return allowedCallsView{}, nil
 	}
 	w, err := c.sload(AccountKeychainAddress, c.keySlot(k))
 	if err != nil {
-		return false, nil, err
+		return allowedCallsView{}, err
 	}
 	key := decodeAuthorizedKey(w)
 	if key.expiry == 0 || key.revoked || c.timestamp() >= key.expiry {
-		return true, nil, nil
+		return allowedCallsView{scoped: true}, nil
 	}
 	base := c.scopeBase(c.spendingLimitKey(k))
 	scoped, err := c.loadField(AccountKeychainAddress, base, fScoped)
 	if err != nil || scoped.IsZero() {
-		return false, nil, err
+		return allowedCallsView{}, err
 	}
 	targets, err := c.addressSet(base.plus(1)).read()
 	if err != nil {
-		return false, nil, err
+		return allowedCallsView{}, err
 	}
 	scopes := make([]callScopeView, 0, len(targets))
 	for _, t := range targets {
 		tb := c.targetScopeBase(base, wordAddress(t))
 		sels, err := c.selectorSet(tb).read()
 		if err != nil {
-			return false, nil, err
+			return allowedCallsView{}, err
 		}
 		rules := make([]selectorRuleView, 0, len(sels))
 		for _, sel := range sels {
 			recipients, err := c.addressSet(c.recipientsBase(tb, sel)).read()
 			if err != nil {
-				return false, nil, err
+				return allowedCallsView{}, err
 			}
 			var left Hash
 			copy(left[:selectorBytes], sel[32-selectorBytes:])
@@ -50,7 +55,7 @@ func (c *Context) allowedCalls(k keyRef) (bool, []callScopeView, error) {
 		}
 		scopes = append(scopes, callScopeView{target: t, rules: rules})
 	}
-	return true, scopes, nil
+	return allowedCallsView{scoped: true, scopes: scopes}, nil
 }
 
 func offsetWord(n int) Hash { return wordOfU64(uint64(n)) }
@@ -86,11 +91,11 @@ func encodeCallScope(s callScopeView) []byte {
 	return append(out, encodeDynamicArray(rules)...)
 }
 
-func encodeAllowedCalls(scoped bool, scopes []callScopeView) []byte {
-	parts := make([][]byte, len(scopes))
-	for i, s := range scopes {
+func encodeAllowedCalls(v allowedCallsView) []byte {
+	parts := make([][]byte, len(v.scopes))
+	for i, s := range v.scopes {
 		parts[i] = encodeCallScope(s)
 	}
-	out := encodeWords(flag(scoped).hash(), offsetWord(64))
+	out := encodeWords(v.scoped.hash(), offsetWord(64))
 	return append(out, encodeDynamicArray(parts)...)
 }

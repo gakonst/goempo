@@ -41,7 +41,12 @@ const (
 	defaultLeaderMs   = 2000
 	defaultNotarizeMs = 3000
 	defaultRetryMs    = 1000
+	epochLengthMax    = 1 << 20
 )
+
+const _ = uint(validator.RecoverMax - epochLengthMax)
+
+var errEpochLength = errors.New("genesis config epochLength must be between 1 and 2^20")
 
 type validatorOptions struct {
 	chain        string
@@ -327,8 +332,12 @@ func startValidator(o *validatorOptions) (*session, error) {
 			return nil, errors.Join(err, c.Close())
 		}
 	}
+	length := c.Executor().EpochLength
+	if length == 0 || length > epochLengthMax {
+		return nil, errors.Join(errEpochLength, c.Close())
+	}
 	head := c.Head().Header.Inner.Number
-	epocher := consensus.Epocher{Length: c.Executor().EpochLength}
+	epocher := consensus.Epocher{Length: length}
 	share, err := loadShare(o, epocher.Epoch(head+1))
 	if err != nil {
 		return nil, errors.Join(err, c.Close())

@@ -21,12 +21,12 @@ const (
 	requestEvery   = 500
 	settleMax      = 64
 	pendingWalkMax = 4096
-	recoverMax     = 1 << 20
+	RecoverMax     = 1 << 20
 )
 
 const _ = uint(pendingWalkMax - settleMax)
 
-const _ = uint(recoverMax - blocksMax)
+const _ = uint(RecoverMax - blocksMax)
 
 const _ = uint(blocksMax - pendingWalkMax)
 

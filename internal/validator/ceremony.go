@@ -75,7 +75,7 @@ func (c *ceremony) recover() {
 	if head < start {
 		return
 	}
-	for i := range min(head-start+1, recoverMax) {
+	for i := range min(head-start+1, RecoverMax) {
 		b, ok := e.cfg.Chain.BlockByNumber(start + i)
 		if !ok {
 			return

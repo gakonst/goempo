@@ -39,6 +39,7 @@
   - github.com/kapetan-io/tiger/assert
 "./internal/crypto/p256": []
 "./internal/evm":
+  - golang.org/x/crypto/ripemd160
   - ./internal/crypto/p256
   - ./internal/crypto/secp256k1
   - ./internal/primitives

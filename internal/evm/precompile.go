@@ -1,10 +1,6 @@
 package evm
 
-import (
-	"crypto/sha256"
-
-	"github.com/gakonst/goempo/internal/u256"
-)
+import "github.com/gakonst/goempo/internal/u256"
 
 type PrecompileCall struct {
 	EVM         *EVM
@@ -89,33 +85,8 @@ func PrecompileAddress(n uint64) Address {
 
 func EthereumPrecompiles(fork Fork) *PrecompileSet {
 	s := NewPrecompileSet()
-	for _, n := range ethereumPrecompileNumbers(fork) {
-		s.Set(PrecompileAddress(n), missingPrecompile{})
-	}
-	s.Set(PrecompileAddress(0x02), PurePrecompile{P: sha256Precompile{}})
-	s.Set(PrecompileAddress(0x04), PurePrecompile{P: identityPrecompile{}})
 	addCryptoPrecompiles(s, fork)
 	return s
-}
-
-func ethereumPrecompileNumbers(fork Fork) []uint64 {
-	numbers := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9}
-	if fork >= Cancun {
-		numbers = append(numbers, 0x0a)
-	}
-	if fork >= Prague {
-		numbers = append(numbers, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11)
-	}
-	if fork >= Osaka {
-		numbers = append(numbers, 0x100)
-	}
-	return numbers
-}
-
-type missingPrecompile struct{}
-
-func (missingPrecompile) Run(call *PrecompileCall) PrecompileResult {
-	return PrecompileResult{GasUsed: call.Gas, Status: StatusPrecompileFailure}
 }
 
 type linearCost struct {
@@ -125,27 +96,4 @@ type linearCost struct {
 
 func (c linearCost) of(input []byte) uint64 {
 	return c.base + toWords(uint64(len(input)))*c.word
-}
-
-type sha256Precompile struct{}
-
-func (sha256Precompile) RequiredGas(input []byte) uint64 {
-	return linearCost{base: 60, word: 12}.of(input)
-}
-
-func (sha256Precompile) Compute(input []byte) ([]byte, bool) {
-	sum := sha256.Sum256(input)
-	return sum[:], true
-}
-
-type identityPrecompile struct{}
-
-func (identityPrecompile) RequiredGas(input []byte) uint64 {
-	return linearCost{base: 15, word: 3}.of(input)
-}
-
-func (identityPrecompile) Compute(input []byte) ([]byte, bool) {
-	out := make([]byte, len(input))
-	copy(out, input)
-	return out, true
 }

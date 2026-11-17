@@ -210,6 +210,14 @@ func (u *Upstream) finalizationBatch(from uint64, count int) ([][]byte, error) {
 }
 
 func decodeHexString(raw json.RawMessage) ([]byte, error) {
+	if len(raw) >= 4 && raw[0] == '"' && raw[1] == '0' && raw[2] == 'x' && raw[len(raw)-1] == '"' {
+		body := raw[3 : len(raw)-1]
+		out := make([]byte, hex.DecodedLen(len(body)))
+		if _, err := hex.Decode(out, body); err != nil {
+			return nil, errors.Join(ErrUpstreamReply, err)
+		}
+		return out, nil
+	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, errors.Join(ErrUpstreamReply, err)

@@ -18,6 +18,7 @@ import (
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
@@ -28,7 +29,10 @@ const (
 	deepMarginBlock = BatchMax
 )
 
-const recoverWorkersMax = 64
+const (
+	recoverWorkersMax = 64
+	NearTipRoots      = 64
+)
 
 const _ = uint(512 - BatchMax)
 
@@ -60,23 +64,31 @@ type BlockSource interface {
 }
 
 type Config struct {
-	State        goio.FS
-	StateOptions state.Options
-	Sources      []BlockSource
-	Archive      *Archive
-	Finality     FinalitySource
-	CertifyFrom  uint64
-	RecentBlocks int
+	State         goio.FS
+	StateOptions  state.Options
+	Sources       []BlockSource
+	Archive       *Archive
+	Finality      FinalitySource
+	CertifyFrom   uint64
+	RecentBlocks  int
+	RootEvery     uint64
+	FetchParallel int
+	PipelineMin   int
 }
 
 type Stats struct {
-	Blocks uint64
-	Txs    uint64
-	Gas    uint64
-	// Time spent in Execute and in Commit (trie update and state root), summed.
-	ExecNanos   uint64
-	CommitNanos uint64
-	Certify     CertifyStats
+	Blocks       uint64
+	Txs          uint64
+	Gas          uint64
+	ExecNanos    uint64
+	CommitNanos  uint64
+	FetchNanos   uint64
+	VerifyNanos  uint64
+	CertifyNanos uint64
+	WaitNanos    uint64
+	FlushNanos   uint64
+	RootChecks   uint64
+	Certify      CertifyStats
 }
 
 type Target struct {
@@ -105,6 +117,23 @@ type Node struct {
 	failed   error
 	tainted  bool
 	stats    Stats
+
+	rootEvery     uint64
+	fetchParallel int
+	pipelineMin   uint64
+	pipe          *pipeline
+	stage         stageNanos
+	certStats     CertifyStats
+	headRoot      primitives.Hash
+	unchecked     uint64
+	pending       *rootCheck
+	stale         bool
+}
+
+type rootCheck struct {
+	from   uint64
+	number uint64
+	want   primitives.Hash
 }
 
 func Open(cfg Config) (*Node, error) {
@@ -146,10 +175,22 @@ func open(db *state.DB, cfg *Config) (*Node, error) {
 		recent = DefaultRecentBlocks
 	}
 	n := &Node{
-		db:      db,
-		exec:    &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength},
-		sources: cfg.Sources,
-		recent:  NewRecent(recent, cfg.Archive),
+		db:            db,
+		exec:          &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength},
+		sources:       cfg.Sources,
+		recent:        NewRecent(recent, cfg.Archive),
+		rootEvery:     max(cfg.RootEvery, 1),
+		fetchParallel: FetchParallelDefault,
+		pipelineMin:   PipelineMinDefault,
+	}
+	if cfg.FetchParallel > 0 {
+		n.fetchParallel = min(cfg.FetchParallel, fetchParallelMax)
+	}
+	if cfg.PipelineMin > 0 {
+		n.pipelineMin = uint64(cfg.PipelineMin)
+	}
+	if cfg.PipelineMin < 0 {
+		n.pipelineMin = 0
 	}
 	if cfg.Finality != nil {
 		n.cert = NewCertifier(consensus.NewMainnetChain(), cfg.Finality, cfg.CertifyFrom)
@@ -191,7 +232,7 @@ func (n *Node) resume() error {
 			n.recent.Add(data)
 		}
 	}
-	n.head, n.headHash, n.start = head.Number, parent, head.Number
+	n.head, n.headHash, n.headRoot, n.start = head.Number, parent, head.Root, head.Number
 	n.recent.SetHead(head.Number)
 	return nil
 }
@@ -258,9 +299,11 @@ func (n *Node) Stats() Stats {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	s := n.stats
-	if n.cert != nil {
-		s.Certify = n.cert.Stats()
-	}
+	s.Certify = n.certStats
+	s.FetchNanos = n.stage.fetch.Load()
+	s.VerifyNanos = n.stage.verify.Load()
+	s.CertifyNanos = n.stage.certify.Load()
+	s.WaitNanos = n.stage.wait.Load()
 	return s
 }
 
@@ -278,16 +321,33 @@ func (n *Node) Flush() error {
 	if n.tainted {
 		return ErrTainted
 	}
-	return n.db.Flush()
+	if err := n.checkpointLocked(); err != nil {
+		return n.latchLocked(err)
+	}
+	t0 := time.Now()
+	err := n.db.Flush()
+	n.stats.FlushNanos += uint64(time.Since(t0))
+	return err
 }
 
 func (n *Node) Close() error {
+	n.stopPipeline()
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.tainted {
 		return ErrTainted
 	}
+	if err := n.checkpointLocked(); err != nil {
+		return n.latchLocked(err)
+	}
 	return n.db.Close()
+}
+
+func (n *Node) stopPipeline() {
+	if n.pipe != nil {
+		n.pipe.Close()
+		n.pipe = nil
+	}
 }
 
 func (n *Node) getHash(number uint64) primitives.Hash {
@@ -301,28 +361,42 @@ func (n *Node) Advance(t Target) (Progress, error) {
 	head := n.Head()
 	p := Progress{Head: head.Number}
 	if err := n.Failed(); err != nil {
+		n.stopPipeline()
 		return p, err
 	}
 	if t.To <= head.Number {
 		return p, nil
 	}
+	if pipe := n.pipelineFor(head, t); pipe != nil {
+		return n.advancePipelined(pipe, head, t)
+	}
+	t0 := time.Now()
 	raws, err := n.fetch(head.Number+1, int(min(t.To-head.Number, BatchMax)))
+	n.stage.fetch.Add(uint64(time.Since(t0)))
 	if err != nil {
 		return p, err
 	}
 	raws = raws[:min(len(raws), BatchMax)]
-	blocks, linkErr := link(head, raws)
+	t1 := time.Now()
+	part, linkErr := link(head, raws)
+	blocks, hashes := part.blocks, part.hashes
+	n.stage.verify.Add(uint64(time.Since(t1)))
 	if len(blocks) == 0 {
 		return p, linkErr
 	}
-	admitted, err := n.admit(blocks, t.Tip)
+	t2 := time.Now()
+	admitted, err := n.admit(blocks, t.Tip, n.hashAt)
+	n.stage.certify.Add(uint64(time.Since(t2)))
+	n.publishCertStats()
 	if err != nil {
 		return p, n.latch(err)
 	}
 	admitted = min(admitted, len(blocks))
+	t3 := time.Now()
 	senders := recoverSenders(blocks[:admitted])
+	n.stage.verify.Add(uint64(time.Since(t3)))
 	for i := range admitted {
-		data, err := n.execute(&blocks[i], raws[i], senders[i])
+		data, err := n.execute(&rpc.BlockData{Hash: hashes[i], Block: &blocks[i], Raw: raws[i]}, senders[i], t)
 		if err != nil {
 			return p, n.latch(err)
 		}
@@ -336,33 +410,109 @@ func (n *Node) Advance(t Target) (Progress, error) {
 	return p, nil
 }
 
+func (n *Node) pipelineFor(head gosync.Link, t Target) *pipeline {
+	if n.pipe != nil && n.pipe.next == head.Number+1 {
+		return n.pipe
+	}
+	n.stopPipeline()
+	if n.pipelineMin == 0 || t.Tip < deepMarginBlock {
+		return nil
+	}
+	limit := min(t.To, t.Tip-deepMarginBlock)
+	if limit < head.Number+n.pipelineMin {
+		return nil
+	}
+	n.pipe = startPipeline(n, head, span{from: head.Number + 1, to: limit}, t.Tip)
+	return n.pipe
+}
+
+func (n *Node) advancePipelined(pipe *pipeline, head gosync.Link, t Target) (Progress, error) {
+	p := Progress{Head: head.Number}
+	t0 := time.Now()
+	b, ok := pipe.receive()
+	n.stage.wait.Add(uint64(time.Since(t0)))
+	if !ok {
+		n.stopPipeline()
+		return p, nil
+	}
+	if n.cert != nil {
+		n.mu.Lock()
+		n.certStats = b.cert
+		n.mu.Unlock()
+	}
+	assert.Ok(len(b.datas) == 0 || b.from == head.Number+1, "pipeline delivers the block after the head")
+	for i, data := range b.datas {
+		if _, err := n.execute(data, b.senders[i], t); err != nil {
+			n.stopPipeline()
+			return p, n.latch(err)
+		}
+		p.Head, p.Executed = data.Number(), p.Executed+1
+		p.Blocks = append(p.Blocks, data)
+	}
+	pipe.next = p.Head + 1
+	if b.err == nil {
+		return p, nil
+	}
+	n.stopPipeline()
+	if b.fatal {
+		return p, n.latch(b.err)
+	}
+	return p, b.err
+}
+
+func (n *Node) publishCertStats() {
+	if n.cert == nil {
+		return
+	}
+	s := n.cert.Stats()
+	n.mu.Lock()
+	n.certStats = s
+	n.mu.Unlock()
+}
+
 func (n *Node) latch(err error) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	return n.latchLocked(err)
+}
+
+func (n *Node) latchLocked(err error) error {
 	if n.failed == nil {
 		n.failed = err
 	}
 	return n.failed
 }
 
-func link(parent gosync.Link, raws [][]byte) ([]types.Block, error) {
-	blocks := make([]types.Block, 0, len(raws))
+func link(parent gosync.Link, raws [][]byte) (chainPart, error) {
+	part := chainPart{blocks: make([]types.Block, 0, len(raws)), hashes: make([]primitives.Hash, 0, len(raws))}
 	for _, raw := range raws {
 		split, err := gosync.SplitBlock(raw)
 		if err != nil {
-			return blocks, fmt.Errorf("%w: block %d: %w", ErrChainLink, parent.Number+1, err)
+			return part, fmt.Errorf("%w: block %d: %w", ErrChainLink, parent.Number+1, err)
 		}
 		v, err := gosync.Verify(parent, split)
 		if err != nil {
-			return blocks, fmt.Errorf("%w: block %d: %w", ErrChainLink, parent.Number+1, err)
+			return part, fmt.Errorf("%w: block %d: %w", ErrChainLink, parent.Number+1, err)
 		}
-		blocks = append(blocks, v.Block)
+		part.blocks = append(part.blocks, v.Block)
+		part.hashes = append(part.hashes, v.Link.Hash)
 		parent = v.Link
 	}
-	return blocks, nil
+	return part, nil
 }
 
-func (n *Node) admit(blocks []types.Block, tip uint64) (int, error) {
+func (s Stats) Since(prev Stats) Stats {
+	return Stats{
+		Blocks: s.Blocks - prev.Blocks, Txs: s.Txs - prev.Txs, Gas: s.Gas - prev.Gas,
+		ExecNanos: s.ExecNanos - prev.ExecNanos, CommitNanos: s.CommitNanos - prev.CommitNanos,
+		FetchNanos: s.FetchNanos - prev.FetchNanos, VerifyNanos: s.VerifyNanos - prev.VerifyNanos,
+		CertifyNanos: s.CertifyNanos - prev.CertifyNanos, WaitNanos: s.WaitNanos - prev.WaitNanos,
+		FlushNanos: s.FlushNanos - prev.FlushNanos, RootChecks: s.RootChecks - prev.RootChecks,
+		Certify: s.Certify,
+	}
+}
+
+func (n *Node) admit(blocks []types.Block, tip uint64, hashAt func(uint64, *types.Block) primitives.Hash) (int, error) {
 	if n.cert == nil {
 		return len(blocks), nil
 	}
@@ -376,7 +526,7 @@ func (n *Node) admit(blocks []types.Block, tip uint64) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if blk.Hash() != n.hashAt(boundary, &blk) {
+		if blk.Hash() != hashAt(boundary, &blk) {
 			return 0, &BlockError{Number: boundary, Field: "anchor hash", Got: blk.Hash().String(), Want: "executed chain"}
 		}
 		if err := n.cert.Anchor(boundary, &blk); err != nil {
@@ -426,45 +576,119 @@ func blockSenders(blk *types.Block) []executor.Sender {
 	return senders
 }
 
-func (n *Node) execute(blk *types.Block, raw []byte, senders []executor.Sender) (*rpc.BlockData, error) {
+func (n *Node) execute(data *rpc.BlockData, senders []executor.Sender, t Target) (*rpc.BlockData, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	blk := data.Block
 	h := &blk.Header.Inner
 	st := n.db.State()
 	t0 := time.Now()
 	res, err := n.exec.Execute(st, executor.Input{Block: blk, GetHash: n.getHash, Senders: senders})
-	t1 := time.Now()
+	n.stats.ExecNanos += uint64(time.Since(t0))
 	if err != nil {
-		st.Discard()
-		return nil, &BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"}
+		return nil, n.discardLocked(&BlockError{Number: h.Number, Field: "execution", Got: err.Error(), Want: "ok"})
 	}
 	if e := compareBlock(h, &res); e != nil {
-		st.Discard()
-		return nil, e
+		return nil, n.discardLocked(e)
 	}
-	t2 := time.Now()
-	root, err := st.Commit(h.Number)
-	n.stats.ExecNanos += uint64(t1.Sub(t0))
-	n.stats.CommitNanos += uint64(time.Since(t2))
-	if err != nil {
-		n.tainted = true
-		return nil, &BlockError{Number: h.Number, Field: "commit", Got: err.Error(), Want: "ok"}
-	}
-	if root != h.StateRoot {
-		n.tainted = true
-		return nil, &BlockError{Number: h.Number, Field: "stateRoot", Got: root.String(), Want: h.StateRoot.String()}
-	}
-	data, err := rpc.NewBlockData(blk, raw, res.Receipts)
+	t1 := time.Now()
+	err = n.commitLocked(h, t)
+	n.stats.CommitNanos += uint64(time.Since(t1))
 	if err != nil {
 		return nil, err
 	}
+	if res.Receipts != nil && len(res.Receipts) != len(blk.Transactions) {
+		return nil, rpc.ErrReceiptsCount
+	}
+	data.Receipts = res.Receipts
 	n.hashes[h.Number%hashWindow] = data.Hash
-	n.head, n.headHash = h.Number, data.Hash
+	n.head, n.headHash, n.headRoot = h.Number, data.Hash, h.StateRoot
 	n.stats.Blocks++
 	n.stats.Txs += uint64(len(blk.Transactions))
 	n.stats.Gas += res.GasUsed
 	n.recent.Add(data)
 	return data, nil
+}
+
+func (n *Node) rootDue(number uint64, t Target) bool {
+	return n.rootEvery <= 1 || number%n.rootEvery == 0 || number == t.To || t.Tip < number+NearTipRoots
+}
+
+func (n *Node) commitLocked(h *types.EthHeader, t Target) error {
+	st := n.db.State()
+	if !n.rootDue(h.Number, t) {
+		st.FinalizeTx()
+		n.unchecked++
+		return nil
+	}
+	if err := n.settleLocked(); err != nil {
+		return err
+	}
+	check := rootCheck{from: h.Number - n.unchecked, number: h.Number, want: h.StateRoot}
+	n.unchecked = 0
+	n.stats.RootChecks++
+	if n.rootEvery > 1 && h.Number != t.To && t.Tip >= h.Number+NearTipRoots {
+		if err := st.CommitAsync(h.Number); err != nil {
+			n.tainted = true
+			return &BlockError{Number: h.Number, Field: "commit", Got: err.Error(), Want: "ok"}
+		}
+		n.pending = &check
+		return nil
+	}
+	root, err := st.Commit(h.Number)
+	return n.checkRootLocked(&check, root, err)
+}
+
+func (n *Node) settleLocked() error {
+	check := n.pending
+	if check == nil {
+		return nil
+	}
+	n.pending = nil
+	c, err := n.db.State().WaitCommit()
+	return n.checkRootLocked(check, c.Root, err)
+}
+
+func (n *Node) checkRootLocked(check *rootCheck, root primitives.Hash, err error) error {
+	if err != nil {
+		n.tainted = true
+		return &BlockError{Number: check.number, Field: "commit", Got: err.Error(), Want: "ok"}
+	}
+	if root == check.want {
+		return nil
+	}
+	n.tainted = true
+	field := "stateRoot"
+	if check.from < check.number {
+		field = fmt.Sprintf("stateRoot (one check over blocks %d..%d)", check.from, check.number)
+	}
+	return &BlockError{Number: check.number, Field: field, Got: root.String(), Want: check.want.String()}
+}
+
+func (n *Node) checkpointLocked() error {
+	if err := n.settleLocked(); err != nil {
+		return err
+	}
+	if n.unchecked == 0 || n.stale {
+		return nil
+	}
+	check := rootCheck{from: n.head - n.unchecked + 1, number: n.head, want: n.headRoot}
+	n.unchecked = 0
+	n.stats.RootChecks++
+	root, err := n.db.State().Commit(n.head)
+	return n.checkRootLocked(&check, root, err)
+}
+
+func (n *Node) discardLocked(cause error) error {
+	if err := n.settleLocked(); err != nil {
+		return errors.Join(cause, err)
+	}
+	n.db.State().Discard()
+	if n.unchecked > 0 {
+		n.stale = true
+		n.unchecked = 0
+	}
+	return cause
 }
 
 func compareBlock(h *types.EthHeader, res *executor.Result) *BlockError {

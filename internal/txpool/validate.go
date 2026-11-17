@@ -3,6 +3,7 @@ package txpool
 import (
 	"fmt"
 
+	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
 	"github.com/gakonst/goempo/internal/u256"
@@ -24,8 +25,12 @@ func (p *Pool) stateless(tx *types.Transaction, head *types.Header) error {
 	if executor.IsSystemTx(tx) {
 		return ErrTxType
 	}
-	if maxFeeOf(tx) < p.cfg.MinFeeCap {
-		return fmt.Errorf("%w: %d < %d", ErrUnderpriced, maxFeeOf(tx), p.cfg.MinFeeCap)
+	floor := chain.RulesAt(p.cfg.Executor.ChainID, head.Inner.Timestamp).ExpectedBaseFee(chain.ParentGas{})
+	if minFee := max(p.cfg.MinFeeCap, floor); maxFeeOf(tx) < minFee {
+		return fmt.Errorf("%w: %d < %d", ErrUnderpriced, maxFeeOf(tx), minFee)
+	}
+	if c, ok := feeCaps(tx); ok && c.fee.Lt(c.tip) {
+		return ErrTipAboveFeeCap
 	}
 	aa, ok := tx.Data.(*types.TempoTx)
 	if !ok {
@@ -110,4 +115,21 @@ func (p *Pool) timeBounds(aa *types.TempoTx, head *types.Header) error {
 func isSubblockKey(key u256.Int) bool {
 	b := key.Bytes32()
 	return b[0] == subblockNoncePrefix
+}
+
+type caps struct {
+	tip u256.Int
+	fee u256.Int
+}
+
+func feeCaps(tx *types.Transaction) (caps, bool) {
+	switch d := tx.Data.(type) {
+	case *types.DynamicFeeTx:
+		return caps{tip: d.MaxPriorityFeePerGas, fee: d.MaxFeePerGas}, true
+	case *types.SetCodeTx:
+		return caps{tip: d.MaxPriorityFeePerGas, fee: d.MaxFeePerGas}, true
+	case *types.TempoTx:
+		return caps{tip: d.MaxPriorityFeePerGas, fee: d.MaxFeePerGas}, true
+	}
+	return caps{}, false
 }

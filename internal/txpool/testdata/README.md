@@ -1,0 +1,1 @@
+mainnet-49400084-tx0-prestate.json: debug_traceTransaction prestateTracer result on https://rpc.tempo.xyz for tx 0 (0x22b20222...7dea) of mainnet block 49,400,084. It holds the fee token (0x20c0...b9537d11c60e8b50), TIP-403 registry and fee manager slots a fee charge reads; the pool and builder tests load it as their base state and fund synthetic senders in that token.

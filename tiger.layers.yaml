@@ -284,3 +284,15 @@
   - ./internal/types
   - ./internal/u256
   - github.com/kapetan-io/tiger/assert
+"./cmd/goempo-buildcheck":
+  - os
+  - ./internal/builder
+  - ./internal/genesis
+  - ./internal/io
+  - ./internal/primitives
+  - ./internal/state
+  - ./internal/tempo/chain
+  - ./internal/tempo/executor
+  - ./internal/tempo/hardfork
+  - ./internal/txpool
+  - ./internal/types

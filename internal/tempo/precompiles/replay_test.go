@@ -25,6 +25,8 @@ type replayCall struct {
 	GasUsed  uint64 `json:"gasUsed"`
 	TopLevel bool   `json:"topLevel"`
 	Reverted bool   `json:"reverted"`
+	Caller   string `json:"caller"`
+	Static   bool   `json:"static"`
 }
 
 type replayAccount struct {
@@ -189,6 +191,10 @@ func replay(t *testing.T, path string) {
 		}
 		c := run.context(gas)
 		c.Env = h.Env
+		c.Static = call.Static
+		if call.Caller != "" {
+			c.Caller = mustAddr(call.Caller)
+		}
 		to := mustAddr(call.To)
 		st.WarmAddress(to)
 		if !precompiles.IsPrecompile(to, run.fork) {

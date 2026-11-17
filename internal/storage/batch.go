@@ -18,6 +18,8 @@ const batchChunkBytes = 64 << 10
 
 const batchFreeMax = 8
 
+const _ = uint(batchChunkBytes/batchChunkFirst - batchFreeMax)
+
 const batchOpsFirst = 32
 
 const batchOpsChunk = 8192
@@ -25,6 +27,8 @@ const batchOpsChunk = 8192
 const _ = uint(batchOpsChunk - batchOpsFirst)
 
 const batchPartsMax = 1 << 20
+
+const _ = uint(batchPartsMax - batchOpsChunk)
 
 const _ = uint(batchChunkBytes - batchChunkFirst)
 

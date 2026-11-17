@@ -39,14 +39,20 @@ func legacyKeyHash(key []byte) uint64 {
 	return h
 }
 
-func (b bloom) blockBits(h uint64) (int, uint64) {
+type bloomSpot struct {
+	base  int
+	probe uint64
+}
+
+func (b bloom) blockBits(h uint64) bloomSpot {
 	blocks := uint64(len(b.words) / bloomBlockWords)
 	block, _ := bits.Mul64(h, blocks)
-	return int(block) * bloomBlockWords, hashMix(h, hashMul2)
+	return bloomSpot{base: int(block) * bloomBlockWords, probe: hashMix(h, hashMul2)}
 }
 
 func (b bloom) addHash(h uint64) {
-	base, probe := b.blockBits(h)
+	spot := b.blockBits(h)
+	base, probe := spot.base, spot.probe
 	for i := 0; i < bloomProbes; i++ {
 		bit := probe >> (9 * i) & 511
 		b.words[base+int(bit/64)] |= 1 << (bit % 64)
@@ -54,7 +60,8 @@ func (b bloom) addHash(h uint64) {
 }
 
 func (b bloom) mayContainHash(h uint64) bool {
-	base, probe := b.blockBits(h)
+	spot := b.blockBits(h)
+	base, probe := spot.base, spot.probe
 	for i := 0; i < bloomProbes; i++ {
 		bit := probe >> (9 * i) & 511
 		if b.words[base+int(bit/64)]&(1<<(bit%64)) == 0 {

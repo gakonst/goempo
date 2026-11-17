@@ -209,7 +209,10 @@ func openSegment(name string, id uint64, file goio.File) (*segment, error) {
 	for i := range f {
 		f[i] = binary.LittleEndian.Uint64(footer[8*i:])
 	}
-	if f[6] != segmentMagic || f[5] > bloomBlocked {
+	if f[6] != segmentMagic {
+		return nil, ErrCorrupt
+	}
+	if f[5] > bloomBlocked {
 		return nil, ErrCorrupt
 	}
 	indexOffset, indexLength, bloomWords := int64(f[0]), int64(f[1]), int64(f[2])
@@ -217,8 +220,10 @@ func openSegment(name string, id uint64, file goio.File) (*segment, error) {
 	if indexOffset < 0 || metaLength < 0 || indexOffset+metaLength+footerBytes != size {
 		return nil, ErrCorrupt
 	}
-	if f[5] == bloomBlocked && (bloomWords == 0 || bloomWords%bloomBlockWords != 0) {
-		return nil, ErrCorrupt
+	if f[5] == bloomBlocked {
+		if bloomWords == 0 || bloomWords%bloomBlockWords != 0 {
+			return nil, ErrCorrupt
+		}
 	}
 	meta := make([]byte, metaLength)
 	if _, err := file.ReadAt(meta, indexOffset); err != nil {
@@ -347,6 +352,13 @@ func (s *segment) get(p *probeKey, cache *blockCache) (lookup, error) {
 	return cache.get(s, i, p.key)
 }
 
+type readMode bool
+
+const (
+	readBlocks readMode = false
+	readAhead  readMode = true
+)
+
 type segmentIterator struct {
 	s       *segment
 	blockAt int
@@ -356,33 +368,45 @@ type segmentIterator struct {
 	span    []byte
 	spanOff int64
 	spanEnd int
-	ahead   bool
+	mode    readMode
 	current record
 	done    bool
 }
 
-func (s *segment) iterator(seek []byte, ahead bool) (*segmentIterator, error) {
-	it := &segmentIterator{s: s, blockAt: max(s.blockFor(seek), 0) - 1, ahead: ahead, spanEnd: -1}
+func (s *segment) iterator(seek []byte, mode readMode) (*segmentIterator, error) {
+	it := &segmentIterator{s: s, blockAt: max(s.blockFor(seek), 0) - 1, mode: mode, spanEnd: -1}
 	if err := it.loadNextBlock(); err != nil {
 		return nil, err
 	}
-	steps := 0
-	for ; steps < blockRecordsMax+1 && !it.done && bytes.Compare(it.current.key, seek) < 0; steps++ {
+	for steps := 0; steps < blockRecordsMax+1; steps++ {
+		if it.done {
+			return it, nil
+		}
+		if bytes.Compare(it.current.key, seek) >= 0 {
+			return it, nil
+		}
 		if err := it.next(); err != nil {
 			return nil, err
 		}
 	}
-	assert.Ok(steps <= blockRecordsMax, "segment seek crossed more than one block")
-	return it, nil
+	assert.Fail("segment seek crossed more than one block")
+	return nil, ErrCorrupt
 }
 
 func (it *segmentIterator) fillSpan() error {
 	idx := it.s.index
 	first := idx[it.blockAt]
 	end, last := first.offset+int64(first.length), it.blockAt
-	for last+1 < len(idx) && idx[last+1].offset == end && end-first.offset+int64(idx[last+1].length) <= readAheadBytes {
+	for range min(len(idx)-it.blockAt-1, readAheadBytes) {
+		e := idx[last+1]
+		if e.offset != end {
+			break
+		}
+		if end-first.offset+int64(e.length) > readAheadBytes {
+			break
+		}
 		last++
-		end += int64(idx[last].length)
+		end += int64(e.length)
 	}
 	n := int(end - first.offset)
 	if cap(it.buf) < n {
@@ -398,7 +422,7 @@ func (it *segmentIterator) fillSpan() error {
 }
 
 func (it *segmentIterator) block() ([]byte, error) {
-	if !it.ahead {
+	if it.mode == readBlocks {
 		block, err := it.s.readBlock(it.blockAt, it.buf)
 		it.buf = block
 		return block, err

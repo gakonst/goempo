@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"math/bits"
 	"slices"
 	"sync"
 
@@ -70,10 +71,8 @@ type memShard struct {
 }
 
 func newMemShard(limit int) *memShard {
-	slots := memSlotsMin
-	for steps := 0; steps < 32 && slots < memSlotsStartMax && slots*entryOverheadBytes < limit/2; steps++ {
-		slots *= 2
-	}
+	want := max(limit/2/entryOverheadBytes, 1)
+	slots := min(max(1<<bits.Len(uint(want-1)), memSlotsMin), memSlotsStartMax)
 	s := &memShard{slots: make([]uint64, slots), entries: make([]memEntry, 0, slots/4)}
 	s.chunks = append(s.chunks, make([]byte, 0, arenaChunkBytes))
 	return s
@@ -115,10 +114,11 @@ func (s *memShard) value(e *memEntry) []byte {
 }
 
 func (s *memShard) find(key []byte, h uint64) probe {
-	mask := len(s.slots) - 1
+	n := len(s.slots)
+	mask := n - 1
 	tag := h >> 32
 	pos := int(h) & mask
-	for probes := 0; probes < len(s.slots); probes++ {
+	for range n {
 		slot := s.slots[pos]
 		if slot == 0 {
 			return probe{pos: pos, idx: -1}
@@ -135,15 +135,16 @@ func (s *memShard) find(key []byte, h uint64) probe {
 
 func (s *memShard) grow() {
 	old := s.slots
-	s.slots = make([]uint64, 2*len(old))
-	mask := len(s.slots) - 1
+	n := 2 * len(old)
+	s.slots = make([]uint64, n)
+	mask := n - 1
 	for _, slot := range old {
 		if slot == 0 {
 			continue
 		}
 		e := &s.entries[uint32(slot)-1]
 		pos := int(hashKey(s.key(e))) & mask
-		for probes := 0; probes < len(s.slots); probes++ {
+		for range n {
 			if s.slots[pos] == 0 {
 				break
 			}
@@ -198,8 +199,8 @@ func (s *memShard) record(idx uint32) record {
 	return record{key: s.key(e), value: s.value(e), deleted: e.deleted}
 }
 
-func (s *memShard) less(a, b uint32) int {
-	return bytes.Compare(s.key(&s.entries[a]), s.key(&s.entries[b]))
+func (s *memShard) keyAt(idx uint32) []byte {
+	return s.key(&s.entries[idx])
 }
 
 func (s *memShard) sortFrom(from int) []uint32 {
@@ -207,17 +208,18 @@ func (s *memShard) sortFrom(from int) []uint32 {
 	for i := from; i < len(s.entries); i++ {
 		idxs = append(idxs, uint32(i))
 	}
-	slices.SortFunc(idxs, s.less)
+	slices.SortFunc(idxs, func(a, b uint32) int { return bytes.Compare(s.keyAt(a), s.keyAt(b)) })
 	return idxs
 }
 
 func (s *memShard) fold() {
-	out := make([]uint32, 0, len(s.base)+len(s.delta))
+	total := len(s.base) + len(s.delta)
+	out := make([]uint32, 0, total)
 	i, j := 0, 0
-	for steps := 0; steps < cap(out); steps++ {
+	for range total {
 		takeBase := j == len(s.delta)
 		if !takeBase && i < len(s.base) {
-			takeBase = s.less(s.base[i], s.delta[j]) < 0
+			takeBase = bytes.Compare(s.keyAt(s.base[i]), s.keyAt(s.delta[j])) < 0
 		}
 		if takeBase {
 			out = append(out, s.base[i])
@@ -239,7 +241,12 @@ const (
 	sortFull sortMode = true
 )
 
-func (s *memShard) sorted(mode sortMode) ([]uint32, []uint32) {
+type sortedIdx struct {
+	base  []uint32
+	delta []uint32
+}
+
+func (s *memShard) sorted(mode sortMode) sortedIdx {
 	s.sortMu.Lock()
 	defer s.sortMu.Unlock()
 	if s.deltaN < len(s.entries) {
@@ -252,7 +259,7 @@ func (s *memShard) sorted(mode sortMode) ([]uint32, []uint32) {
 			s.fold()
 		}
 	}
-	return s.base, s.delta
+	return sortedIdx{base: s.base, delta: s.delta}
 }
 
 type shardIterator struct {
@@ -264,14 +271,14 @@ type shardIterator struct {
 }
 
 func (s *memShard) iterator(prefix []byte, mode sortMode) *shardIterator {
-	base, delta := s.sorted(mode)
+	si := s.sorted(mode)
 	seek := func(list []uint32) []uint32 {
 		i, _ := slices.BinarySearchFunc(list, prefix, func(idx uint32, k []byte) int {
 			return bytes.Compare(s.key(&s.entries[idx]), k)
 		})
 		return list[i:]
 	}
-	it := &shardIterator{s: s, base: seek(base), delta: seek(delta)}
+	it := &shardIterator{s: s, base: seek(si.base), delta: seek(si.delta)}
 	it.pick()
 	return it
 }
@@ -284,7 +291,7 @@ func (it *shardIterator) pick() {
 		it.cur = it.base[0]
 	case len(it.base) == 0:
 		it.cur = it.delta[0]
-	case it.s.less(it.base[0], it.delta[0]) < 0:
+	case bytes.Compare(it.s.keyAt(it.base[0]), it.s.keyAt(it.delta[0])) < 0:
 		it.cur = it.base[0]
 	default:
 		it.cur = it.delta[0]

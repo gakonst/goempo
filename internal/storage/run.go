@@ -37,15 +37,15 @@ func (r *run) get(p *probeKey, cache *blockCache) (lookup, error) {
 }
 
 type runIterator struct {
-	r     *run
-	at    int
-	it    *segmentIterator
-	ahead bool
+	r    *run
+	at   int
+	it   *segmentIterator
+	mode readMode
 }
 
-func (r *run) iterator(seek []byte, ahead bool) (*runIterator, error) {
-	ri := &runIterator{r: r, at: max(r.segmentFor(seek), 0), ahead: ahead}
-	it, err := r.segs[ri.at].iterator(seek, ahead)
+func (r *run) iterator(seek []byte, mode readMode) (*runIterator, error) {
+	ri := &runIterator{r: r, at: max(r.segmentFor(seek), 0), mode: mode}
+	it, err := r.segs[ri.at].iterator(seek, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (r *run) iterator(seek []byte, ahead bool) (*runIterator, error) {
 func (ri *runIterator) skipDone() error {
 	for steps := 0; steps < len(ri.r.segs) && !ri.it.valid() && ri.at+1 < len(ri.r.segs); steps++ {
 		ri.at++
-		it, err := ri.r.segs[ri.at].iterator(nil, ri.ahead)
+		it, err := ri.r.segs[ri.at].iterator(nil, ri.mode)
 		if err != nil {
 			return err
 		}

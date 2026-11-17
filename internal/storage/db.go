@@ -38,6 +38,22 @@ const runsSoft = 2 * tierWidth
 
 const abortCheckRecords = 1 << 12
 
+const waitsMax = 1 << 40
+
+const _ = uint(waitsMax - recordsMax)
+
+const applyOpsMax = batchPartsMax * batchOpsChunk
+
+const _ = uint(mergeJobsMax - immutableMax)
+
+const _ = uint(mergeWorkersMax - mergeJobsMax)
+
+const _ = uint(mergePartBytesMin - MemtableBytesDefault/2)
+
+const _ = uint(applyOpsMax - parallelApplyMin)
+
+const _ = uint(memShards - immutableMax)
+
 const _ = uint(segmentsMax - tierWidth)
 
 const _ = uint(runSegmentsMax - mergeWorkersMax)
@@ -84,10 +100,19 @@ type DB struct {
 	stats    Stats
 	manifest sync.Mutex
 
-	flushCh chan *memtable
-	jobCh   chan *mergeJob
-	abort   atomic.Bool
-	wg      sync.WaitGroup
+	abort atomic.Bool
+	wg    sync.WaitGroup
+}
+
+type newSegment struct {
+	name string
+	id   uint64
+	file goio.File
+}
+
+type keyRange struct {
+	lo []byte
+	hi []byte
 }
 
 type Stats struct {
@@ -116,7 +141,6 @@ func Open(fs goio.FS, opts Options) (*DB, error) {
 	db := &DB{
 		fs: fs, limit: limit, workers: min(workers, mergeWorkersMax),
 		mem: newMemtable(limit), cache: newBlockCache(cacheBytes), busy: map[*run]bool{},
-		flushCh: make(chan *memtable, immutableMax), jobCh: make(chan *mergeJob, mergeJobsMax),
 	}
 	db.cond.L = &db.mu
 	man, err := readManifest(fs)
@@ -139,11 +163,6 @@ func Open(fs goio.FS, opts Options) (*DB, error) {
 	db.current.Store(&view{runs: runs})
 	if err := db.removeUnlisted(man); err != nil {
 		return nil, errors.Join(err, closeAll(runs))
-	}
-	db.wg.Add(1 + mergeJobsMax)
-	go db.flushLoop()
-	for range mergeJobsMax {
-		go db.mergeLoop()
 	}
 	db.mu.Lock()
 	db.schedule()
@@ -262,14 +281,16 @@ func (db *DB) applyParallel(b *Batch) {
 	sc := &db.scratch
 	sc.ops = sc.ops[:0]
 	b.each(func(o op) { sc.ops = append(sc.ops, o) })
-	n := len(sc.ops)
+	assert.Ok(len(sc.ops) <= applyOpsMax, "storage batch over applyOpsMax")
+	n := min(len(sc.ops), applyOpsMax)
 	sc.hashes = slices.Grow(sc.hashes[:0], n)[:n]
 	workers := min(db.workers, applyWorkersMax)
 	var wg sync.WaitGroup
 	for w := range workers {
 		wg.Go(func() {
-			for i := w * n / workers; i < (w+1)*n/workers; i++ {
-				sc.hashes[i] = hashKey(sc.ops[i].key)
+			hashes, ops := sc.hashes[w*n/workers:(w+1)*n/workers], sc.ops[w*n/workers:]
+			for i := range hashes {
+				hashes[i] = hashKey(ops[i].key)
 			}
 		})
 	}
@@ -302,34 +323,41 @@ func (db *DB) reclaim() error {
 func (db *DB) rotate() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	for waits := 0; db.bgErr == nil && len(db.current.Load().imm) >= immutableMax; waits++ {
-		assert.Ok(waits < 1<<40, "storage writer waited forever for a flush")
-		db.cond.Wait()
-	}
+	db.waitFor(func() bool { return db.bgErr != nil || len(db.current.Load().imm) < immutableMax })
 	if db.bgErr != nil {
 		return db.bgErr
+	}
+	if db.closing {
+		return ErrClosed
 	}
 	v := db.current.Load()
 	m := db.mem
 	db.current.Store(&view{imm: append(slices.Clip(v.imm), m), runs: v.runs})
 	db.mem = newMemtable(db.limit)
 	db.rotated++
-	db.flushCh <- m
+	db.wg.Go(func() { db.flushTask(m) })
 	return nil
 }
 
-func (db *DB) nextName() (string, uint64) {
-	db.seq++
-	db.nextID++
-	return strconv.FormatUint(db.seq, 16) + ".seg", db.nextID
+func (db *DB) waitFor(ready func() bool) {
+	for waits := 0; waits < waitsMax; waits++ {
+		if ready() {
+			return
+		}
+		db.cond.Wait()
+	}
+	assert.Fail("storage waited forever")
 }
 
-func (db *DB) createSegment() (string, uint64, goio.File, error) {
+func (db *DB) createSegment() (newSegment, error) {
 	db.mu.Lock()
-	name, id := db.nextName()
+	db.seq++
+	db.nextID++
+	ns := newSegment{name: strconv.FormatUint(db.seq, 16) + ".seg", id: db.nextID}
 	db.mu.Unlock()
-	file, err := db.fs.Create(name)
-	return name, id, file, err
+	file, err := db.fs.Create(ns.name)
+	ns.file = file
+	return ns, err
 }
 
 func (db *DB) Flush() error {
@@ -346,10 +374,7 @@ func (db *DB) Flush() error {
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	for waits := 0; db.bgErr == nil && db.flushed < db.rotated; waits++ {
-		assert.Ok(waits < 1<<40, "storage flush waited forever")
-		db.cond.Wait()
-	}
+	db.waitFor(func() bool { return db.bgErr != nil || db.flushed == db.rotated })
 	return db.bgErr
 }
 
@@ -362,24 +387,21 @@ func (db *DB) fail(err error) {
 	db.mu.Unlock()
 }
 
-func (db *DB) flushLoop() {
-	defer db.wg.Done()
-	for m := range db.flushCh {
-		if db.failure() != nil {
-			continue
-		}
-		if err := db.flushOne(m); err != nil {
-			db.fail(err)
-		}
+func (db *DB) flushTask(m *memtable) {
+	if db.failure() != nil {
+		return
+	}
+	if err := db.flushOne(m); err != nil {
+		db.fail(err)
 	}
 }
 
 func (db *DB) flushOne(m *memtable) error {
-	name, id, file, err := db.createSegment()
+	ns, err := db.createSegment()
 	if err != nil {
 		return err
 	}
-	w := newSegmentWriter(file, m.len())
+	w := newSegmentWriter(ns.file, m.len())
 	mg := &merger{}
 	m.sources(nil, sortFull, mg)
 	err = mg.each(func(r record) error {
@@ -388,18 +410,16 @@ func (db *DB) flushOne(m *memtable) error {
 	})
 	var seg *segment
 	if err == nil {
-		seg, err = w.finish(name, id)
+		seg, err = w.finish(ns.name, ns.id)
 	}
 	if err != nil {
-		return errors.Join(err, file.Close())
+		return errors.Join(err, ns.file.Close())
 	}
 	db.mu.Lock()
-	for waits := 0; db.bgErr == nil && !db.closing && len(db.current.Load().runs) >= segmentsMax; waits++ {
-		assert.Ok(waits < 1<<40, "storage flush waited forever for a merge")
-		db.cond.Wait()
-	}
+	db.waitFor(func() bool { return db.bgErr != nil || db.closing || len(db.current.Load().runs) < segmentsMax })
 	v := db.current.Load()
-	assert.Ok(len(v.imm) > 0 && v.imm[0] == m, "storage flushes memtables in order")
+	assert.Ok(len(v.imm) > 0, "storage flushes a rotated memtable")
+	assert.Ok(v.imm[0] == m, "storage flushes memtables in order")
 	db.current.Store(&view{imm: v.imm[1:], runs: append(slices.Clip(v.runs), newRun([]*segment{seg}))})
 	db.stats.Flushes++
 	db.stats.BytesWritten += seg.size
@@ -435,7 +455,10 @@ func tiered(runs []*run) bool {
 func (db *DB) pickWindow(runs []*run) int {
 	for i := len(runs) - tierWidth; i >= 0; i-- {
 		w := runs[i : i+tierWidth]
-		if db.windowFree(w) && tiered(w) {
+		if !db.windowFree(w) {
+			continue
+		}
+		if tiered(w) {
 			return i
 		}
 	}
@@ -452,7 +475,10 @@ func (db *DB) pickWindow(runs []*run) int {
 		for _, r := range w {
 			size += r.size
 		}
-		if best < 0 || size < bestSize {
+		if best < 0 {
+			best, bestSize = i, size
+		}
+		if size < bestSize {
 			best, bestSize = i, size
 		}
 	}
@@ -465,7 +491,10 @@ type mergeJob struct {
 }
 
 func (db *DB) schedule() {
-	for db.jobs < mergeJobsMax && !db.closing && db.bgErr == nil {
+	for range mergeJobsMax {
+		if db.jobs >= mergeJobsMax || db.closing || db.bgErr != nil {
+			return
+		}
 		runs := db.current.Load().runs
 		if len(runs) < tierWidth {
 			return
@@ -479,14 +508,8 @@ func (db *DB) schedule() {
 			db.busy[r] = true
 		}
 		db.jobs++
-		db.jobCh <- &mergeJob{inputs: slices.Clone(window), drop: at == 0}
-	}
-}
-
-func (db *DB) mergeLoop() {
-	defer db.wg.Done()
-	for job := range db.jobCh {
-		db.runJob(job)
+		job := &mergeJob{inputs: slices.Clone(window), drop: at == 0}
+		db.wg.Go(func() { db.runJob(job) })
 	}
 }
 
@@ -498,7 +521,7 @@ func (db *DB) runJob(job *mergeJob) {
 	}
 	db.jobs--
 	if err != nil {
-		if !errors.Is(err, errAborted) && db.bgErr == nil {
+		if db.bgErr == nil && !errors.Is(err, errAborted) {
 			db.bgErr = err
 		}
 		db.cond.Broadcast()
@@ -507,7 +530,8 @@ func (db *DB) runJob(job *mergeJob) {
 	}
 	v := db.current.Load()
 	at := slices.Index(v.runs, job.inputs[0])
-	assert.Ok(at >= 0 && at+len(job.inputs) <= len(v.runs), "merged runs are still live")
+	assert.Ok(at >= 0, "merged runs are still live")
+	assert.Ok(at+len(job.inputs) <= len(v.runs), "merged runs fit the live runs")
 	for i, r := range job.inputs {
 		assert.Ok(v.runs[at+i] == r, "merged runs are contiguous")
 	}
@@ -563,13 +587,19 @@ func (db *DB) splitKeys(inputs []*run, parts int) [][]byte {
 	for _, s := range largest.segs {
 		for _, e := range s.index {
 			seen += int64(e.length)
-			if seen < next || len(splits) == parts-1 {
+			if seen < next {
 				continue
 			}
-			if len(splits) == 0 || bytes.Compare(e.firstKey, splits[len(splits)-1]) > 0 {
-				splits = append(splits, e.firstKey)
+			if len(splits) == parts-1 {
+				continue
 			}
 			next += step
+			if len(splits) > 0 {
+				if bytes.Compare(e.firstKey, splits[len(splits)-1]) <= 0 {
+					continue
+				}
+			}
+			splits = append(splits, e.firstKey)
 		}
 	}
 	return splits
@@ -592,7 +622,7 @@ func (db *DB) mergeRuns(job *mergeJob) ([]*segment, error) {
 	var wg sync.WaitGroup
 	for p := range out {
 		wg.Go(func() {
-			out[p], errs[p] = db.mergePart(job, bounds[p], bounds[p+1])
+			out[p], errs[p] = db.mergePart(job, keyRange{lo: bounds[p], hi: bounds[p+1]})
 		})
 	}
 	wg.Wait()
@@ -614,42 +644,46 @@ func (db *DB) mergeRuns(job *mergeJob) ([]*segment, error) {
 	return segs, nil
 }
 
-func (db *DB) mergePart(job *mergeJob, lo, hi []byte) (*segment, error) {
-	m := &merger{hi: hi}
+func (db *DB) mergePart(job *mergeJob, kr keyRange) (*segment, error) {
+	m := &merger{hi: kr.hi}
 	for i := len(job.inputs) - 1; i >= 0; i-- {
-		it, err := job.inputs[i].iterator(lo, true)
+		it, err := job.inputs[i].iterator(kr.lo, readAhead)
 		if err != nil {
 			return nil, err
 		}
 		m.sources = append(m.sources, it)
 		m.total += job.inputs[i].records
 	}
-	name, id, file, err := db.createSegment()
+	ns, err := db.createSegment()
 	if err != nil {
 		return nil, err
 	}
-	w := newSegmentWriter(file, 0)
+	w := newSegmentWriter(ns.file, 0)
 	seen := 0
 	err = m.each(func(r record) error {
 		seen++
-		if seen%abortCheckRecords == 0 && db.abort.Load() {
-			return errAborted
+		if seen%abortCheckRecords == 0 {
+			if db.abort.Load() {
+				return errAborted
+			}
 		}
-		if r.deleted && job.drop {
-			return nil
+		if r.deleted {
+			if job.drop {
+				return nil
+			}
 		}
 		w.add(r)
 		return nil
 	})
-	if err == nil && w.records == 0 {
-		return nil, errors.Join(file.Close(), db.fs.Remove(name))
-	}
-	var seg *segment
-	if err == nil {
-		seg, err = w.finish(name, id)
-	}
 	if err != nil {
-		return nil, errors.Join(err, file.Close(), db.fs.Remove(name))
+		return nil, errors.Join(err, ns.file.Close(), db.fs.Remove(ns.name))
+	}
+	if w.records == 0 {
+		return nil, errors.Join(ns.file.Close(), db.fs.Remove(ns.name))
+	}
+	seg, err := w.finish(ns.name, ns.id)
+	if err != nil {
+		return nil, errors.Join(err, ns.file.Close(), db.fs.Remove(ns.name))
 	}
 	return seg, nil
 }
@@ -662,7 +696,7 @@ func (db *DB) Iterate(prefix []byte, visit func(Entry) error) error {
 		v.imm[i].sources(prefix, sortLazy, m)
 	}
 	for i := len(v.runs) - 1; i >= 0; i-- {
-		it, err := v.runs[i].iterator(prefix, false)
+		it, err := v.runs[i].iterator(prefix, readBlocks)
 		if err != nil {
 			return err
 		}
@@ -705,8 +739,6 @@ func (db *DB) Close() error {
 	db.abort.Store(true)
 	db.mu.Lock()
 	db.closing = true
-	close(db.jobCh)
-	close(db.flushCh)
 	db.cond.Broadcast()
 	db.mu.Unlock()
 	db.wg.Wait()

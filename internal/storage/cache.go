@@ -8,13 +8,15 @@ import (
 	"github.com/kapetan-io/tiger/assert"
 )
 
-const cacheSlotBytes = 8 << 10
+const cacheSlotBytes = 5 << 10
 
 const cacheShards = 64
 
 const BlockCacheBytesDefault = 32 << 20
 
 const cacheSlotsPerShardMin = 4
+
+const _ = uint(BlockCacheBytesDefault/cacheShards/cacheSlotBytes - cacheSlotsPerShardMin)
 
 const _ = uint(cacheSlotBytes - blockBytesTarget)
 
@@ -56,7 +58,8 @@ func newBlockCache(bytesTotal int) *blockCache {
 }
 
 func cacheKey(s *segment, block int) uint64 {
-	assert.Ok(block >= 0 && block < 1<<32, "segment block index fits a cache key")
+	assert.Ok(block >= 0, "segment block index is not negative")
+	assert.Ok(block < 1<<32, "segment block index fits a cache key")
 	return s.id<<32 | uint64(block)
 }
 
@@ -66,7 +69,8 @@ func (c *blockCache) shard(key uint64) *cacheShard {
 
 func parseOffsets(block []byte, records int, offs []uint16) error {
 	r := reader{b: block}
-	for i := 0; i < records; i++ {
+	records = min(records, blockRecordsMax)
+	for i := range records {
 		offs[i] = uint16(len(block) - len(r.b))
 		nextRecord(&r)
 		if r.err != nil {
@@ -81,7 +85,7 @@ func parseOffsets(block []byte, records int, offs []uint16) error {
 
 func scanBlock(block []byte, records int, key []byte) (lookup, error) {
 	r := reader{b: block}
-	for range records {
+	for range min(records, blockRecordsMax) {
 		rec := nextRecord(&r)
 		if r.err != nil {
 			return lookup{}, r.err
@@ -98,8 +102,11 @@ func scanBlock(block []byte, records int, key []byte) (lookup, error) {
 }
 
 func searchSlot(sl *cacheSlot, key []byte) lookup {
-	lo, hi := 0, sl.n
-	for lo < hi {
+	lo, hi := 0, min(sl.n, blockRecordsMax)
+	for range blockRecordsMax {
+		if lo >= hi {
+			break
+		}
 		mid := int(uint(lo+hi) >> 1)
 		r := reader{b: sl.buf[sl.offs[mid]:]}
 		rec := nextRecord(&r)

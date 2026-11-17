@@ -24,7 +24,9 @@ func keyOf(i int) []byte {
 	return k
 }
 
-func valueOf(i, gen int) []byte {
+type generation int
+
+func valueOf(i int, gen generation) []byte {
 	return bytes.Repeat([]byte{byte(i), byte(gen)}, 1+i%40)
 }
 
@@ -48,7 +50,7 @@ func TestBackgroundFlushAndParallelMergeWithConcurrentReads(t *testing.T) {
 			}
 			gen[i] = round + 1
 			deleted[i] = false
-			b.Put(keyOf(i), valueOf(i, gen[i]))
+			b.Put(keyOf(i), valueOf(i, generation(gen[i])))
 		}
 		if err := db.Write(&b); err != nil {
 			t.Fatal(err)
@@ -60,7 +62,11 @@ func TestBackgroundFlushAndParallelMergeWithConcurrentReads(t *testing.T) {
 		errs := make([]error, 6)
 		for w := range errs {
 			wg.Go(func() {
-				for i := w; i < keys; i += len(errs) {
+				for j := range keys/len(errs) + 1 {
+					i := w + j*len(errs)
+					if i >= keys {
+						return
+					}
 					got, err := db.Get(keyOf(i))
 					switch {
 					case gen[i] == 0 || deleted[i]:
@@ -68,7 +74,7 @@ func TestBackgroundFlushAndParallelMergeWithConcurrentReads(t *testing.T) {
 							errs[w] = errors.New("key " + strconv.Itoa(i) + " should be absent")
 							return
 						}
-					case err != nil || !bytes.Equal(got, valueOf(i, gen[i])):
+					case err != nil || !bytes.Equal(got, valueOf(i, generation(gen[i]))):
 						errs[w] = errors.New("key " + strconv.Itoa(i) + " has the wrong value")
 						return
 					}
@@ -116,7 +122,7 @@ func TestBackgroundFlushAndParallelMergeWithConcurrentReads(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || !bytes.Equal(got, valueOf(i, gen[i])) {
+		if err != nil || !bytes.Equal(got, valueOf(i, generation(gen[i]))) {
 			t.Fatalf("reopened key %d: %v", i, err)
 		}
 	}
@@ -194,7 +200,7 @@ func BenchmarkWriteBatches(b *testing.B) {
 	var batch storage.Batch
 	b.ReportAllocs()
 	b.SetBytes(int64(len(key) + len(value)))
-	for i := 0; b.Loop(); i++ {
+	for i := range b.N {
 		binary.BigEndian.PutUint64(key[1:], uint64(i%300000)*0x9e3779b97f4a7c15)
 		batch.Put(key, value)
 		if batch.Len() == 1000 {
@@ -232,13 +238,18 @@ func BenchmarkGetParallel(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		i := 0
-		for pb.Next() {
-			i = (i + 7919) % n
-			if _, err := db.Get(keyOf(i % 20000)); err != nil {
-				b.Fatal(err)
+	var wg sync.WaitGroup
+	const readers = 6
+	for w := range readers {
+		wg.Go(func() {
+			for j := range b.N/readers + 1 {
+				i := (w*104729 + j*7919) % 20000
+				if _, err := db.Get(keyOf(i)); err != nil {
+					b.Error(err)
+					return
+				}
 			}
-		}
-	})
+		})
+	}
+	wg.Wait()
 }

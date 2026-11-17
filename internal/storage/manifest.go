@@ -42,7 +42,10 @@ func readManifest(fs goio.FS) (manifest, error) {
 
 func parseManifest(text string) (manifest, error) {
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if len(lines) < 3 || (lines[0] != manifestHeader && lines[0] != manifestHeaderV1) {
+	if len(lines) < 3 {
+		return manifest{}, ErrManifest
+	}
+	if lines[0] != manifestHeader && lines[0] != manifestHeaderV1 {
 		return manifest{}, ErrManifest
 	}
 	body := strings.Join(lines[:len(lines)-1], "\n")

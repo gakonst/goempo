@@ -3,7 +3,6 @@ package precompiles
 import (
 	"errors"
 
-	"github.com/gakonst/goempo/internal/crypto/keccak"
 	"github.com/gakonst/goempo/internal/evm"
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
@@ -88,21 +87,30 @@ type Context struct {
 	gasUsed            uint64
 	refund             int64
 	creditMinting      bool
-	hasher             *keccak.Hasher
+}
+
+// contextAlloc holds a Context and its default block, transaction and
+// environment together, so NewContext is one allocation, not four.
+type contextAlloc struct {
+	ctx   Context
+	block evm.BlockContext
+	tx    evm.TxContext
+	env   TxEnv
 }
 
 func NewContext(state evm.State, fork hardfork.Fork, gas uint64) *Context {
 	assert.Ok(state != nil, "precompile context needs a state")
-	return &Context{
+	a := &contextAlloc{}
+	a.ctx = Context{
 		State:         state,
 		Fork:          fork,
-		Block:         &evm.BlockContext{},
-		Tx:            &evm.TxContext{},
-		Env:           &TxEnv{},
+		Block:         &a.block,
+		Tx:            &a.tx,
+		Env:           &a.env,
 		gasLimit:      gas,
 		creditMinting: true,
-		hasher:        keccak.New(),
 	}
+	return &a.ctx
 }
 
 func (c *Context) GasUsed() uint64 { return c.gasUsed }
@@ -137,7 +145,7 @@ func (c *Context) ensureMutable() error {
 	return nil
 }
 
-func (c *Context) keccak(data []byte) Hash { return c.hasher.Hash(data) }
+func (c *Context) keccak(data []byte) Hash { return memoKeccak(data) }
 
 func (c *Context) chargeKeccak(n int) error {
 	words := (uint64(n) + 31) / 32
@@ -146,21 +154,31 @@ func (c *Context) chargeKeccak(n int) error {
 
 func (c *Context) warmSlot(addr Address, s slot) bool {
 	warm := c.State.SlotWarm(addr, Hash(s))
-	c.State.WarmAddress(addr)
-	c.State.WarmSlot(addr, Hash(s))
+	c.warmKnown(addr, s, warm)
 	return warm
 }
 
+// warmKnown warms addr and, when it was cold, the slot; warm is what
+// SlotWarm returned for it, so a warm slot costs no second lookup.
+func (c *Context) warmKnown(addr Address, s slot, warm bool) {
+	c.State.WarmAddress(addr)
+	if !warm {
+		c.State.WarmSlot(addr, Hash(s))
+	}
+}
+
 func (c *Context) sload(addr Address, s slot) (Word, error) {
+	warm := c.State.SlotWarm(addr, Hash(s))
 	if c.at(hardfork.T4) {
 		if err := c.charge(gasWarmRead); err != nil {
 			return Word{}, err
 		}
-		if !c.State.SlotWarm(addr, Hash(s)) && c.GasLeft() < c.cost(gasColdSloadExtra) {
+		if !warm && c.GasLeft() < c.cost(gasColdSloadExtra) {
 			return Word{}, c.outOfGas()
 		}
 	}
-	cold := !c.warmSlot(addr, s)
+	c.warmKnown(addr, s, warm)
+	cold := !warm
 	value := c.State.Storage(addr, Hash(s))
 	if c.Trace != nil {
 		c.Trace("sload", addr, Hash(s), c.gasUsed)

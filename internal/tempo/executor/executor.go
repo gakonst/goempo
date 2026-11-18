@@ -98,7 +98,7 @@ func (x *Executor) SystemSteps(st State, in Input) error {
 	rules := chain.RulesAt(x.ChainID, header.Inner.Timestamp)
 	set := precompiles.NewSet(rules.Fork, x.Configs.EthereumPrecompiles(rules))
 	sys := &systemEnv{config: x.Configs.Config(rules, set), block: blockContext(header, in.GetHash), header: header, rules: rules}
-	preBlock(st, sys)
+	finishPreBlock(st, sys)
 	return x.committeeCall(st, sys)
 }
 
@@ -110,8 +110,16 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	scratch := x.borrowScratch(header, in.GetHash)
 	defer returnScratch(scratch)
 	rules, set, cfg, blk, sys := scratch.sys.rules, &scratch.set, &scratch.cfg, &scratch.blk, &scratch.sys
-	preBlock(st, sys)
+	pending := preBlock(st, sys)
 	txs := in.Block.Transactions
+	// A block holding only a system transaction that stops at once (most
+	// blocks) finalizes the pre-block writes together with it: the system
+	// transaction only touches the zero address, which no pre-block step
+	// writes.
+	if pending && !(len(txs) == 1 && IsSystemTx(&txs[0]) && rules.HasSystemTransaction() &&
+		emptyCall(st, cfg, Address{})) {
+		st.FinalizeTx()
+	}
 	if len(txs) > blockTxsMax {
 		return Result{}, ErrTooManyTxs
 	}
@@ -227,6 +235,9 @@ var receiptScratches = sync.Pool{New: func() any {
 }}
 
 func finish(receipts []types.Receipt, gasUsed uint64) Result {
+	if root, ok := knownReceiptsRoot(receipts); ok {
+		return Result{GasUsed: gasUsed, Receipts: receipts, ReceiptsRoot: root}
+	}
 	sc, ok := receiptScratches.Get().(*receiptScratch)
 	assert.Ok(ok, "the receipt scratch pool holds scratches")
 	sc.enc.Reset()
@@ -251,6 +262,30 @@ func finish(receipts []types.Receipt, gasUsed uint64) Result {
 		receiptScratches.Put(sc)
 	}
 	return Result{GasUsed: gasUsed, Receipts: receipts, ReceiptsRoot: root, Bloom: bloom}
+}
+
+// systemReceipt is the receipt of a block whose only transaction is the
+// system transaction: most blocks before T4.
+var systemReceipt = types.Receipt{Type: types.TxTypeLegacy, Success: true}
+
+var systemReceiptsRoot = trie.OrderedRoot([][]byte{systemReceipt.Encode()})
+
+// knownReceiptsRoot returns the receipts root and empty bloom of a block with
+// no receipts or only the system receipt without hashing anything.
+func knownReceiptsRoot(receipts []types.Receipt) (Hash, bool) {
+	switch {
+	case len(receipts) == 0:
+		return trie.EmptyRoot, true
+	case len(receipts) == 1 && isSystemReceipt(&receipts[0]):
+		return systemReceiptsRoot, true
+	default:
+		return Hash{}, false
+	}
+}
+
+func isSystemReceipt(r *types.Receipt) bool {
+	return len(r.Logs) == 0 && r.Type == systemReceipt.Type && r.Success == systemReceipt.Success &&
+		r.CumulativeGasUsed == systemReceipt.CumulativeGasUsed && r.Bloom == (types.Bloom{})
 }
 
 // singleLeafKey is the hex-prefix encoding of the only key in a one-item

@@ -1,8 +1,9 @@
 package executor
 
 import (
+	"encoding/binary"
+
 	"github.com/gakonst/goempo/internal/evm"
-	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/types"
@@ -28,31 +29,54 @@ type systemCall struct {
 	gas    uint64
 }
 
-func preBlock(st State, env *systemEnv) {
-	historyCall(st, env, systemCall{
+// preBlock runs the block's pre-transaction system steps. The steps applied
+// natively (history and beacon roots writes, precompile and zone deploys)
+// depend on no transaction boundary between them, so their writes share one
+// pending transaction: preBlock reports whether it left writes for the
+// caller to finalize (see finishPreBlock).
+func preBlock(st State, env *systemEnv) bool {
+	pending := historyCall(st, env, systemCall{
 		caller: chain.SystemAddress,
 		to:     chain.HistoryStorageAddress,
 		input:  env.header.Inner.ParentHash[:],
 		gas:    env.rules.SystemCallGas(),
-	})
+	}, false)
 	if !env.rules.AtLeast(hardfork.T13) {
-		historyCall(st, env, systemCall{
+		pending = historyCall(st, env, systemCall{
 			caller: chain.SystemAddress,
 			to:     BeaconRootsAddress,
 			input:  env.header.Inner.ParentBeaconBlockRoot[:],
 			gas:    env.rules.SystemCallGas(),
-		})
+		}, pending)
 	}
-	deployBoundaryPrecompiles(st, env.rules)
-	deployZones(st, env.rules)
+	pending = deployBoundaryPrecompiles(st, env.rules) || pending
+	pending = deployZones(st, env.rules) || pending
+	return pending
 }
 
-func historyCall(st State, env *systemEnv, call systemCall) {
+// finishPreBlock runs preBlock and finalizes its writes.
+func finishPreBlock(st State, env *systemEnv) {
+	if preBlock(st, env) {
+		st.FinalizeTx()
+	}
+}
+
+// historyCall applies one system call into a history contract. A native
+// call leaves its writes pending and reports true; an interpreted one runs
+// as its own transaction, after finalizing what is pending.
+func historyCall(st State, env *systemEnv, call systemCall, pending bool) bool {
 	if len(st.Code(call.to)) == 0 {
-		return
+		return pending
+	}
+	if nativeSystemCall(st, env.block, call) {
+		return true
+	}
+	if pending {
+		st.FinalizeTx()
 	}
 	run(st, env.config, env.block, call)
 	st.FinalizeTx()
+	return false
 }
 
 func run(st State, cfg *evm.Config, blk *evm.BlockContext, call systemCall) evm.Result {
@@ -80,21 +104,34 @@ func IsSystemTx(tx *types.Transaction) bool {
 	if legacy.To == nil {
 		return false
 	}
-	if *legacy.To != (primitives.Address{}) {
-		return false
-	}
-	return legacy.R == [len(legacy.R)]byte{} && legacy.S == [len(legacy.S)]byte{}
+	to, r, s := legacy.To, &legacy.R, &legacy.S
+	// Word loads instead of three memequal calls: this runs on every
+	// transaction.
+	return binary.LittleEndian.Uint64(to[0:])|binary.LittleEndian.Uint64(to[8:])|
+		uint64(binary.LittleEndian.Uint32(to[16:]))|
+		binary.LittleEndian.Uint64(r[0:])|binary.LittleEndian.Uint64(r[8:])|
+		binary.LittleEndian.Uint64(r[16:])|binary.LittleEndian.Uint64(r[24:])|
+		binary.LittleEndian.Uint64(s[0:])|binary.LittleEndian.Uint64(s[8:])|
+		binary.LittleEndian.Uint64(s[16:])|binary.LittleEndian.Uint64(s[24:]) == 0
 }
 
 func applySystemTx(env *TxEnv) (TxOutcome, error) {
 	legacy, ok := env.Tx.Data.(*types.LegacyTx)
 	assert.Ok(ok, "a system transaction is legacy")
-	res := run(env.State, env.Config, env.Block, systemCall{
+	call := systemCall{
 		caller: Address{},
 		to:     Address{},
 		input:  legacy.Data,
 		gas:    env.Rules.TempoSystemCallGas(),
-	})
+	}
+	// The system transaction calls the zero address, which holds no code
+	// and is no precompile: the call stops at once and only touches it.
+	if emptyCall(env.State, env.Config, call.to) {
+		env.State.Touch(call.to)
+		env.State.FinalizeTx()
+		return TxOutcome{GasUsed: 0, Success: true}, nil
+	}
+	res := run(env.State, env.Config, env.Block, call)
 	env.State.FinalizeTx()
 	if !res.Status.Success() {
 		return TxOutcome{}, ErrSystemTx

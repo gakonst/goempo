@@ -23,7 +23,10 @@ var boundaryPrecompiles = [...]boundaryPrecompile{
 
 var precompileMarker = []byte{0xef}
 
-func deployBoundaryPrecompiles(st State, rules chain.Rules) {
+// deployBoundaryPrecompiles marks the precompiles due at rules' fork and
+// reports whether it wrote any; the caller finalizes the writes.
+func deployBoundaryPrecompiles(st State, rules chain.Rules) bool {
+	wrote := false
 	for i := range boundaryPrecompiles {
 		p := &boundaryPrecompiles[i]
 		if !rules.AtLeast(p.fork) {
@@ -33,6 +36,7 @@ func deployBoundaryPrecompiles(st State, rules chain.Rules) {
 			continue
 		}
 		st.SetCode(p.address, precompileMarker)
+		wrote = true
 	}
-	st.FinalizeTx()
+	return wrote
 }

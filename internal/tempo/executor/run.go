@@ -33,7 +33,7 @@ func (x *Executor) Begin(st State, header *types.Header, getHash func(number uin
 	cfg := x.Configs.Config(rules, set)
 	blk := blockContext(header, getHash)
 	sys := &systemEnv{config: cfg, block: blk, header: header, rules: rules}
-	preBlock(st, sys)
+	finishPreBlock(st, sys)
 	return &BlockRun{x: x, st: st, rules: rules, set: set, cfg: cfg, blk: blk, sys: sys}
 }
 

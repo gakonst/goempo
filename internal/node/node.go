@@ -176,7 +176,7 @@ func open(db *state.DB, cfg *Config) (*Node, error) {
 	}
 	n := &Node{
 		db:            db,
-		exec:          &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength},
+		exec:          &executor.Executor{ChainID: hardfork.MainnetChainID, EpochLength: extra.EpochLength, Parallel: executor.Parallel{Workers: 16, MinTxs: 64}},
 		sources:       cfg.Sources,
 		recent:        NewRecent(recent, cfg.Archive),
 		rootEvery:     max(cfg.RootEvery, 1),

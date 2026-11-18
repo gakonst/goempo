@@ -112,12 +112,16 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	rules, set, cfg, blk, sys := scratch.sys.rules, &scratch.set, &scratch.cfg, &scratch.blk, &scratch.sys
 	pending := preBlock(st, sys)
 	txs := in.Block.Transactions
-	// A block holding only a system transaction that stops at once (most
-	// blocks) finalizes the pre-block writes together with it: the system
-	// transaction only touches the zero address, which no pre-block step
-	// writes.
-	if pending && !(len(txs) == 1 && IsSystemTx(&txs[0]) && rules.HasSystemTransaction() &&
-		emptyCall(st, cfg, Address{})) {
+	if len(txs) == 1 && IsSystemTx(&txs[0]) && rules.HasSystemTransaction() &&
+		emptyZeroCall(st, scratch.zeroIsPrecompile) {
+		applySystemOnly(st, pending)
+		receipts := append(in.Receipts[:0], systemReceipt)
+		if err := x.committeeCall(st, sys); err != nil {
+			return Result{}, err
+		}
+		return Result{GasUsed: 0, Receipts: receipts, ReceiptsRoot: systemReceiptsRoot}, nil
+	}
+	if pending {
 		st.FinalizeTx()
 	}
 	if len(txs) > blockTxsMax {
@@ -139,6 +143,18 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 		return Result{}, err
 	}
 	return finish(receipts, cumulative), nil
+}
+
+// applySystemOnly applies a block's only transaction, a system transaction
+// whose call into the zero address stops at once, as applySystemTx would,
+// finalizing the pre-block writes pending with it: no pre-block step writes
+// the zero address. The call only touches the zero address, which changes
+// state only when the account exists and is empty (EIP-161 deletes it).
+func applySystemOnly(st State, pending bool) {
+	if pending || (st.Exist(Address{}) && st.Empty(Address{})) {
+		st.Touch(Address{})
+		st.FinalizeTx()
+	}
 }
 
 func txError(i int, err error) error { return fmt.Errorf("tx %d: %w", i, err) }

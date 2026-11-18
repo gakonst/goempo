@@ -61,15 +61,24 @@ func finishPreBlock(st State, env *systemEnv) {
 	}
 }
 
-// historyCall applies one system call into a history contract. A native
-// call leaves its writes pending and reports true; an interpreted one runs
-// as its own transaction, after finalizing what is pending.
+// historyCall applies one system call into a history contract and reports
+// whether writes are pending, given whether they were before. A native call
+// writes final slots or leaves them pending; an interpreted one runs as its
+// own transaction, after finalizing what is pending.
 func historyCall(st State, env *systemEnv, call systemCall, pending bool) bool {
+	// The native path checks the callee's code hash, so it goes first: a
+	// callee without code never matches it.
+	switch nativeSystemCall(st, env.block, call, pending) {
+	case nativeFinal:
+		return pending
+	case nativePending:
+		return true
+	case nativeNo:
+	default:
+		assert.Unreachable("native system call result")
+	}
 	if len(st.Code(call.to)) == 0 {
 		return pending
-	}
-	if nativeSystemCall(st, env.block, call) {
-		return true
 	}
 	if pending {
 		st.FinalizeTx()

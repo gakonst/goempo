@@ -8,6 +8,7 @@ import (
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/storage"
 	"github.com/gakonst/goempo/internal/u256"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 type Address = primitives.Address
@@ -426,6 +427,30 @@ func (s *State) SetStorage(addr Address, key Hash, value u256.Int) {
 	}
 }
 
+// SetStorageNow writes a slot of an existing account between transactions,
+// leaving it as SetStorage then FinalizeTx would, without journaling it or
+// folding a dirty set. System steps that cannot fail or revert, such as the
+// history contract writes before a block, use it.
+func (s *State) SetStorageNow(addr Address, key Hash, value u256.Int) {
+	assert.Ok(s.spec == nil, "speculative transactions write through the journal")
+	assert.Ok(len(s.journal) == 0 && len(s.txObjs) == 0, "a final write happens between transactions")
+	o := s.load(addr)
+	assert.Ok(o.exists, "a final write goes to an existing account")
+	assert.Ok(len(o.dirty) == 0, "an account written between transactions has no pending writes")
+	s.markDirty(addr)
+	s.markSlot(slotKey{addr: addr, key: key})
+	if o.committed == nil {
+		o.committed = make(map[Hash]u256.Int, 1)
+	}
+	if o.changed == nil {
+		o.changed = make(map[Hash]struct{}, 1)
+	}
+	before := len(o.committed)
+	o.committed[key] = value
+	o.changed[key] = struct{}{}
+	s.cachedSlots += len(o.committed) - before
+}
+
 func (s *State) HasStorage(addr Address) bool {
 	if s.spec != nil {
 		s.spec.tx.unsafe = true
@@ -568,14 +593,32 @@ func (s *State) resetTx() {
 	clear(s.warmAddrs)
 	clear(s.warmSlots)
 	clear(s.created)
-	clear(s.touchedSet)
-	clear(s.destructedSet)
+	// touched and destructed list their sets' keys: deleting a few keys
+	// costs less than clearing (and reseeding) the map every transaction.
+	dropListed(s.touchedSet, s.touched)
+	dropListed(s.destructedSet, s.destructed)
 	s.touched = s.touched[:0]
 	s.destructed = s.destructed[:0]
 	clear(s.journal)
 	s.journal = s.journal[:0]
 	s.logs = nil
 	s.refund = 0
+}
+
+// dropListedMax bounds the keys dropListed deletes one by one.
+const dropListedMax = 32
+
+// dropListed empties set, whose keys are all in keys.
+func dropListed(set map[Address]struct{}, keys []Address) {
+	assert.Ok(len(set) <= len(keys), "a listed set holds only listed keys")
+	if len(keys) > dropListedMax {
+		clear(set)
+		return
+	}
+	for _, k := range keys {
+		delete(set, k)
+	}
+	assert.Ok(len(set) == 0, "a listed set empties")
 }
 
 func (s *State) Discard() {

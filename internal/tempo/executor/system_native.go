@@ -40,41 +40,80 @@ func mustHex(s string) []byte {
 	return b
 }
 
+// nativeResult says how nativeSystemCall applied a call.
+type nativeResult uint8
+
+const (
+	// nativeNo: the call needs the interpreter; nothing changed.
+	nativeNo nativeResult = iota
+	// nativeFinal: the writes are final, with nothing left to finalize.
+	nativeFinal
+	// nativePending: the writes are pending in the current transaction.
+	nativePending
+)
+
+// finalWriter is a State that writes a slot between transactions without a
+// journal (state.State).
+type finalWriter interface {
+	SetStorageNow(addr Address, key Hash, value u256.Int)
+}
+
 // nativeSystemCall applies call natively when it is a system-address call
 // into the canonical history storage or beacon roots contract, with the
-// same state effects as the interpreter: the callee is touched and its ring
-// buffer slots are written. It reports false, changing nothing, otherwise.
-func nativeSystemCall(st State, blk *evm.BlockContext, call systemCall) bool {
+// same state effects as the interpreter: its ring buffer slots are written.
+// The interpreter also touches the callee, which changes nothing here: it
+// holds code, so it is not empty and EIP-161 never deletes it.
+// pending says whether st holds writes of the current transaction already.
+func nativeSystemCall(st State, blk *evm.BlockContext, call systemCall, pending bool) nativeResult {
 	if call.caller != chain.SystemAddress || len(call.input) != 32 || call.gas < nativeCallGasMin {
-		return false
+		return nativeNo
 	}
 	value := u256.FromBytes32([32]byte(call.input))
+	var slots [2]Hash
+	var values [2]u256.Int
+	n := 0
 	switch call.to {
 	case chain.HistoryStorageAddress:
 		// The contract keys by (number - 1) mod 8191 in 256-bit arithmetic;
 		// block 0 never runs, so leave it to the interpreter.
 		if blk.Number == 0 || st.CodeHash(call.to) != historyStorageCodeHash {
-			return false
+			return nativeNo
 		}
-		st.Touch(call.to)
-		st.SetStorage(call.to, slotHash((blk.Number-1)%ringSlots), value)
-		return true
+		slots[0], values[0] = slotHash((blk.Number-1)%ringSlots), value
+		n = 1
 	case BeaconRootsAddress:
 		if st.CodeHash(call.to) != beaconRootsCodeHash {
-			return false
+			return nativeNo
 		}
 		index := blk.Time % ringSlots
-		st.Touch(call.to)
-		st.SetStorage(call.to, slotHash(index), u256.FromUint64(blk.Time))
-		st.SetStorage(call.to, slotHash(index+ringSlots), value)
-		return true
+		slots[0], values[0] = slotHash(index), u256.FromUint64(blk.Time)
+		slots[1], values[1] = slotHash(index+ringSlots), value
+		n = 2
 	default:
-		return false
+		return nativeNo
 	}
+	assert.Ok(n > 0 && n <= len(slots), "a native system call writes one or two slots")
+	if fw, ok := st.(finalWriter); ok && !pending {
+		for i := 0; i < n; i++ {
+			fw.SetStorageNow(call.to, slots[i], values[i])
+		}
+		return nativeFinal
+	}
+	for i := 0; i < n; i++ {
+		st.SetStorage(call.to, slots[i], values[i])
+	}
+	return nativePending
 }
 
 func slotHash(v uint64) Hash {
 	return Hash(u256.FromUint64(v).Bytes32())
+}
+
+// emptyZeroCall reports whether the system transaction's call into the zero
+// address stops at once; zeroIsPrecompile is whether the block's precompile
+// set holds the zero address.
+func emptyZeroCall(st State, zeroIsPrecompile bool) bool {
+	return !zeroIsPrecompile && len(st.Code(Address{})) == 0
 }
 
 // emptyCall reports whether a value-free call to to would stop at once with

@@ -61,6 +61,9 @@ type blockScratch struct {
 	// both up for every block.
 	built    bool
 	builtFor scratchKey
+	// zeroIsPrecompile is whether set holds the zero address, which every
+	// system transaction calls.
+	zeroIsPrecompile bool
 }
 
 type scratchKey struct {
@@ -80,6 +83,7 @@ func (x *Executor) borrowScratch(header *types.Header, getHash func(uint64) Hash
 	if !s.built || s.builtFor != key {
 		s.set = precompiles.Set{Fork: rules.Fork, Base: x.Configs.EthereumPrecompiles(rules), Env: &s.setEnv}
 		x.Configs.ConfigInto(&s.cfg, rules, &s.set)
+		_, s.zeroIsPrecompile = s.set.Lookup(Address{})
 		s.built, s.builtFor = true, key
 	}
 	assert.Ok(s.set.Env == &s.setEnv && s.set.Fork == rules.Fork, "a kept precompile set is the scratch's own")

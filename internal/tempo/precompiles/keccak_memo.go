@@ -2,6 +2,7 @@ package precompiles
 
 import (
 	"encoding/binary"
+	"sync"
 	"sync/atomic"
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
@@ -109,17 +110,42 @@ func (e *memoEntry) store(k *memoKey, out Hash) {
 	e.seq.Store(seq + 2)
 }
 
-// memoKeccak returns keccak256(data), from the memo for short inputs.
+// memoKeccak returns keccak256(data), from the memo for short inputs. It
+// never retains data, so a caller's stack buffer stays on the stack.
 func memoKeccak(data []byte) Hash {
 	if len(data) == 0 || len(data) > memoInputMax {
-		return keccak.Sum256(data)
+		return hashCopy(data)
 	}
 	k := memoKeyOf(data)
 	e := &memoTable[k.index()]
 	if out, ok := e.lookup(&k); ok {
 		return out
 	}
-	out := keccak.Sum256(data)
+	out := hashCopy(data)
 	e.store(&k, out)
+	return out
+}
+
+// hashScratch is a hasher with an input buffer it owns: hashing a copy
+// keeps the caller's bytes from escaping through the hasher's interface.
+type hashScratch struct {
+	h   *keccak.Hasher
+	buf []byte
+}
+
+// hashScratchRetainMax caps the buffer a pooled scratch keeps.
+const hashScratchRetainMax = 1 << 12
+
+var hashScratches = sync.Pool{New: func() any { return &hashScratch{h: keccak.New(), buf: make([]byte, 0, 2*memoInputMax)} }}
+
+func hashCopy(data []byte) Hash {
+	s, ok := hashScratches.Get().(*hashScratch)
+	assert.Ok(ok, "the hash scratch pool holds scratches")
+	s.buf = append(s.buf[:0], data...)
+	out := s.h.Hash(s.buf)
+	if cap(s.buf) > hashScratchRetainMax {
+		s.buf = make([]byte, 0, 2*memoInputMax)
+	}
+	hashScratches.Put(s)
 	return out
 }

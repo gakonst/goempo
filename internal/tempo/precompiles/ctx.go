@@ -270,7 +270,14 @@ func (c *Context) sstoreRefund(v sstoreValues) int64 {
 }
 
 func (c *Context) journalWrite(addr Address, s slot, value Word) sstoreValues {
-	cold := !c.warmSlot(addr, s)
+	return c.journalWriteKnown(addr, s, value, c.State.SlotWarm(addr, Hash(s)))
+}
+
+// journalWriteKnown is journalWrite for a slot whose warmth the caller just
+// read.
+func (c *Context) journalWriteKnown(addr Address, s slot, value Word, warm bool) sstoreValues {
+	c.warmKnown(addr, s, warm)
+	cold := !warm
 	v := sstoreValues{
 		original: c.State.OriginalStorage(addr, Hash(s)),
 		present:  c.State.Storage(addr, Hash(s)),
@@ -288,15 +295,16 @@ func (c *Context) sstore(addr Address, s slot, value Word) error {
 	if c.at(hardfork.T12) && c.GasLeft() <= gasCallStipend {
 		return c.outOfGas()
 	}
+	warm := c.State.SlotWarm(addr, Hash(s))
 	if c.at(hardfork.T4) {
 		if err := c.charge(c.cost(gasWarmRead)); err != nil {
 			return err
 		}
-		if !c.State.SlotWarm(addr, Hash(s)) && c.GasLeft() < gasColdSloadExtra {
+		if !warm && c.GasLeft() < gasColdSloadExtra {
 			return c.outOfGas()
 		}
 	}
-	v := c.journalWrite(addr, s, value)
+	v := c.journalWriteKnown(addr, s, value, warm)
 	if c.Trace != nil {
 		c.Trace("sstore", addr, Hash(s), c.gasUsed)
 	}

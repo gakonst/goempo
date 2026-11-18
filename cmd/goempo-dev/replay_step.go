@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/gakonst/goempo/internal/primitives"
 	"github.com/gakonst/goempo/internal/tempo/executor"
@@ -27,7 +28,9 @@ func (r *replayer) step(blk *types.Block) bool {
 	if r.getHashFn == nil {
 		r.getHashFn = r.getHash
 	}
+	began := time.Now()
 	res, err := r.exec.Execute(r.db.State(), executor.Input{Block: blk, GetHash: r.getHashFn, Senders: r.senders, Receipts: r.resultSlot.Receipts})
+	r.counters.exec(len(blk.Transactions), time.Since(began))
 	if err != nil {
 		r.failed = &mismatch{number: h.Number, field: "execution", got: err.Error(), want: "ok"}
 		return false

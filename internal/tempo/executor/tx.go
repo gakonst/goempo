@@ -21,6 +21,8 @@ var (
 
 type txRun struct {
 	env        *TxEnv
+	span       bool
+	expiring   *expiringSpec
 	set        *precompiles.Set
 	view       txView
 	price      u256.Int
@@ -73,11 +75,15 @@ func applyTx(env *TxEnv, set *precompiles.Set) (TxOutcome, error) {
 	if err := r.refundFee(gasUsed); err != nil {
 		return TxOutcome{}, fmt.Errorf("fee refund: %w", err)
 	}
+	r.closeSpan()
+	if env.Spec != nil && !ran.success {
+		env.Spec.ClearAffine()
+	}
 	logs := env.State.Logs()
 	if env.Sim == nil {
 		env.State.FinalizeTx()
 	}
-	return TxOutcome{GasUsed: gasUsed, Success: ran.success, Logs: logs}, nil
+	return TxOutcome{GasUsed: gasUsed, Success: ran.success, Logs: logs, expiring: r.expiring}, nil
 }
 
 func (r *txRun) finishOutOfGas() (TxOutcome, error) {
@@ -176,6 +182,9 @@ func (r *txRun) applyNonce() error {
 		if r.env.Rules.AtLeast(hardfork.T1B) {
 			h = r.env.Tx.UniqueID(v.sender)
 		}
+		if r.env.Spec != nil {
+			return r.speculateExpiring(h)
+		}
 		return precompiles.CheckAndMarkExpiringNonce(r.ctx, h, v.validBefore)
 	}
 	if v.isAA() && !v.nonceKey.IsZero() {
@@ -205,6 +214,7 @@ func (r *txRun) chargeFee() error {
 	}
 	r.token = token
 	r.maxFee = feeAmount(r.view.gasLimit, r.price)
+	r.openSpan()
 	if err := r.checkFeeToken(); err != nil {
 		return err
 	}
@@ -223,12 +233,14 @@ func (r *txRun) chargeFee() error {
 		return nil
 	}
 	restore := r.uncredited()
+	r.beginAffine(false)
 	_, err = precompiles.CollectFeePreTx(r.ctx, precompiles.FeeCollection{
 		FeePayer:    r.view.feePayer,
 		Token:       token,
 		MaxAmount:   r.maxFee,
 		Beneficiary: r.env.Block.Coinbase,
 	})
+	r.endAffine()
 	restore()
 	if err != nil {
 		return err
@@ -292,6 +304,7 @@ func (r *txRun) checkFeeToken() error {
 	if balance.Lt(limit) && !r.skipBalance() {
 		return ErrFeeBalance
 	}
+	r.feeFloor(limit)
 	return nil
 }
 
@@ -462,6 +475,7 @@ func (r *txRun) refundFee(gasUsed uint64) error {
 	if actual.IsZero() && refund.IsZero() {
 		return nil
 	}
+	r.beginAffine(true)
 	_, err := precompiles.CollectFeePostTx(r.ctx, precompiles.FeeSettlement{
 		FeePayer:    r.view.feePayer,
 		Actual:      actual,
@@ -469,6 +483,7 @@ func (r *txRun) refundFee(gasUsed uint64) error {
 		FeeToken:    r.token,
 		Beneficiary: r.env.Block.Coinbase,
 	})
+	r.endAffine()
 	return err
 }
 

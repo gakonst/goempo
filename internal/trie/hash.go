@@ -42,8 +42,10 @@ func (t *Trie) save(w NodeWriter) {
 		if len(stack) == 0 {
 			break
 		}
-		top := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+		last := len(stack) - 1
+		top := stack[last]
+		stack[last] = nodeVisit{}
+		stack = stack[:last]
 		n := top.n
 		if len(n.ref) == primitives.HashLength || n == t.root {
 			encoded := n.enc
@@ -94,9 +96,12 @@ func (t *Trie) Evict(keepDepth int) {
 				continue
 			}
 			if top.depth+1 >= keepDepth && child.saved && len(child.ref) == primitives.HashLength {
+				ref := child.ref
 				t.dropSubtree(child)
 				t.nodes++
-				top.n.children[i] = &node{kind: kindSealed, saved: true, ref: child.ref}
+				n := t.allocNode()
+				*n = node{kind: kindSealed, saved: true, ref: ref}
+				top.n.children[i] = n
 				continue
 			}
 			stack = append(stack, visit{n: child, depth: top.depth + 1})
@@ -116,9 +121,12 @@ func (t *Trie) sealBelow(n *node, index byte) {
 			continue
 		}
 		t.computeRefs(child)
+		ref := child.ref
 		t.dropSubtree(child)
 		t.nodes++
-		n.children[i] = &node{kind: kindSealed, ref: child.ref}
+		sealed := t.allocNode()
+		*sealed = node{kind: kindSealed, ref: ref}
+		n.children[i] = sealed
 	}
 }
 
@@ -130,10 +138,13 @@ func (t *Trie) dropSubtree(root *node) {
 		if len(stack) == 0 {
 			break
 		}
-		n := stack[len(stack)-1].n
-		stack = stack[:len(stack)-1]
+		last := len(stack) - 1
+		n := stack[last].n
+		stack[last] = nodeVisit{}
+		stack = stack[:last]
 		t.drop()
 		if n.kind == kindSealed {
+			t.recycle(n)
 			continue
 		}
 		for _, child := range n.children {
@@ -141,6 +152,7 @@ func (t *Trie) dropSubtree(root *node) {
 				stack = append(stack, nodeVisit{n: child})
 			}
 		}
+		t.recycle(n)
 	}
 	assert.Ok(len(stack) == 0, "trie subtree has more nodes than the trie")
 	t.scratch = stack[:0]
@@ -157,8 +169,10 @@ func (t *Trie) computeRefs(root *node) {
 		if len(stack) == 0 {
 			break
 		}
-		top := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+		last := len(stack) - 1
+		top := stack[last]
+		stack[last] = nodeVisit{}
+		stack = stack[:last]
 		if top.exit {
 			t.encodeNode(top.n)
 			continue
@@ -242,13 +256,14 @@ func (t *Trie) resolve(slot **node, path []byte) error {
 	if t.hasher.Hash(encoded) != primitives.Hash(n.ref) {
 		return ErrNodeHash
 	}
-	tree, err := decodeNode(encoded)
+	tree, err := t.decodeNode(encoded)
 	if err != nil {
 		return err
 	}
 	tree.root.ref = n.ref
 	t.nodes += tree.count - 1
 	*slot = tree.root
+	t.recycle(n)
 	return nil
 }
 
@@ -267,7 +282,7 @@ type decoded struct {
 	inner []embedded
 }
 
-func decodeNode(encoded []byte) (decodedTree, error) {
+func (t *Trie) decodeNode(encoded []byte) (decodedTree, error) {
 	var top *node
 	work := []embedded{{raw: encoded, slot: &top}}
 	count := 0
@@ -279,7 +294,7 @@ func decodeNode(encoded []byte) (decodedTree, error) {
 		}
 		item := work[len(work)-1]
 		work = work[:len(work)-1]
-		d, err := decodeOne(item.raw)
+		d, err := t.decodeOne(item.raw)
 		if err != nil {
 			return decodedTree{}, err
 		}
@@ -304,7 +319,7 @@ func decodeNode(encoded []byte) (decodedTree, error) {
 	return decodedTree{root: top, count: count}, nil
 }
 
-func decodeOne(raw []byte) (decoded, error) {
+func (t *Trie) decodeOne(raw []byte) (decoded, error) {
 	s := rlp.NewStream(raw)
 	list, err := s.List()
 	if err != nil {
@@ -318,7 +333,7 @@ func decodeOne(raw []byte) (decoded, error) {
 		return decoded{}, ErrNodeRLP
 	}
 	if items == 17 {
-		return decodeBranch(&list)
+		return t.decodeBranch(&list)
 	}
 	if items != 2 {
 		return decoded{}, ErrNodeRLP
@@ -336,13 +351,16 @@ func decodeOne(raw []byte) (decoded, error) {
 		if err != nil || len(value) == 0 {
 			return decoded{}, ErrNodeRLP
 		}
-		return decoded{n: &node{kind: kindLeaf, path: cp.path, value: bytes.Clone(value)}}, nil
+		n := t.allocNode()
+		*n = node{kind: kindLeaf, path: cp.path, value: bytes.Clone(value)}
+		return decoded{n: n}, nil
 	}
 	if len(cp.path) == 0 {
 		return decoded{}, ErrNodeRLP
 	}
-	n := &node{kind: kindExtension, path: cp.path}
-	e, err := decodeRef(&list, &n.children[0])
+	n := t.allocNode()
+	*n = node{kind: kindExtension, path: cp.path}
+	e, err := t.decodeRef(&list, &n.children[0])
 	if err != nil {
 		return decoded{}, ErrNodeRLP
 	}
@@ -352,11 +370,12 @@ func decodeOne(raw []byte) (decoded, error) {
 	return decoded{n: n, inner: []embedded{e}}, nil
 }
 
-func decodeBranch(list *rlp.Stream) (decoded, error) {
-	n := &node{kind: kindBranch}
+func (t *Trie) decodeBranch(list *rlp.Stream) (decoded, error) {
+	n := t.allocNode()
+	n.kind = kindBranch
 	var inner []embedded
 	for i := range n.children {
-		e, err := decodeRef(list, &n.children[i])
+		e, err := t.decodeRef(list, &n.children[i])
 		if err != nil {
 			return decoded{}, err
 		}
@@ -374,7 +393,7 @@ func decodeBranch(list *rlp.Stream) (decoded, error) {
 	return decoded{n: n, inner: inner}, nil
 }
 
-func decodeRef(list *rlp.Stream, slot **node) (embedded, error) {
+func (t *Trie) decodeRef(list *rlp.Stream, slot **node) (embedded, error) {
 	kind, err := list.Kind()
 	if err != nil {
 		return embedded{}, ErrNodeRLP
@@ -396,6 +415,8 @@ func decodeRef(list *rlp.Stream, slot **node) (embedded, error) {
 	if len(ref) != primitives.HashLength {
 		return embedded{}, ErrNodeRLP
 	}
-	*slot = &node{kind: kindSealed, saved: true, ref: bytes.Clone(ref)}
+	n := t.allocNode()
+	*n = node{kind: kindSealed, saved: true, ref: bytes.Clone(ref)}
+	*slot = n
 	return embedded{}, nil
 }

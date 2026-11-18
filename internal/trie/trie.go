@@ -23,6 +23,10 @@ var (
 
 const nodesMax = 1 << 36
 
+const recycledNodesMax = 256
+
+const _ = uint(nodesMax - recycledNodesMax)
+
 const _ = uint(math.MaxInt/4 - nodesMax)
 
 type nodeKind uint8
@@ -68,6 +72,7 @@ type Trie struct {
 	enc     rlp.Encoder
 	hasher  *keccak.Hasher
 	scratch []nodeVisit
+	free    []*node
 }
 
 type nodeVisit struct {
@@ -96,14 +101,17 @@ func (t *Trie) Nodes() int {
 func (t *Trie) newLeaf(path []byte, value Value) *node {
 	assert.Ok(t.nodes < nodesMax, "trie holds nodesMax nodes")
 	t.nodes++
-	return &node{kind: kindLeaf, path: path, value: bytes.Clone(value)}
+	n := t.allocNode()
+	*n = node{kind: kindLeaf, path: path, value: bytes.Clone(value)}
+	return n
 }
 
 func (t *Trie) newExtension(path []byte, child *node) *node {
 	assert.Ok(t.nodes < nodesMax, "trie holds nodesMax nodes")
 	assert.Ok(len(path) > 0, "extension with an empty path")
 	t.nodes++
-	n := &node{kind: kindExtension, path: path}
+	n := t.allocNode()
+	*n = node{kind: kindExtension, path: path}
 	n.children[0] = child
 	return n
 }
@@ -111,7 +119,34 @@ func (t *Trie) newExtension(path []byte, child *node) *node {
 func (t *Trie) newBranch() *node {
 	assert.Ok(t.nodes < nodesMax, "trie holds nodesMax nodes")
 	t.nodes++
-	return &node{kind: kindBranch}
+	n := t.allocNode()
+	n.kind = kindBranch
+	return n
+}
+
+func (t *Trie) allocNode() *node {
+	if len(t.free) == 0 {
+		return new(node)
+	}
+	i := len(t.free) - 1
+	n := t.free[i]
+	t.free[i] = nil
+	t.free = t.free[:i]
+	return n
+}
+
+func (t *Trie) recycle(n *node) {
+	*n = node{}
+	if len(t.free) == recycledNodesMax {
+		return
+	}
+	if len(t.free) == cap(t.free) {
+		capacity := min(recycledNodesMax, max(1, 2*cap(t.free)))
+		free := make([]*node, len(t.free), capacity)
+		copy(free, t.free)
+		t.free = free
+	}
+	t.free = append(t.free, n)
 }
 
 func (t *Trie) drop() {

@@ -7,24 +7,54 @@ import (
 	"runtime/pprof"
 	"syscall"
 	"time"
+
+	"github.com/gakonst/goempo/internal/tempo/executor"
 )
 
 type benchCounters struct {
-	gas    uint64
-	txs    uint64
-	blocks uint64
+	gas     uint64
+	txs     uint64
+	blocks  uint64
+	buckets [execBuckets]execBucket
+}
+
+const execBuckets = 7
+
+var execBucketMins = [execBuckets]int{0, 2, 4, 16, 64, 256, 1024}
+
+type execBucket struct {
+	MinTxs  int     `json:"min_txs"`
+	Blocks  uint64  `json:"blocks"`
+	Txs     uint64  `json:"txs"`
+	Seconds float64 `json:"exec_seconds"`
+}
+
+func (c *benchCounters) exec(txs int, took time.Duration) {
+	b := 0
+	for i := 1; i < execBuckets; i++ {
+		if txs >= execBucketMins[i] {
+			b = i
+		}
+	}
+	e := &c.buckets[b]
+	e.MinTxs = execBucketMins[b]
+	e.Blocks++
+	e.Txs += uint64(txs)
+	e.Seconds += took.Seconds()
 }
 
 type benchStats struct {
-	Blocks   uint64  `json:"blocks"`
-	Gas      uint64  `json:"gas"`
-	Txs      uint64  `json:"txs"`
-	GasSec   float64 `json:"gas_per_sec"`
-	TxsSec   float64 `json:"txs_per_sec"`
-	CPUSec   float64 `json:"cpu_seconds"`
-	MaxRSSMB float64 `json:"max_rss_mb"`
-	GoMaxP   int     `json:"gomaxprocs"`
-	Host     string  `json:"host,omitempty"`
+	Blocks   uint64                 `json:"blocks"`
+	Gas      uint64                 `json:"gas"`
+	Txs      uint64                 `json:"txs"`
+	GasSec   float64                `json:"gas_per_sec"`
+	TxsSec   float64                `json:"txs_per_sec"`
+	CPUSec   float64                `json:"cpu_seconds"`
+	MaxRSSMB float64                `json:"max_rss_mb"`
+	GoMaxP   int                    `json:"gomaxprocs"`
+	Host     string                 `json:"host,omitempty"`
+	Buckets  []execBucket           `json:"exec_buckets,omitempty"`
+	Parallel executor.ParallelStats `json:"parallel"`
 }
 
 type profiler struct {
@@ -81,6 +111,11 @@ func (p *profiler) stop() error {
 
 func (c *benchCounters) stats(took time.Duration) benchStats {
 	s := benchStats{Blocks: c.blocks, Gas: c.gas, Txs: c.txs, GoMaxP: runtime.GOMAXPROCS(0)}
+	for i := range c.buckets {
+		if c.buckets[i].Blocks > 0 {
+			s.Buckets = append(s.Buckets, c.buckets[i])
+		}
+	}
 	if took > 0 {
 		s.GasSec = float64(c.gas) / took.Seconds()
 		s.TxsSec = float64(c.txs) / took.Seconds()

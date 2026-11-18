@@ -242,6 +242,8 @@ func (p *chunkPrefetch) Wait() {
 	p.wg.Wait()
 }
 
+const decodeBatch = 4
+
 const decodeWorkersMax = 64
 
 const _ = uint(chunkBlocks - decodeWorkersMax)
@@ -249,14 +251,16 @@ const _ = uint(chunkBlocks - decodeWorkersMax)
 func decodeChunk(raws [][]byte) []decodedBlock {
 	out := make([]decodedBlock, len(raws))
 	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
-	per := (len(raws) + workers - 1) / workers
+	// Workers take every workers-th batch of blocks: heavy blocks cluster,
+	// so one contiguous range per worker would leave one worker recovering
+	// most of a chunk's senders.
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
-		part := out[min(w*per, len(out)):min((w+1)*per, len(out))]
-		in := raws[min(w*per, len(raws)):min((w+1)*per, len(raws))]
 		wg.Go(func() {
-			for i := range in {
-				part[i] = decodeBlock(in[i])
+			for lo := w * decodeBatch; lo < len(raws); lo += workers * decodeBatch {
+				for i := lo; i < min(lo+decodeBatch, len(raws)); i++ {
+					out[i] = decodeBlock(raws[i])
+				}
 			}
 		})
 	}

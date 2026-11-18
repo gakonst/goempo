@@ -109,7 +109,14 @@ func runReplay(args []string) int {
 	memProfile := fs.String("memprofile", "", "write an allocation profile at the end of the run here")
 	pipeline := fs.Bool("pipeline", false, "compute each block's state root while the next block executes (off with -heal)")
 	rootEvery := fs.Uint64("root-every", 1, "update the trie and check the state root every this many blocks, against the last block's header (gas, receipts and bloom are checked every block); 1 checks every block")
+	parExec := fs.String("parallel-exec", "on", "on: execute blocks with at least -parallel-min-txs transactions speculatively on parallel workers; force: also blocks that cannot gain (a test of the commit path); off: one at a time")
+	parWorkers := fs.Int("parallel-workers", 16, "workers for -parallel-exec")
+	parMinTxs := fs.Int("parallel-min-txs", 64, "smallest block -parallel-exec runs in parallel")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *parExec != "on" && *parExec != "off" && *parExec != "force" {
+		fmt.Fprintln(os.Stderr, "replay: -parallel-exec is on, force or off")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -120,6 +127,9 @@ func runReplay(args []string) int {
 		return 1
 	}
 	r.ctx = ctx
+	if *parExec != "off" {
+		r.exec.Parallel = executor.Parallel{Workers: *parWorkers, MinTxs: *parMinTxs, Force: *parExec == "force"}
+	}
 	if r.head > 0 {
 		fmt.Fprintf(os.Stderr, "replay: resuming from block %d in %s\n", r.head, *datadir)
 	}
@@ -152,6 +162,7 @@ func runReplay(args []string) int {
 	r.reportHeals()
 	res := r.summary(*to, took)
 	bench := r.counters.stats(took)
+	bench.Parallel = r.exec.Stats
 	res.Bench = &bench
 	if err := writeResult(*out, &res); err != nil {
 		fmt.Fprintln(os.Stderr, "replay:", err)

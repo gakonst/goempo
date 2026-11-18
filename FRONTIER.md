@@ -81,3 +81,59 @@ R6f moderato readiness (dry run 2026-11-17, agent devnet; nothing submitted, nev
 
 
 R6c builder (2026-11-17, agent builder): internal/txpool admits txs with tempo's pool rules (decode and size limit 128 KiB, protocol base fee floor and configurable fee cap, tip <= fee cap, AA limits: 32 calls, 128 KiB call input, access list 256/256/2048, 256 token limits, keychain scope/selector/recipient caps, 16 authorizations, valid_before > head+3 s, valid_after <= now+120 s, no subblock nonce keys) plus the executor's own validation, nonce, fee-token resolution, fee balance and keychain checks run on the head state and rolled back (executor.Check); 2D-nonce lanes (sender, nonce key) with future nonces, expiring-nonce txs on their own, 10% fee and tip bump to replace, 64 txs per sender, OnBlock eviction. Best() yields lane heads by effective tip then arrival, and MarkInvalid drops the rest of a lane, as tempo's BestAA2dTransactions does. internal/builder.Build(state, executor, parent, Attributes) assembles a T4+ block like tempo's payload builder: base fee from the parent, general gas limit (30M non-payment lane, TIP-1045 payment classification v1/v2/v3 incl. channel reserve), block gas and RLP size limits, failed txs rolled back and their lane skipped, the end-of-block committee call, then header roots incl. state root from state.PendingRoot without writing. Mainnet check: go build -o buildcheck ./cmd/goempo-buildcheck && buildcheck -datadir <copy of the R3 datadir at 49,399,999> -chunks <fetch-range chunks> -to 49419999 feeds each block's txs into a fresh pool over the parent state and rebuilds it with the real header's timestamp, beneficiary, extraData, mixHash and consensus context. Result over 20,000 blocks (49,400,000..49,419,999): 7,547 blocks with user txs, 9,507 txs, 0 rejected by the pool, 7,395 rebuilt blocks byte-identical (same block hash, so same state root, receipts, gas, bloom, tx root), 152 the same txs in another order with the same gas used, state root and bloom (in each one tempo put a lower-tip tx first: a tx reached its pool while the block was being built, which nothing in the block can reproduce), 0 mismatches. Tests: go test ./internal/txpool ./internal/builder ./internal/state -run 'Pending' ./internal/tempo/executor -run BlockRun. Not verified: rejection reasons against a running Rust pool (the checks follow crates/transaction-pool/src/validator.rs, and the executor checks are the mainnet-verified ones), pre-T4 blocks (system tx; Build refuses), subblocks, boundary-block extraData (the caller passes the DKG outcome), the payload builder's fee-recipient override (the caller passes the beneficiary).
+
+
+## Busy replay: bounded node reuse (2026-11-18 PST)
+
+This compares the Goempo Go client with the Rust Tempo client. The baseline
+`f7c6d43` is the direct parent of the node-reuse candidate `cb6828b`.
+
+Busy is the mainnet range 9,890,000–9,909,999: 20,000 blocks, 659,246 transactions
+and 31,499,321,696 gas. Commit `cb6828b739321af23f411f4bbd07fb0604b43b58` retains at most 256 cleared, detached node
+objects per trie. Detached nodes are no longer part of the live trie; clearing
+zeros their fields before reuse. The backing bytes of values or proofs are not reused.
+
+Three interleaved rounds used the same eight pinned cores (20–27), Go 1.26.10
+and fresh copies of the state after block 9,889,999. Arithmetic mean wall times
+and two-sided Student-t 95% confidence intervals, in seconds:
+
+| Build | Mean | 95% interval |
+|---|---:|---:|
+| Go baseline `f7c6d43` | 42.411034 | 38.678369–46.143700 |
+| Go node reuse `cb6828b` | 41.773095 | 37.849293–45.696897 |
+| Rust reference | 26.358626 | 24.692491–28.024761 |
+
+Pairing each baseline run with the candidate run in the same round gives
+a baseline-minus-candidate saving of 0.637939 seconds,
+95% interval [0.177793, 1.098086]. Paired geometric
+wall reduction: 1.509756%
+[0.386219%, 2.620620%].
+No samples were dropped or retried. The run order was baseline, candidate, Rust
+in each round, not counterbalanced.
+
+Both Go builds passed the full local build, verification, focused race tests
+and 20 repeated trie test runs. A separate recorded mainnet decode/receipt
+fixture corpus passed 632/632 blocks for both. Busy replay checked every block's state root, receipt
+root, bloom and gas. After exit, a separate Go process reopened the successful
+terminal state, rebuilt its account/storage trie root and compared it with the
+last header.
+Rust used its staged import/end-root checks, so validation work differs.
+The persisted Go state audit shares Go trie code; it is not an independent-client
+proof. This measures Busy only, not other ranges or generated large-state loads.
+
+Build each Go revision with
+`go build -trimpath -buildvcs=false -o bin/goempo-dev ./cmd/goempo-dev`. For each sample, copy the same parent state to a fresh datadir
+and run (paths below designate that fresh copy and the recorded chunk directory).
+`busy.rlp` exports the same block range as those chunks. `-diagnose off` disables
+failure diagnostics; `-heal 0` disables state repair; the 100,000-block checkpoint
+interval exceeds this range, so persistence is checked after final close.
+`SHIPPY_REMOTE_BUILD=0` keeps any remote-build wrapper local.
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir <recorded-chunks> -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./tempo import --datadir <fresh-rust-parent-copy> --chain mainnet --fail-on-invalid-block --color never --log.file.max-files 0 <busy.rlp>
+```
+
+Rust source pin: `cf561ef16654b5eeea513918826a2950b54c4ade`. Busy RLP SHA256:
+`45c1f8b946f9ca7c9268111bc8848e369a31040fb9028c5b5e76c015c1df23c1`.
+The parent snapshots and corpus are external prerequisites, not included here.

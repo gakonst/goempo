@@ -101,6 +101,7 @@ type DB struct {
 	addrs         []Address
 	slotKeys      []Hash
 	keyHasher     *keccak.Batch
+	addrHashes    map[Address]Hash
 	workers       []*storageWorker
 	accountWriter nodeWriter
 }
@@ -132,6 +133,7 @@ func Open(fs goio.FS, opts Options) (*DB, error) {
 		enc:          rlp.NewEncoder(128),
 		hasher:       keccak.New(),
 		keyHasher:    keccak.NewBatch(),
+		addrHashes:   make(map[Address]Hash, keyHashesMax),
 	}
 	db.accountWriter.reset(nil, nil, prefixAccountNode, nil)
 	db.worker(0)

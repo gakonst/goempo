@@ -79,6 +79,8 @@ type pendingCommit struct {
 	slots  []slotValue
 	roots  []Hash
 	hashed []Hash
+	out    []Hash
+	missed []int
 	msgs   [][]byte
 	jobs   []storageJob
 	order  []*storageJob
@@ -305,12 +307,30 @@ func growJobs(jobs []storageJob) []storageJob {
 }
 
 func (db *DB) hashAddresses(p *pendingCommit) {
-	p.msgs = p.msgs[:0]
-	for i := range p.snaps {
-		p.msgs = append(p.msgs, p.snaps[i].addr[:])
-	}
 	p.hashed = slices.Grow(p.hashed, len(p.snaps))[:len(p.snaps)]
-	db.keyHasher.Hash(p.msgs, p.hashed)
+	if len(db.addrHashes) >= keyHashesMax {
+		clear(db.addrHashes)
+	}
+	p.msgs = p.msgs[:0]
+	p.missed = p.missed[:0]
+	for i := range p.snaps {
+		h, ok := db.addrHashes[p.snaps[i].addr]
+		if ok {
+			p.hashed[i] = h
+			continue
+		}
+		p.msgs = append(p.msgs, p.snaps[i].addr[:])
+		p.missed = append(p.missed, i)
+	}
+	if len(p.msgs) == 0 {
+		return
+	}
+	p.out = slices.Grow(p.out, len(p.msgs))[:len(p.msgs)]
+	db.keyHasher.Hash(p.msgs, p.out)
+	for k, i := range p.missed {
+		p.hashed[i] = p.out[k]
+		db.addrHashes[p.snaps[i].addr] = p.out[k]
+	}
 	clear(p.msgs)
 	p.msgs = p.msgs[:0]
 }
@@ -352,6 +372,12 @@ type storageJob struct {
 const parallelSlotsMin = 64
 
 const storageWorkersMax = 64
+
+// keyHashesMax bounds each cache of hashed addresses and slot keys; a full
+// cache is cleared.
+const keyHashesMax = 1 << 14
+
+const _ = uint(keyHashesMax - parallelSlotsMin)
 
 const _ = uint(storageWorkersMax - keccak.BatchLanes)
 
@@ -413,28 +439,32 @@ func (db *DB) worker(k int) *storageWorker {
 }
 
 type storageWorker struct {
-	hasher *keccak.Batch
-	enc    *rlp.Encoder
-	msgs   [][]byte
-	hashed [keccak.BatchLanes]Hash
-	writer nodeWriter
-	keys   keyArena
+	hasher     *keccak.Batch
+	enc        *rlp.Encoder
+	msgs       [][]byte
+	hashed     [keccak.BatchLanes]Hash
+	out        [keccak.BatchLanes]Hash
+	missed     [keccak.BatchLanes]int
+	slotHashes map[Hash]Hash
+	writer     nodeWriter
+	keys       keyArena
 }
 
 func newStorageWorker() *storageWorker {
-	return &storageWorker{hasher: keccak.NewBatch(), enc: rlp.NewEncoder(64), msgs: make([][]byte, 0, keccak.BatchLanes)}
+	return &storageWorker{
+		hasher: keccak.NewBatch(), enc: rlp.NewEncoder(64), msgs: make([][]byte, 0, keccak.BatchLanes),
+		slotHashes: make(map[Hash]Hash, keyHashesMax),
+	}
 }
 
 func (w *storageWorker) run(j *storageJob, keys *keyArena, nodesMax int) {
 	sn := j.sn
+	if len(w.slotHashes) >= keyHashesMax {
+		clear(w.slotHashes)
+	}
 	for start := 0; start < len(sn.slots); start += keccak.BatchLanes {
 		end := min(start+keccak.BatchLanes, len(sn.slots))
-		w.msgs = w.msgs[:0]
-		for i := start; i < end; i++ {
-			w.msgs = append(w.msgs, sn.slots[i].key[:])
-		}
-		w.hasher.Hash(w.msgs, w.hashed[:end-start])
-		clear(w.msgs)
+		w.hashGroup(sn.slots[start:end])
 		for i := start; i < end; i++ {
 			if j.err = w.update(j, keys, &sn.slots[i], &w.hashed[i-start]); j.err != nil {
 				return
@@ -446,6 +476,35 @@ func (w *storageWorker) run(j *storageJob, keys *keyArena, nodesMax int) {
 	if j.t.Nodes() > nodesMax {
 		j.t.Evict(storageKeepDepthDefault)
 	}
+}
+
+// hashGroup sets w.hashed to the hashes of up to BatchLanes slot keys, from
+// the worker's cache where it has them and in one batch for the rest.
+func (w *storageWorker) hashGroup(slots []slotValue) {
+	assert.Ok(len(slots) <= keccak.BatchLanes, "slot key group over BatchLanes")
+	w.msgs = w.msgs[:0]
+	misses := 0
+	for i := range slots {
+		h, ok := w.slotHashes[slots[i].key]
+		if ok {
+			w.hashed[i] = h
+			continue
+		}
+		w.msgs = append(w.msgs, slots[i].key[:])
+		w.missed[misses] = i
+		misses++
+	}
+	if misses == 0 {
+		return
+	}
+	w.hasher.Hash(w.msgs, w.out[:misses])
+	for k := range misses {
+		i := w.missed[k]
+		w.hashed[i] = w.out[k]
+		w.slotHashes[slots[i].key] = w.out[k]
+	}
+	clear(w.msgs)
+	w.msgs = w.msgs[:0]
 }
 
 func (w *storageWorker) update(j *storageJob, keys *keyArena, sv *slotValue, hk *Hash) error {

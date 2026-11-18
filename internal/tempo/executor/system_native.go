@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 
 	"github.com/gakonst/goempo/internal/crypto/keccak"
@@ -55,7 +56,7 @@ const (
 // finalWriter is a State that writes a slot between transactions without a
 // journal (state.State).
 type finalWriter interface {
-	SetStorageNow(addr Address, key Hash, value u256.Int)
+	SetStorageNow(addr Address, codeHash Hash, keys []Hash, values []u256.Int) bool
 }
 
 // nativeSystemCall applies call natively when it is a system-address call
@@ -71,20 +72,20 @@ func nativeSystemCall(st State, blk *evm.BlockContext, call systemCall, pending 
 	value := u256.FromBytes32([32]byte(call.input))
 	var slots [2]Hash
 	var values [2]u256.Int
+	var codeHash Hash
 	n := 0
 	switch call.to {
 	case chain.HistoryStorageAddress:
 		// The contract keys by (number - 1) mod 8191 in 256-bit arithmetic;
 		// block 0 never runs, so leave it to the interpreter.
-		if blk.Number == 0 || st.CodeHash(call.to) != historyStorageCodeHash {
+		if blk.Number == 0 {
 			return nativeNo
 		}
+		codeHash = historyStorageCodeHash
 		slots[0], values[0] = slotHash((blk.Number-1)%ringSlots), value
 		n = 1
 	case BeaconRootsAddress:
-		if st.CodeHash(call.to) != beaconRootsCodeHash {
-			return nativeNo
-		}
+		codeHash = beaconRootsCodeHash
 		index := blk.Time % ringSlots
 		slots[0], values[0] = slotHash(index), u256.FromUint64(blk.Time)
 		slots[1], values[1] = slotHash(index+ringSlots), value
@@ -94,10 +95,14 @@ func nativeSystemCall(st State, blk *evm.BlockContext, call systemCall, pending 
 	}
 	assert.Ok(n > 0 && n <= len(slots), "a native system call writes one or two slots")
 	if fw, ok := st.(finalWriter); ok && !pending {
-		for i := 0; i < n; i++ {
-			fw.SetStorageNow(call.to, slots[i], values[i])
+		// One account lookup checks the code and writes the slots.
+		if !fw.SetStorageNow(call.to, codeHash, slots[:n], values[:n]) {
+			return nativeNo
 		}
 		return nativeFinal
+	}
+	if st.CodeHash(call.to) != codeHash {
+		return nativeNo
 	}
 	for i := 0; i < n; i++ {
 		st.SetStorage(call.to, slots[i], values[i])
@@ -105,8 +110,11 @@ func nativeSystemCall(st State, blk *evm.BlockContext, call systemCall, pending 
 	return nativePending
 }
 
+// slotHash is v as a big-endian storage key.
 func slotHash(v uint64) Hash {
-	return Hash(u256.FromUint64(v).Bytes32())
+	var h Hash
+	binary.BigEndian.PutUint64(h[len(h)-8:], v)
+	return h
 }
 
 // emptyZeroCall reports whether the system transaction's call into the zero

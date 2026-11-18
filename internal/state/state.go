@@ -427,28 +427,39 @@ func (s *State) SetStorage(addr Address, key Hash, value u256.Int) {
 	}
 }
 
-// SetStorageNow writes a slot of an existing account between transactions,
-// leaving it as SetStorage then FinalizeTx would, without journaling it or
-// folding a dirty set. System steps that cannot fail or revert, such as the
-// history contract writes before a block, use it.
-func (s *State) SetStorageNow(addr Address, key Hash, value u256.Int) {
+// storageNowMax bounds the slots one SetStorageNow call writes.
+const storageNowMax = 4
+
+// SetStorageNow writes slots of addr between transactions when addr exists
+// with code hash codeHash, leaving them as SetStorage then FinalizeTx would,
+// without journaling them or folding a dirty set, and reports whether it
+// wrote them. System steps that cannot fail or revert, such as the history
+// contract writes before a block, use it.
+func (s *State) SetStorageNow(addr Address, codeHash Hash, keys []Hash, values []u256.Int) bool {
 	assert.Ok(s.spec == nil, "speculative transactions write through the journal")
 	assert.Ok(len(s.journal) == 0 && len(s.txObjs) == 0, "a final write happens between transactions")
+	assert.Ok(len(keys) == len(values) && len(keys) <= storageNowMax, "final writes pair keys and values")
+	assert.Ok(codeHash != (Hash{}), "a final write names the code it expects")
 	o := s.load(addr)
-	assert.Ok(o.exists, "a final write goes to an existing account")
+	if !o.exists || o.codeHash != codeHash {
+		return false
+	}
 	assert.Ok(len(o.dirty) == 0, "an account written between transactions has no pending writes")
 	s.markDirty(addr)
-	s.markSlot(slotKey{addr: addr, key: key})
 	if o.committed == nil {
-		o.committed = make(map[Hash]u256.Int, 1)
+		o.committed = make(map[Hash]u256.Int, len(keys))
 	}
 	if o.changed == nil {
-		o.changed = make(map[Hash]struct{}, 1)
+		o.changed = make(map[Hash]struct{}, len(keys))
 	}
 	before := len(o.committed)
-	o.committed[key] = value
-	o.changed[key] = struct{}{}
+	for i := range keys {
+		s.markSlot(slotKey{addr: addr, key: keys[i]})
+		o.committed[keys[i]] = values[i]
+		o.changed[keys[i]] = struct{}{}
+	}
 	s.cachedSlots += len(o.committed) - before
+	return true
 }
 
 func (s *State) HasStorage(addr Address) bool {

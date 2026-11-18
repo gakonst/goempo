@@ -6,6 +6,7 @@ import (
 
 	"github.com/gakonst/goempo/internal/evm"
 	"github.com/gakonst/goempo/internal/primitives"
+	"github.com/gakonst/goempo/internal/state"
 	"github.com/gakonst/goempo/internal/tempo/chain"
 	"github.com/gakonst/goempo/internal/tempo/hardfork"
 	"github.com/gakonst/goempo/internal/tempo/precompiles"
@@ -44,6 +45,8 @@ type Executor struct {
 	ChainID     hardfork.ChainID
 	EpochLength uint64
 	Configs     *chain.Cache
+	Parallel    Parallel
+	Stats       ParallelStats
 }
 
 type Input struct {
@@ -63,6 +66,8 @@ type TxOutcome struct {
 	GasUsed uint64
 	Success bool
 	Logs    []evm.Log
+	// expiring is a speculative transaction's expiring nonce insertion.
+	expiring *expiringSpec
 }
 
 type TxEnv struct {
@@ -74,6 +79,10 @@ type TxEnv struct {
 	Index  int
 	Sim    *Simulation
 	Sender *Sender
+	Spec   *state.State
+	// expiring places a speculative transaction among its block's expiring
+	// nonce insertions.
+	expiring expiringPlan
 }
 
 func (x *Executor) SystemSteps(st State, in Input) error {
@@ -99,6 +108,28 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 	if len(txs) > blockTxsMax {
 		return Result{}, ErrTooManyTxs
 	}
+	var receipts []types.Receipt
+	var cumulative uint64
+	var err error
+	if ps, plan, ok := x.planParallel(st, in, rules); ok {
+		b := &blockRun{rules: rules, block: blk, txs: txs, senders: in.Senders}
+		receipts, cumulative, err = x.executeParallel(ps, b, plan, set, cfg)
+	} else {
+		receipts, cumulative, err = executeSerial(st, in, rules, blk, set, cfg)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	if err := x.committeeCall(st, sys); err != nil {
+		return Result{}, err
+	}
+	return finish(receipts, cumulative), nil
+}
+
+func txError(i int, err error) error { return fmt.Errorf("tx %d: %w", i, err) }
+
+func executeSerial(st State, in Input, rules chain.Rules, blk *evm.BlockContext, set *precompiles.Set, cfg *evm.Config) ([]types.Receipt, uint64, error) {
+	txs := in.Block.Transactions
 	receipts := make([]types.Receipt, 0, len(txs))
 	var cumulative uint64
 	for i := 0; i < len(txs); i++ {
@@ -108,15 +139,12 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 		}
 		out, err := apply(env, set, len(txs))
 		if err != nil {
-			return Result{}, fmt.Errorf("tx %d: %w", i, err)
+			return nil, 0, txError(i, err)
 		}
 		cumulative += out.GasUsed
 		receipts = append(receipts, receiptOf(txs[i].Type(), out, cumulative))
 	}
-	if err := x.committeeCall(st, sys); err != nil {
-		return Result{}, err
-	}
-	return finish(receipts, cumulative), nil
+	return receipts, cumulative, nil
 }
 
 func apply(env *TxEnv, set *precompiles.Set, count int) (TxOutcome, error) {

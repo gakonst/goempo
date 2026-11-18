@@ -152,7 +152,9 @@
   - ./internal/trie
   - ./internal/types
 "./internal/tempo/executor":
+  - ./internal/crypto/keccak
   - ./internal/evm
+  - ./internal/state
   - ./internal/primitives
   - ./internal/tempo/chain
   - ./internal/tempo/hardfork

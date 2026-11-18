@@ -13,56 +13,39 @@ type source interface {
 	next() error
 }
 
-type mergeInput struct {
-	segs   []*segment
-	mem    *memtable
-	prefix []byte
-}
-
 type merger struct {
 	sources []source
 	total   int
-}
-
-func newMerger(in mergeInput) (*merger, error) {
-	m := &merger{}
-	if in.mem != nil {
-		m.sources = append(m.sources, in.mem.iterator(in.prefix))
-		m.total += min(len(in.mem.entries), recordsMax)
-	}
-	for i := len(in.segs) - 1; i >= 0; i-- {
-		it, err := in.segs[i].iterator(in.prefix)
-		if err != nil {
-			return nil, err
-		}
-		m.sources = append(m.sources, it)
-		m.total += in.segs[i].records
-	}
-	return m, nil
+	last    []byte
+	hi      []byte
 }
 
 func (m *merger) smallest() int {
 	best := -1
+	var bestKey []byte
 	for i, s := range m.sources {
 		if !s.valid() {
 			continue
 		}
-		if best < 0 || bytes.Compare(s.record().key, m.sources[best].record().key) < 0 {
-			best = i
+		k := s.record().key
+		if best < 0 || bytes.Compare(k, bestKey) < 0 {
+			best, bestKey = i, k
 		}
 	}
 	return best
 }
 
 func (m *merger) each(visit func(record) error) error {
-	limit := min(m.total+1, (segmentsMax+1)*recordsMax)
-	steps := 0
-	for ; steps < limit; steps++ {
+	limit := min(m.total+1, (segmentsMax+2)*recordsMax)
+	for steps := 0; steps < limit; steps++ {
 		best := m.smallest()
 		if best < 0 {
 			return nil
 		}
 		r := m.sources[best].record()
+		if m.hi != nil && bytes.Compare(r.key, m.hi) >= 0 {
+			return nil
+		}
 		err := visit(r)
 		if errors.Is(err, errStop) {
 			return nil
@@ -78,9 +61,9 @@ func (m *merger) each(visit func(record) error) error {
 }
 
 func (m *merger) skip(key []byte) error {
-	k := append([]byte(nil), key...)
+	m.last = append(m.last[:0], key...)
 	for _, s := range m.sources {
-		if s.valid() && bytes.Equal(s.record().key, k) {
+		if s.valid() && bytes.Equal(s.record().key, m.last) {
 			if err := s.next(); err != nil {
 				return err
 			}

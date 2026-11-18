@@ -87,6 +87,9 @@ func TestRandomAgainstModel(t *testing.T) {
 		if st.Segments > 12 {
 			t.Fatalf("seed %d: stats %+v", seed, st)
 		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -108,6 +111,7 @@ func TestCrashLosesOnlyUnflushed(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs.Crash()
+	crashed := db
 	db = open(t, fs, 1<<20)
 	got, err := db.Get([]byte("durable"))
 	if err != nil || string(got) != "1" {
@@ -115,6 +119,12 @@ func TestCrashLosesOnlyUnflushed(t *testing.T) {
 	}
 	if _, err := db.Get([]byte("volatile")); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal("unflushed write survived a crash")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := crashed.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -174,6 +184,9 @@ func TestOrphanFilesRemovedAndCorruptionDetected(t *testing.T) {
 	}
 	if failed == 0 {
 		t.Fatal("flipped byte not detected")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -243,6 +256,11 @@ func BenchmarkGetFromSegments(b *testing.B) {
 	if err := db.Flush(); err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			b.Fatal(err)
+		}
+	})
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

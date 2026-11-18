@@ -57,19 +57,42 @@ func (h *Hasher) Sum() primitives.Hash {
 }
 
 func (h *Hasher) Hash(b []byte) primitives.Hash {
+	if memoizable(b) {
+		return memoHash(h, b)
+	}
+	return h.hashDirect(b)
+}
+
+func (h *Hasher) hashDirect(b []byte) primitives.Hash {
 	h.state.Reset()
 	h.Write(b)
 	return h.Sum()
 }
 
 func Sum256(b []byte) primitives.Hash {
+	if memoizable(b) {
+		return memoHash(nil, b)
+	}
 	h := pooled()
-	out := h.Hash(b)
+	out := h.hashDirect(b)
 	hashers.Put(h)
 	return out
 }
 
 func Sum256Concat(parts ...[]byte) primitives.Hash {
+	total := 0
+	for i := 0; i < len(parts); i++ {
+		total += len(parts[i])
+	}
+	if total > 0 && total <= memoInputMax {
+		var joined [memoInputMax]byte
+		n := 0
+		for i := 0; i < len(parts); i++ {
+			n += copy(joined[n:], parts[i])
+		}
+		assert.Equal(n, total, "joined parts fill the short input")
+		return memoHash(nil, joined[:n])
+	}
 	h := pooled()
 	h.Reset()
 	for i := 0; i < len(parts); i++ {

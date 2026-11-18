@@ -231,39 +231,6 @@ func (e *EVM) run() frameResult {
 	return frameResult{}
 }
 
-func (e *EVM) interpret(f *Frame) Status {
-	table := e.table
-	code := f.code
-	for steps := 0; steps < instructionsMax; steps++ {
-		op := STOP
-		if f.pc < len(code) {
-			op = OpCode(code[f.pc])
-		}
-		o := &table[op]
-		if !o.Defined {
-			return StatusInvalidOpcode
-		}
-		if f.sp < o.In {
-			return StatusStackUnderflow
-		}
-		need := f.sp - o.In + o.Out
-		if need > StackLimit {
-			return StatusStackOverflow
-		}
-		if f.gas < o.Gas {
-			return StatusOutOfGas
-		}
-		f.gas -= o.Gas
-		f.pc++
-		status := o.Exec(e, f)
-		if status != StatusContinue {
-			return status
-		}
-	}
-	assert.Fail("evm interpret reached instructionsMax")
-	return StatusOutOfGas
-}
-
 func (e *EVM) pushFrame() *Frame {
 	e.top++
 	if e.top == len(e.frames) {

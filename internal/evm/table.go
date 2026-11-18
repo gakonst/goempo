@@ -8,12 +8,16 @@ type Operation struct {
 	In      int
 	Out     int
 	Defined bool
+	// inline marks a stock operation interpret runs without calling Exec.
+	inline bool
 }
 
 type JumpTable [256]Operation
 
 func (t *JumpTable) Set(op OpCode, o Operation) {
 	o.Defined = true
+	// A replaced operation runs its own Exec.
+	o.inline = false
 	t[op] = o
 }
 
@@ -44,6 +48,7 @@ func NewJumpTable(fork Fork, g *GasTable) *JumpTable {
 	if fork >= Osaka {
 		t.Set(CLZ, Operation{Exec: opClz, Gas: g.Low, In: 1, Out: 1})
 	}
+	markInline(t)
 	return t
 }
 

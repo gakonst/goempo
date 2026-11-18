@@ -1,0 +1,139 @@
+package changed
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+
+	"github.com/kapetan-io/tiger/internal/callinventory"
+	"github.com/kapetan-io/tiger/internal/command"
+	"github.com/kapetan-io/tiger/internal/revision"
+)
+
+const synopsis = "tiger changed [-C dir] [--format text|markdown|json] <base>"
+
+const Usage = "  " + synopsis + `
+      print, for each function, the calls it started or stopped making since
+      the merge base of <base> and HEAD; flags go before <base>; exit 0 for
+      any report, 2 when no report can be produced
+`
+
+func Run(args []string, streams command.Streams) int {
+	flags := flag.NewFlagSet("tiger changed", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	chdir := flags.String("C", ".", "run as if tiger was started in this directory")
+	format := flags.String("format", "text", "report format: text, markdown or json")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			err = errors.New("usage: " + synopsis)
+		}
+		return changedFailure(streams, err)
+	}
+	if flags.NArg() == 0 {
+		return changedFailure(streams, errors.New(
+			"expected a base revision, as in: tiger changed [-C dir] <base>"))
+	}
+	if flags.NArg() > 1 {
+		return changedFailure(streams, fmt.Errorf(
+			"%q comes after the base revision; put flags before it, "+
+				"as in: tiger changed [-C dir] <base>",
+			flags.Arg(1)))
+	}
+	if *format != "text" && *format != "markdown" && *format != "json" {
+		return changedFailure(streams, fmt.Errorf(
+			"unknown format %q; the formats are: text, markdown, json", *format))
+	}
+	repo, err := revision.Open(*chdir)
+	if err != nil {
+		return changedFailure(streams, err)
+	}
+	rev, err := repo.Compare(flags.Arg(0))
+	if err != nil {
+		return changedFailure(streams, err)
+	}
+	file := callinventory.NewReachFile(*chdir)
+	report, err := compareRevisions(*chdir, rev, file)
+	if err != nil {
+		return changedFailure(streams, err)
+	}
+	if err := file.SaveError(); err != nil {
+		fmt.Fprintf(streams.Stderr, "tiger changed: cannot save the standard library reach file, "+
+			"so every run rebuilds it: %v\n", err)
+	}
+	if *format == "markdown" {
+		fmt.Fprint(streams.Stdout, report.Markdown(rev))
+		return command.ExitClean
+	}
+	if *format == "json" {
+		data, err := report.JSON(rev)
+		if err != nil {
+			return changedFailure(streams, err)
+		}
+		if _, err := streams.Stdout.Write(data); err != nil {
+			return changedFailure(streams, err)
+		}
+		return command.ExitClean
+	}
+	fmt.Fprint(streams.Stdout, report.Text(rev))
+	return command.ExitClean
+}
+
+func compareRevisions(
+	dir string, rev revision.Comparison, file *callinventory.ReachFile,
+) (Report, error) {
+	headLabel := "head (" + revision.Short(rev.Head) + ")"
+	var group sync.WaitGroup
+	var base callinventory.Inventory
+	var baseErr error
+	group.Go(func() { base, baseErr = loadBase(rev, file) })
+	head, headErr := callinventory.LoadWith(dir, file)
+	group.Wait()
+	if headErr != nil {
+		return Report{}, fmt.Errorf("cannot load the Go packages at %s: %w", headLabel, headErr)
+	}
+	if len(head.Packages) == 0 {
+		return Report{}, noPackages(head, headLabel)
+	}
+	if baseErr != nil {
+		return Report{}, baseErr
+	}
+	return Compare(Sides{Base: base, Head: head}), nil
+}
+
+func loadBase(
+	rev revision.Comparison, file *callinventory.ReachFile,
+) (inv callinventory.Inventory, err error) {
+	tree, err := rev.Extract()
+	if err != nil {
+		return inv, err
+	}
+	defer func() { err = errors.Join(err, tree.Close()) }()
+	if !tree.Present {
+		return inv, nil
+	}
+	treeFile, err := file.For(tree.Dir)
+	if err == nil {
+		inv, err = callinventory.LoadWith(tree.Dir, treeFile)
+	}
+	if err != nil {
+		return inv, fmt.Errorf("cannot load the Go packages at base (%s): %w",
+			revision.Short(rev.MergeBase), err)
+	}
+	return inv, nil
+}
+
+func noPackages(inv callinventory.Inventory, label string) error {
+	if inv.LoadError != "" {
+		return fmt.Errorf("no Go package loads at %s: %s", label, inv.LoadError)
+	}
+	return fmt.Errorf("no Go packages found at %s", label)
+}
+
+func changedFailure(streams command.Streams, err error) int {
+	line := strings.Join(strings.Fields(err.Error()), " ")
+	fmt.Fprintf(streams.Stderr, "tiger changed: %s\n", line)
+	return command.ExitOperational
+}

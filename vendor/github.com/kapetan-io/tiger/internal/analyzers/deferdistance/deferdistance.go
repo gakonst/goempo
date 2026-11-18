@@ -1,0 +1,283 @@
+// Package deferdistance enforces TS-L10: no defer inside a loop, and defers
+// stay next to their acquisition.
+//
+// Two independent checks share one corpus, and both treat a func literal as
+// a frame boundary: a defer runs when its own frame returns, so a defer
+// inside a closure spawned by a loop queues nothing across iterations, and
+// a release of something acquired outside the closure's frame has no local
+// acquisition to sit next to. The loop half (TS-L10) fires on any DeferStmt
+// lexically inside a ForStmt/RangeStmt body within the same frame — an
+// unbounded queue of cleanup, which TS-S02 already forbids by construction.
+// The distance half (TS-L10-distance) fires when a defer's call is a
+// selector on a plain identifier (f.Close, tx.Rollback) and the statement
+// in the same block that declared, assigned, or called a method on that
+// identifier (mu.Lock before defer mu.Unlock) is not immediately followed
+// by the defer, or by an `if err != nil`-style check on it. A deferred
+// closure or a deferred package-level call never resolves to an
+// identifier's acquisition statement, so both stay silent for the distance
+// half; see the ts-l10 corpus known-miss case.
+package deferdistance
+
+import (
+	"go/ast"
+	"go/types"
+
+	"golang.org/x/tools/go/analysis"
+)
+
+var Analyzer = &analysis.Analyzer{
+	Name: "deferdistance",
+	Doc:  "TS-L10: no defer inside a loop, and defers stay next to their acquisition.",
+	Run:  run,
+}
+
+func run(pass *analysis.Pass) (any, error) {
+	for _, file := range pass.Files {
+		checkLoopDefers(pass, file)
+		checkDeferDistance(pass, file)
+	}
+	return nil, nil
+}
+
+func checkLoopDefers(pass *analysis.Pass, file *ast.File) {
+	depth := 0
+	saved := []int{}
+	entered := []byte{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		if node == nil {
+			last := entered[len(entered)-1]
+			entered = entered[:len(entered)-1]
+			switch last {
+			case 'l':
+				depth--
+			case 'f':
+				depth = saved[len(saved)-1]
+				saved = saved[:len(saved)-1]
+			}
+			return true
+		}
+		mark := byte(0)
+		switch node.(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			depth++
+			mark = 'l'
+		case *ast.FuncLit:
+			saved = append(saved, depth)
+			depth = 0
+			mark = 'f'
+		}
+		entered = append(entered, mark)
+		if depth > 0 {
+			if deferStmt, ok := node.(*ast.DeferStmt); ok {
+				reportLoop(pass, deferStmt)
+			}
+		}
+		return true
+	})
+}
+
+func checkDeferDistance(pass *analysis.Pass, file *ast.File) {
+	bodies := []*ast.BlockStmt{}
+	entered := []bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		if node == nil {
+			last := entered[len(entered)-1]
+			entered = entered[:len(entered)-1]
+			if last {
+				bodies = bodies[:len(bodies)-1]
+			}
+			return true
+		}
+		body := functionBody(node)
+		if body != nil {
+			bodies = append(bodies, body)
+		}
+		entered = append(entered, body != nil)
+		block, ok := node.(*ast.BlockStmt)
+		if !ok || len(bodies) == 0 {
+			return true
+		}
+		frame := bodies[len(bodies)-1]
+		for index, stmt := range block.List {
+			deferStmt, ok := stmt.(*ast.DeferStmt)
+			if ok {
+				checkDistance(pass, block.List[:index], deferStmt, frame)
+			}
+		}
+		return true
+	})
+}
+
+func functionBody(node ast.Node) *ast.BlockStmt {
+	switch fn := node.(type) {
+	case *ast.FuncDecl:
+		return fn.Body
+	case *ast.FuncLit:
+		return fn.Body
+	}
+	return nil
+}
+
+func checkDistance(
+	pass *analysis.Pass,
+	preceding []ast.Stmt,
+	deferStmt *ast.DeferStmt,
+	frame *ast.BlockStmt,
+) {
+	target, ok := deferTarget(pass, deferStmt)
+	if !ok {
+		return
+	}
+	skipped := []ast.Stmt{}
+	for index := len(preceding) - 1; index >= 0; index-- {
+		stmt := preceding[index]
+		names, found := acquisitionNames(stmt, target.Name)
+		if found {
+			if everyCheckReferences(skipped, names) {
+				return
+			}
+			reportDistance(pass, deferStmt)
+			return
+		}
+		skipped = append(skipped, stmt)
+	}
+	if !declaredWithin(pass, target, frame) {
+		return
+	}
+	reportDistance(pass, deferStmt)
+}
+
+func declaredWithin(pass *analysis.Pass, target *ast.Ident, frame *ast.BlockStmt) bool {
+	declared := pass.TypesInfo.Uses[target]
+	if declared == nil {
+		return true
+	}
+	return declared.Pos() >= frame.Pos() && declared.Pos() <= frame.End()
+}
+
+func everyCheckReferences(skipped []ast.Stmt, names []string) bool {
+	for _, stmt := range skipped {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if !ok || !condReferencesAny(ifStmt.Cond, names) {
+			return false
+		}
+	}
+	return true
+}
+
+func deferTarget(pass *analysis.Pass, deferStmt *ast.DeferStmt) (*ast.Ident, bool) {
+	selector, ok := deferStmt.Call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, false
+	}
+	ident, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	if _, isPkg := pass.TypesInfo.Uses[ident].(*types.PkgName); isPkg {
+		return nil, false
+	}
+	return ident, true
+}
+
+func acquisitionNames(stmt ast.Stmt, target string) ([]string, bool) {
+	assign, ok := stmt.(*ast.AssignStmt)
+	if ok {
+		names := identNames(assign.Lhs)
+		return names, containsName(names, target)
+	}
+	if name, ok := methodCallReceiver(stmt); ok {
+		return []string{name}, name == target
+	}
+	decl, ok := stmt.(*ast.DeclStmt)
+	if !ok {
+		return nil, false
+	}
+	genDecl, ok := decl.Decl.(*ast.GenDecl)
+	if !ok {
+		return nil, false
+	}
+	names := []string{}
+	for _, item := range genDecl.Specs {
+		declSpec, ok := item.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		for _, name := range declSpec.Names {
+			names = append(names, name.Name)
+		}
+	}
+	return names, containsName(names, target)
+}
+
+func methodCallReceiver(stmt ast.Stmt) (string, bool) {
+	expr, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return "", false
+	}
+	call, ok := expr.X.(*ast.CallExpr)
+	if !ok {
+		return "", false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	ident, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	return ident.Name, true
+}
+
+func identNames(exprs []ast.Expr) []string {
+	names := []string{}
+	for _, expr := range exprs {
+		ident, ok := expr.(*ast.Ident)
+		if ok {
+			names = append(names, ident.Name)
+		}
+	}
+	return names
+}
+
+func containsName(names []string, target string) bool {
+	for _, name := range names {
+		if name == target {
+			return true
+		}
+	}
+	return false
+}
+
+func condReferencesAny(cond ast.Expr, names []string) bool {
+	found := false
+	ast.Inspect(cond, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if ok && containsName(names, ident.Name) {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+func reportLoop(pass *analysis.Pass, deferStmt *ast.DeferStmt) {
+	pass.Report(analysis.Diagnostic{
+		Pos:      deferStmt.Pos(),
+		Category: "TS-L10",
+		Message: "TS-L10: this defer sits inside a loop, so its cleanup waits until the whole " +
+			"function returns, once per iteration — move the loop body into its own function " +
+			"so the defer runs at the end of each call",
+	})
+}
+
+func reportDistance(pass *analysis.Pass, deferStmt *ast.DeferStmt) {
+	pass.Report(analysis.Diagnostic{
+		Pos:      deferStmt.Pos(),
+		Category: "TS-L10-distance",
+		Message: "TS-L10: this defer is not right after the call that acquired what it " +
+			"releases — move it to the line after the acquisition (or after its if err != nil " +
+			"check) so acquire and release read together",
+	})
+}

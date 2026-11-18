@@ -1,0 +1,127 @@
+# github.com/kapetan-io/tiger v0.0.0-20261116085932-9a3119cc8314
+## explicit; go 1.26.10
+github.com/kapetan-io/tiger/assert
+github.com/kapetan-io/tiger/cmd/tiger
+github.com/kapetan-io/tiger/internal/analyzers/boundedloop
+github.com/kapetan-io/tiger/internal/analyzers/chandecl
+github.com/kapetan-io/tiger/internal/analyzers/comments
+github.com/kapetan-io/tiger/internal/analyzers/compoundcond
+github.com/kapetan-io/tiger/internal/analyzers/contracts
+github.com/kapetan-io/tiger/internal/analyzers/declorder
+github.com/kapetan-io/tiger/internal/analyzers/deferdistance
+github.com/kapetan-io/tiger/internal/analyzers/directives
+github.com/kapetan-io/tiger/internal/analyzers/errignore
+github.com/kapetan-io/tiger/internal/analyzers/internal/assertpkg
+github.com/kapetan-io/tiger/internal/analyzers/internal/attach
+github.com/kapetan-io/tiger/internal/analyzers/internal/cancel
+github.com/kapetan-io/tiger/internal/analyzers/internal/condition
+github.com/kapetan-io/tiger/internal/analyzers/internal/counter
+github.com/kapetan-io/tiger/internal/analyzers/internal/intrange
+github.com/kapetan-io/tiger/internal/analyzers/internal/invariants
+github.com/kapetan-io/tiger/internal/analyzers/internal/mutation
+github.com/kapetan-io/tiger/internal/analyzers/internal/ownership
+github.com/kapetan-io/tiger/internal/analyzers/internal/ssalib
+github.com/kapetan-io/tiger/internal/analyzers/internal/stopcase
+github.com/kapetan-io/tiger/internal/analyzers/internal/words
+github.com/kapetan-io/tiger/internal/analyzers/invariantnegative
+github.com/kapetan-io/tiger/internal/analyzers/invariantrefs
+github.com/kapetan-io/tiger/internal/analyzers/ioinloop
+github.com/kapetan-io/tiger/internal/analyzers/layers
+github.com/kapetan-io/tiger/internal/analyzers/limitflow
+github.com/kapetan-io/tiger/internal/analyzers/limitrelate
+github.com/kapetan-io/tiger/internal/analyzers/maporder
+github.com/kapetan-io/tiger/internal/analyzers/nogoroutine
+github.com/kapetan-io/tiger/internal/analyzers/nogoto
+github.com/kapetan-io/tiger/internal/analyzers/norecursion
+github.com/kapetan-io/tiger/internal/analyzers/paniccheck
+github.com/kapetan-io/tiger/internal/analyzers/participle
+github.com/kapetan-io/tiger/internal/analyzers/poolzero
+github.com/kapetan-io/tiger/internal/analyzers/returnarity
+github.com/kapetan-io/tiger/internal/analyzers/sametypeparams
+github.com/kapetan-io/tiger/internal/analyzers/selectctx
+github.com/kapetan-io/tiger/internal/analyzers/skipcheck
+github.com/kapetan-io/tiger/internal/analyzers/tablename
+github.com/kapetan-io/tiger/internal/analyzers/testpackage
+github.com/kapetan-io/tiger/internal/analyzers/variant
+github.com/kapetan-io/tiger/internal/budget
+github.com/kapetan-io/tiger/internal/callinventory
+github.com/kapetan-io/tiger/internal/changed
+github.com/kapetan-io/tiger/internal/check
+github.com/kapetan-io/tiger/internal/cli
+github.com/kapetan-io/tiger/internal/command
+github.com/kapetan-io/tiger/internal/config
+github.com/kapetan-io/tiger/internal/directive
+github.com/kapetan-io/tiger/internal/driver
+github.com/kapetan-io/tiger/internal/facts
+github.com/kapetan-io/tiger/internal/finish
+github.com/kapetan-io/tiger/internal/golangci
+github.com/kapetan-io/tiger/internal/layerfile
+github.com/kapetan-io/tiger/internal/module
+github.com/kapetan-io/tiger/internal/pattern
+github.com/kapetan-io/tiger/internal/pin
+github.com/kapetan-io/tiger/internal/placement
+github.com/kapetan-io/tiger/internal/revision
+github.com/kapetan-io/tiger/internal/rules
+github.com/kapetan-io/tiger/internal/rules/auto
+github.com/kapetan-io/tiger/internal/worklist
+github.com/kapetan-io/tiger/patterns
+# go.uber.org/goleak v1.3.0
+## explicit; go 1.20
+go.uber.org/goleak
+go.uber.org/goleak/internal/stack
+# golang.org/x/crypto v0.59.0
+## explicit; go 1.26.0
+golang.org/x/crypto/chacha20
+golang.org/x/crypto/chacha20poly1305
+golang.org/x/crypto/internal/alias
+golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/ripemd160
+golang.org/x/crypto/sha3
+# golang.org/x/mod v0.39.0
+## explicit; go 1.25.0
+golang.org/x/mod/internal/lazyregexp
+golang.org/x/mod/modfile
+golang.org/x/mod/module
+golang.org/x/mod/semver
+# golang.org/x/sync v0.22.0
+## explicit; go 1.25.0
+golang.org/x/sync/errgroup
+# golang.org/x/sys v0.50.0
+## explicit; go 1.26.0
+golang.org/x/sys/cpu
+# golang.org/x/tools v0.49.0
+## explicit; go 1.25.0
+golang.org/x/tools/go/analysis
+golang.org/x/tools/go/analysis/passes/buildssa
+golang.org/x/tools/go/analysis/passes/ctrlflow
+golang.org/x/tools/go/analysis/passes/inspect
+golang.org/x/tools/go/ast/astutil
+golang.org/x/tools/go/ast/edge
+golang.org/x/tools/go/ast/inspector
+golang.org/x/tools/go/buildutil
+golang.org/x/tools/go/cfg
+golang.org/x/tools/go/gcexportdata
+golang.org/x/tools/go/internal/cgo
+golang.org/x/tools/go/loader
+golang.org/x/tools/go/packages
+golang.org/x/tools/go/ssa
+golang.org/x/tools/go/ssa/ssautil
+golang.org/x/tools/go/types/objectpath
+golang.org/x/tools/go/types/typeutil
+golang.org/x/tools/internal/aliases
+golang.org/x/tools/internal/event
+golang.org/x/tools/internal/event/core
+golang.org/x/tools/internal/event/keys
+golang.org/x/tools/internal/event/label
+golang.org/x/tools/internal/gcimporter
+golang.org/x/tools/internal/gocommand
+golang.org/x/tools/internal/moremaps
+golang.org/x/tools/internal/packagesinternal
+golang.org/x/tools/internal/pkgbits
+golang.org/x/tools/internal/stdlib
+golang.org/x/tools/internal/typeparams
+golang.org/x/tools/internal/typesinternal
+golang.org/x/tools/internal/versions
+# gopkg.in/yaml.v3 v3.0.1
+## explicit
+gopkg.in/yaml.v3

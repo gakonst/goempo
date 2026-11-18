@@ -1,0 +1,144 @@
+// Package check is the check run, everything tiger check does from arguments
+// to exit code, and tiger budget, the same run printing only the ratchet.
+//
+// All run-level policy lives here: the registry's severity is applied to
+// findings, blocking findings fail the run, advisory findings are counted
+// against tiger.budget.yaml and fail the run on overrun, and operational
+// failures exit with a code distinct from findings so a partial run is
+// never mistaken for a clean one.
+package check
+
+import (
+	"flag"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/kapetan-io/tiger/assert"
+	"github.com/kapetan-io/tiger/internal/command"
+	"github.com/kapetan-io/tiger/internal/config"
+	"github.com/kapetan-io/tiger/internal/driver"
+	"github.com/kapetan-io/tiger/internal/module"
+	"github.com/kapetan-io/tiger/internal/rules"
+)
+
+const Usage = `  tiger check [-C dir] [--show-facts] [analyzer flags] [packages]
+      run the registered analyzers and compare counted findings to
+      tiger.budget.yaml; exit 0 clean, 1 findings, 2 operational failure
+`
+
+func Run(args []string, streams command.Streams) int {
+	flags := flag.NewFlagSet("tiger check", flag.ContinueOnError)
+	flags.SetOutput(streams.Stderr)
+	flags.Usage = func() { command.PrintUsage(flags, Usage) }
+	chdir := flags.String("C", ".", "run as if tiger was started in this directory")
+	showFacts := flags.Bool(
+		"show-facts",
+		false,
+		"print computed facts (synthesized variants) in pin syntax",
+	)
+	analyzers := rules.Analyzers()
+	for _, registered := range analyzers {
+		prefix := registered.Name + "."
+		registered.Flags.VisitAll(func(each *flag.Flag) {
+			flags.Var(each.Value, prefix+each.Name, each.Usage)
+		})
+	}
+	if err := flags.Parse(args); err != nil {
+		return command.ExitOperational
+	}
+	patterns := flags.Args()
+	if len(patterns) == 0 {
+		patterns = []string{"./..."}
+	}
+
+	setup, err := prepare(*chdir)
+	if err != nil {
+		fmt.Fprintf(streams.Stderr, "tiger check: %v\n", err)
+		return command.ExitOperational
+	}
+	if config.Installed() {
+		if set := explicitAnalyzerFlag(flags); set != "" {
+			fmt.Fprintf(streams.Stderr, "tiger check: -%s is set on the command line but "+
+				"%s is the reviewed source — move the value into %s\n",
+				set, config.FileName, config.FileName)
+			return command.ExitOperational
+		}
+	}
+
+	report, err := driver.Run(*chdir, patterns, analyzers, rules.Finishers())
+	if err != nil {
+		fmt.Fprintf(streams.Stderr, "tiger check: %v\n", err)
+		return command.ExitOperational
+	}
+	sorted, err := partition(setup.module, report.Findings)
+	if err != nil {
+		fmt.Fprintf(streams.Stderr, "tiger check: %v\n", err)
+		return command.ExitOperational
+	}
+	blocking := append(sorted.blocking, layerCoverage(setup, sorted.blocking)...)
+	unloaded, err := testPackageCoverage(*chdir, setup, report.Packages, sorted.blocking)
+	if err != nil {
+		fmt.Fprintf(streams.Stderr, "tiger check: %v\n", err)
+		return command.ExitOperational
+	}
+	blocking = append(blocking, unloaded...)
+	sort.SliceStable(blocking, func(i, j int) bool { return blocking[i].Before(blocking[j]) })
+	printed := 0
+	for _, finding := range blocking {
+		printed++
+		fmt.Fprintf(streams.Stdout, "%s: %s\n", finding.Position, finding.Message)
+	}
+	if *showFacts {
+		for _, finding := range sorted.facts {
+			fmt.Fprintf(streams.Stdout, "%s: %s\n", finding.Position, finding.Message)
+		}
+	}
+	printed += printRatchet(streams, setup.budgets, sorted)
+	if printed > 0 {
+		fmt.Fprintf(streams.Stdout, "tiger: %d blocking\n", printed)
+		return command.ExitFindings
+	}
+	return command.ExitClean
+}
+
+func explicitAnalyzerFlag(flags *flag.FlagSet) string {
+	set := ""
+	flags.Visit(func(each *flag.Flag) {
+		if set == "" && strings.Contains(each.Name, ".") {
+			set = each.Name
+		}
+	})
+	return set
+}
+
+type partitioned struct {
+	blocking []driver.Finding
+	facts    []driver.Finding
+	counts   budgetCounts
+}
+
+func partition(modulePath module.Path, findings []driver.Finding) (partitioned, error) {
+	sorted := partitioned{counts: newBudgetCounts()}
+	for _, finding := range findings {
+		if _, isFact := rules.ByFact(finding.Category); isFact {
+			sorted.facts = append(sorted.facts, finding)
+			continue
+		}
+		entry, known := rules.ByCategory(finding.Category)
+		if !known {
+			return partitioned{}, fmt.Errorf("analyzer emitted unregistered category %q at %s",
+				finding.Category, finding.Position)
+		}
+		finding.Message += rules.Pointer(finding.Category)
+		switch entry.Severity {
+		case rules.SeverityBlocking:
+			sorted.blocking = append(sorted.blocking, finding)
+		case rules.SeverityAdvisory:
+			sorted.counts.add(packageKey(modulePath, finding.Package), entry, finding)
+		default:
+			assert.Unreachable("severity outside the registry's closed set")
+		}
+	}
+	return sorted, nil
+}

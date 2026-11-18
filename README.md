@@ -15,10 +15,18 @@ See [FRONTIER.md](FRONTIER.md) for the current height on each rung of the ladder
 
 ## Build and test
 
-```
+Use Go 1.26.10 and the vendored dependencies, including the pinned Tiger checker.
+Checks run locally; this repository has no GitHub Actions workflow or required PR
+gate. See [AGENTS.md](AGENTS.md#local-build-and-checks) for each check and dependency
+update commands. After installing Go locally:
+
+```sh
+export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off
+export GOFLAGS='-mod=vendor -p=2' GOMAXPROCS=4 SHIPPY_REMOTE_BUILD=0
 go build ./...
 scripts/verify.sh        # gofmt, vet, tests, tiger check
-go run ./cmd/goempo-dev score   # measure the frontier
+# Optional: measure the frontier (uses public RPC, not an offline check)
+go run ./cmd/goempo-dev score
 ```
 
 ## Run the node

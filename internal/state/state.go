@@ -125,6 +125,9 @@ type State struct {
 	refund        int64
 	cachedSlots   int
 	err           error
+	spec          *specMode
+	track         *parTrack
+	trackBuf      *parTrack
 }
 
 func newState(db *DB) *State {
@@ -150,8 +153,20 @@ func (s *State) fail(err error) {
 }
 
 func (s *State) load(addr Address) *object {
-	if o, ok := s.accounts[addr]; ok {
-		return o
+	o, ok := s.accounts[addr]
+	if !ok {
+		o = s.loadMissing(addr)
+		s.accounts[addr] = o
+	}
+	if s.spec != nil {
+		s.spec.noteAccount(o)
+	}
+	return o
+}
+
+func (s *State) loadMissing(addr Address) *object {
+	if s.spec != nil {
+		return s.spec.parentObject(s, addr)
 	}
 	o := newObject(addr, base{storageRoot: emptyRoot})
 	raw, err := s.db.store.Get(accountKey(addr))
@@ -171,7 +186,6 @@ func (s *State) load(addr Address) *object {
 	default:
 		s.fail(err)
 	}
-	s.accounts[addr] = o
 	return o
 }
 
@@ -190,7 +204,7 @@ func (s *State) Logs() []evm.Log { return s.logs }
 
 func (s *State) account(addr Address) *object {
 	o := s.load(addr)
-	s.blockDirty[addr] = struct{}{}
+	s.markDirty(addr)
 	if o.exists {
 		return o
 	}
@@ -229,7 +243,7 @@ func (s *State) CreateAccount(addr Address) {
 		o.balance = old.balance
 	}
 	s.accounts[addr] = o
-	s.blockDirty[addr] = struct{}{}
+	s.markWiped(addr)
 	s.record(entry{kind: entryReplace, slot: slotKey{addr: addr}, prev: old})
 	s.touch(addr)
 	if _, ok := s.created[addr]; !ok {
@@ -297,7 +311,7 @@ func (s *State) Code(addr Address) []byte {
 	if o.codeHash == emptyCodeHash {
 		return nil
 	}
-	code, err := s.db.code(o.codeHash)
+	code, err := s.codeOf(o)
 	if err != nil {
 		s.fail(err)
 		return nil
@@ -342,7 +356,7 @@ func (s *State) committedValue(o *object, key Hash) u256.Int {
 	if o.base.storageRoot == emptyRoot {
 		return u256.Zero()
 	}
-	v, err := s.db.readSlot(o.addr, key)
+	v, err := s.readSlot(o.addr, key)
 	if err != nil {
 		s.fail(err)
 		return u256.Zero()
@@ -352,7 +366,29 @@ func (s *State) committedValue(o *object, key Hash) u256.Int {
 	return v
 }
 
+func (s *State) codeOf(o *object) ([]byte, error) {
+	if s.spec != nil {
+		return s.spec.parent.code(o.addr, o.codeHash)
+	}
+	return s.db.code(o.codeHash)
+}
+
+func (s *State) readSlot(addr Address, key Hash) (u256.Int, error) {
+	if s.spec != nil {
+		return s.spec.parent.slot(addr, key)
+	}
+	return s.db.readSlot(addr, key)
+}
+
 func (s *State) Storage(addr Address, key Hash) u256.Int {
+	v := s.storage(addr, key)
+	if s.spec != nil {
+		s.spec.access(s, slotKey{addr: addr, key: key}, v)
+	}
+	return v
+}
+
+func (s *State) storage(addr Address, key Hash) u256.Int {
 	o := s.load(addr)
 	if !o.exists {
 		return u256.Zero()
@@ -365,14 +401,22 @@ func (s *State) Storage(addr Address, key Hash) u256.Int {
 
 func (s *State) OriginalStorage(addr Address, key Hash) u256.Int {
 	o := s.load(addr)
-	if !o.exists {
-		return u256.Zero()
+	v := u256.Zero()
+	if o.exists {
+		v = s.committedValue(o, key)
 	}
-	return s.committedValue(o, key)
+	if s.spec != nil {
+		s.spec.access(s, slotKey{addr: addr, key: key}, v)
+	}
+	return v
 }
 
 func (s *State) SetStorage(addr Address, key Hash, value u256.Int) {
 	o := s.account(addr)
+	if s.spec != nil {
+		s.spec.access(s, slotKey{addr: addr, key: key}, value)
+	}
+	s.markSlot(slotKey{addr: addr, key: key})
 	prev, had := o.dirty[key]
 	o.setDirty(key, value)
 	s.record(entry{kind: entryStorage, obj: o, slot: slotKey{addr: addr, key: key}, value: prev, had: had})
@@ -383,6 +427,10 @@ func (s *State) SetStorage(addr Address, key Hash, value u256.Int) {
 }
 
 func (s *State) HasStorage(addr Address) bool {
+	if s.spec != nil {
+		s.spec.tx.unsafe = true
+		return true
+	}
 	o := s.load(addr)
 	if !o.exists {
 		return false
@@ -393,7 +441,7 @@ func (s *State) HasStorage(addr Address) bool {
 		}
 	}
 	for _, k := range sortedHashes(o.committed) {
-		if !s.Storage(addr, k).IsZero() {
+		if !s.storage(addr, k).IsZero() {
 			return true
 		}
 	}
@@ -429,7 +477,7 @@ func (s *State) SelfDestruct(addr Address) {
 	if !o.exists {
 		return
 	}
-	s.blockDirty[addr] = struct{}{}
+	s.markDirty(addr)
 	s.record(entry{kind: entryBalance, obj: o, value: o.balance})
 	o.balance = u256.Zero()
 }
@@ -491,6 +539,9 @@ func (s *State) FinalizeTx() {
 			s.deleteAccount(addr)
 		}
 	}
+	if s.spec != nil {
+		s.spec.capture(s)
+	}
 	for _, o := range s.txObjs {
 		o.inTx = false
 		if s.accounts[o.addr] != o {
@@ -507,7 +558,7 @@ func (s *State) deleteAccount(addr Address) {
 	o.wiped = true
 	o.codeLoaded = true
 	s.accounts[addr] = o
-	s.blockDirty[addr] = struct{}{}
+	s.markWiped(addr)
 }
 
 func (s *State) resetTx() {

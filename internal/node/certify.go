@@ -39,6 +39,7 @@ type Certifier struct {
 	from     uint64
 	anchored bool
 	stats    CertifyStats
+	pre      *certCache
 }
 
 func NewCertifier(chain *consensus.Chain, src FinalitySource, from uint64) *Certifier {
@@ -163,6 +164,11 @@ func (c *Certifier) verify(sub []types.Block) (int, error) {
 func (c *Certifier) fetch(from uint64, count int) ([][]byte, error) {
 	if count > consensus.BatchMax {
 		return nil, ErrCertifyBatch
+	}
+	if c.pre != nil && count == 1 {
+		if cert, ok := c.pre.take(from); ok {
+			return [][]byte{cert}, nil
+		}
 	}
 	out := make([][]byte, 0, count)
 	for i := 0; i < count; i += UpstreamParallel * UpstreamBatchMax {

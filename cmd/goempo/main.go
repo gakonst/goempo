@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"syscall"
 	"time"
 
@@ -40,6 +41,9 @@ type options struct {
 	summary     string
 	recent      int
 	hold        bool
+	rootEvery   uint64
+	fetchPar    int
+	cpuprofile  string
 }
 
 func main() {
@@ -61,6 +65,9 @@ func parse(args []string) (options, error) {
 	fs.StringVar(&o.summary, "summary", "", "write a JSON summary here on exit")
 	fs.IntVar(&o.recent, "recent", node.DefaultRecentBlocks, "recent blocks kept with receipts for JSON-RPC")
 	fs.BoolVar(&o.hold, "hold", false, "after -to, keep serving JSON-RPC until interrupted")
+	fs.Uint64Var(&o.rootEvery, "root-every", 1000, "while catching up, check the state root every N blocks (every block within 64 of the tip, at -to and at each flush); 1 checks every block")
+	fs.StringVar(&o.cpuprofile, "cpuprofile", "", "write a CPU profile of the run here")
+	fs.IntVar(&o.fetchPar, "fetch-parallel", node.FetchParallelDefault, "upstream block requests in flight while catching up (32 blocks each)")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -87,10 +94,12 @@ func openNode(o *options, up *node.Upstream) (*node.Node, error) {
 		return nil, err
 	}
 	cfg := node.Config{
-		State:        dir,
-		StateOptions: state.Options{MemtableBytes: 256 << 20, CacheSlots: cacheScale << 22, CacheAccounts: cacheScale << 20},
-		CertifyFrom:  o.certifyFrom,
-		RecentBlocks: o.recent,
+		State:         dir,
+		StateOptions:  state.Options{MemtableBytes: 256 << 20, CacheSlots: cacheScale << 22, CacheAccounts: cacheScale << 20},
+		CertifyFrom:   o.certifyFrom,
+		RecentBlocks:  o.recent,
+		RootEvery:     o.rootEvery,
+		FetchParallel: o.fetchPar,
 	}
 	if o.archive != "" {
 		afs, err := goio.NewDirFS(o.archive)
@@ -121,6 +130,14 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	if o.cpuprofile != "" {
+		stopProfile, err := startProfile(o.cpuprofile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "goempo: cpuprofile:", err)
+			return 1
+		}
+		defer stopProfile()
+	}
 	up := node.NewUpstream(goio.NewHTTPCaller(o.upstream, uint64(upstreamTimeout)))
 	n, err := openNode(&o, up)
 	if err != nil {
@@ -137,4 +154,20 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return f.finish(f.loop(ctx))
+}
+
+func startProfile(path string) (func(), error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		return nil, errors.Join(err, f.Close())
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		if err := f.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "goempo: cpuprofile:", err)
+		}
+	}, nil
 }

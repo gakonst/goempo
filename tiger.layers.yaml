@@ -267,6 +267,16 @@
   - ./internal/trie
   - ./internal/types
   - ./internal/u256
+  - github.com/kapetan-io/tiger/assert
+"./internal/node/nodetest":
+  - ./internal/node
+  - net
+"./internal/node/nodetest/localupstream":
+  - ./internal/io
+  - ./internal/node
+  - ./internal/node/nodetest
+  - net
+  - os
 "./internal/validator":
   - ./internal/consensus/wire
   - ./internal/consensus

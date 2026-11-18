@@ -43,6 +43,7 @@ type follower struct {
 	began                         time.Time
 	lastLog                       time.Time
 	prevExec, prevCommit, prevGas uint64
+	prevLog                       node.Stats
 	perfAt                        time.Time
 	flushed                       uint64
 	flushedAt                     time.Time
@@ -175,7 +176,11 @@ func (f *follower) report(b *rpc.BlockData) {
 		f.lastLog = time.Now()
 		s := f.n.Stats()
 		secs := time.Since(f.began).Seconds()
-		fmt.Fprintf(os.Stderr, "progress: head %d tip %d executed %d (%.0f blk/s) certified %d\n", n, f.tip, s.Blocks, float64(s.Blocks)/secs, s.Certify.Certified)
+		d := s.Since(f.prevLog)
+		f.prevLog = s
+		fmt.Fprintf(os.Stderr, "progress: head %d tip %d executed %d (%.0f blk/s) certified %d | ms fetch %d verify %d certify %d wait %d exec %d commit %d flush %d\n",
+			n, f.tip, s.Blocks, float64(s.Blocks)/secs, s.Certify.Certified,
+			d.FetchNanos/1e6, d.VerifyNanos/1e6, d.CertifyNanos/1e6, d.WaitNanos/1e6, d.ExecNanos/1e6, d.CommitNanos/1e6, d.FlushNanos/1e6)
 	}
 }
 
@@ -214,7 +219,19 @@ type summary struct {
 	Trusted     uint64  `json:"boundaries_trusted"`
 	Anchor      uint64  `json:"consensus_anchor"`
 	Seconds     float64 `json:"seconds"`
+	Stages      stages  `json:"stage_seconds"`
+	RootChecks  uint64  `json:"root_checks"`
 	Failed      string  `json:"failed,omitempty"`
+}
+
+type stages struct {
+	Fetch   float64 `json:"fetch"`
+	Verify  float64 `json:"verify"`
+	Certify float64 `json:"certify"`
+	Wait    float64 `json:"wait"`
+	Exec    float64 `json:"exec"`
+	Commit  float64 `json:"commit"`
+	Flush   float64 `json:"flush"`
 }
 
 func (f *follower) finish(runErr error) int {
@@ -224,7 +241,12 @@ func (f *follower) finish(runErr error) int {
 		Rung: "R4", Chain: "mainnet", Start: f.n.Start(), Head: head.Number, HeadHash: head.Hash.String(), Tip: f.tip,
 		Blocks: s.Blocks, Txs: s.Txs, Gas: s.Gas, Certified: s.Certify.Certified, Linked: s.Certify.Linked,
 		Unchecked: s.Certify.Unchecked, Transitions: s.Certify.Transitions, Trusted: s.Certify.Trusted,
-		Anchor: s.Certify.Anchor, Seconds: time.Since(f.began).Seconds(),
+		Anchor: s.Certify.Anchor, Seconds: time.Since(f.began).Seconds(), RootChecks: s.RootChecks,
+		Stages: stages{
+			Fetch: float64(s.FetchNanos) / 1e9, Verify: float64(s.VerifyNanos) / 1e9, Certify: float64(s.CertifyNanos) / 1e9,
+			Wait: float64(s.WaitNanos) / 1e9, Exec: float64(s.ExecNanos) / 1e9, Commit: float64(s.CommitNanos) / 1e9,
+			Flush: float64(s.FlushNanos) / 1e9,
+		},
 	}
 	if runErr != nil {
 		sum.Failed = runErr.Error()

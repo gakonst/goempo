@@ -67,6 +67,12 @@ func (v *StateView) ProofAt(number uint64, addr primitives.Address, keys []primi
 	if number != v.n.head {
 		return rpc.AccountProof{}, ErrNoState
 	}
+	if v.n.tainted || v.n.stale {
+		return rpc.AccountProof{}, ErrTainted
+	}
+	if err := v.n.checkpointLocked(); err != nil {
+		return rpc.AccountProof{}, v.n.latchLocked(err)
+	}
 	p, err := v.n.db.Proof(addr, keys)
 	if err != nil {
 		return rpc.AccountProof{}, err

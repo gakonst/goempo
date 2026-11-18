@@ -728,6 +728,21 @@ func (db *DB) Stats() Stats {
 	return s
 }
 
+// Halt stops background flushes and merges and waits for them, writing and
+// deleting nothing more, as a process that dies would. The DB is unusable
+// afterwards; tests call it before simulating a crash.
+func (db *DB) Halt() {
+	db.abort.Store(true)
+	db.mu.Lock()
+	db.closing = true
+	db.cond.Broadcast()
+	db.mu.Unlock()
+	db.wg.Wait()
+	db.mu.Lock()
+	db.closed = true
+	db.mu.Unlock()
+}
+
 func (db *DB) Close() error {
 	db.mu.Lock()
 	if db.closed {

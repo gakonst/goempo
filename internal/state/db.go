@@ -159,6 +159,9 @@ func (db *DB) Flush() error {
 	return db.store.Flush()
 }
 
+// Halt stops the store's background work without writing, for crash tests.
+func (db *DB) Halt() { db.store.Halt() }
+
 func (db *DB) Close() error { return errors.Join(db.settlePending(), db.store.Close()) }
 
 func (db *DB) LoadGenesis(g *genesis.Genesis) (Hash, error) {

@@ -219,6 +219,7 @@ func (f *fuzzer) reopen(mode reopenMode) {
 	head := f.db.Head()
 	if mode == crashAfterFlush {
 		must(f.t, f.db.Flush())
+		f.db.Halt()
 		f.fs.Crash()
 	} else {
 		must(f.t, f.db.Close())

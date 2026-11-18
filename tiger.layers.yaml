@@ -2,6 +2,7 @@
   - os
   - ./internal/version
 "./cmd/goempo-dev":
+  - github.com/kapetan-io/tiger/assert
   - ./internal/io
   - ./internal/consensus
   - ./internal/p2p

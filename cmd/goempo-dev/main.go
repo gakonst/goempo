@@ -7,33 +7,35 @@ import (
 	"github.com/gakonst/goempo/internal/version"
 )
 
-func main() {
-	if len(os.Args) < 2 {
+func main() { os.Exit(Run(os.Args[1:])) }
+
+func Run(args []string) int {
+	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: goempo-dev <fetch|replay|score|statetest|genesis|follow|certify|rpcdiff|serve>")
-		os.Exit(2)
+		return 2
 	}
-	switch os.Args[1] {
+	switch args[0] {
 	case "statetest":
-		os.Exit(runStatetest(os.Args[2:]))
+		return runStatetest(args[1:])
 	case "genesis":
-		os.Exit(runGenesis(os.Args[2:]))
+		return runGenesis(args[1:])
 	case "fetch":
-		os.Exit(runFetch(os.Args[2:]))
+		return runFetch(args[1:])
 	case "fetch-range":
-		os.Exit(runFetchRange(os.Args[2:]))
+		return runFetchRange(args[1:])
 	case "certify":
-		os.Exit(runCertify(os.Args[2:]))
+		return runCertify(args[1:])
 	case "follow":
-		os.Exit(runFollow(os.Args[2:]))
+		return runFollow(args[1:])
 	case "replay":
-		os.Exit(runReplay(os.Args[2:]))
+		return runReplay(args[1:])
 	case "serve":
-		os.Exit(runServe(os.Args[2:]))
+		return runServe(args[1:])
 	case "rpcdiff":
-		os.Exit(runRPCDiff(os.Args[2:]))
+		return runRPCDiff(args[1:])
 	case "score":
-		os.Exit(runScore(os.Args[2:]))
+		return runScore(args[1:])
 	}
-	fmt.Fprintln(os.Stderr, version.String()+": unknown command "+os.Args[1])
-	os.Exit(2)
+	fmt.Fprintln(os.Stderr, version.String()+": unknown command "+args[0])
+	return 2
 }

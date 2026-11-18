@@ -217,36 +217,60 @@ func (r *replayer) run(to uint64) error {
 	if first >= chunks {
 		return nil
 	}
-	next := prefetchChunk(r.ctx, r.dir, chunkSpan{start: first * chunkBlocks, skip: r.head + 1 - first*chunkBlocks})
-	defer func() { next.Wait() }()
+	ctx, cancel := context.WithCancel(r.ctx)
+	pool := newChunkPool()
+	var ring [chunkPrefetchDepth]*chunkPrefetch
+	for k := range uint64(chunkPrefetchDepth) {
+		if first+k < chunks {
+			skip := uint64(0)
+			if k == 0 {
+				skip = r.head + 1 - first*chunkBlocks
+			}
+			ring[k] = prefetchChunk(ctx, pool, r.dir, chunkSpan{start: (first + k) * chunkBlocks, skip: skip})
+		}
+	}
+	defer func() {
+		cancel()
+		waitPrefetches(&ring)
+	}()
 	for i := first; i < chunks; i++ {
 		start := i * chunkBlocks
-		got := next.take(r.ctx)
-		if stopRequested(r.ctx) {
+		slot := &ring[(i-first)%chunkPrefetchDepth]
+		if err := r.runPrefetch(ctx, *slot, chunkSpan{start: start, to: to}); err != nil {
+			return err
+		}
+		if r.stopped || r.failed != nil || r.head >= to {
+			return nil
+		}
+		(*slot).Wait()
+		*slot = nil
+		if i+chunkPrefetchDepth < chunks {
+			*slot = prefetchChunk(ctx, pool, r.dir, chunkSpan{start: start + chunkPrefetchDepth*chunkBlocks})
+		}
+	}
+	return nil
+}
+
+func (r *replayer) runPrefetch(ctx context.Context, p *chunkPrefetch, span chunkSpan) error {
+	for range (chunkBlocks + decodeWindow - 1) / decodeWindow {
+		got := p.take(ctx)
+		if stopRequested(ctx) {
 			r.stopped = true
 			fmt.Fprintf(os.Stderr, "replay: stopped after block %d\n", r.head)
 			return nil
 		}
-		next.Wait()
-		if i+1 < chunks {
-			next = prefetchChunk(r.ctx, r.dir, chunkSpan{start: start + chunkBlocks})
+		if errors.Is(got.err, os.ErrNotExist) {
+			return fmt.Errorf("cache ends before block %d", span.start)
 		}
-		blocks, err := got.blocks, got.err
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("cache ends before block %d", start)
+		if got.err != nil {
+			return got.err
 		}
-		if err != nil {
+		done, err := r.runChunk(got.blocks, chunkSpan{start: span.start + uint64(got.offset), to: span.to})
+		if done || err != nil || got.last {
 			return err
-		}
-		done, err := r.runChunk(blocks, chunkSpan{start: start, to: to})
-		if err != nil {
-			return err
-		}
-		if done {
-			return nil
 		}
 	}
-	return nil
+	return errChunk
 }
 
 type chunkSpan struct {
@@ -255,9 +279,9 @@ type chunkSpan struct {
 	skip  uint64
 }
 
-func (r *replayer) runChunk(blocks *decodedChunk, span chunkSpan) (bool, error) {
+func (r *replayer) runChunk(blocks []decodedBlock, span chunkSpan) (bool, error) {
 	start, to := span.start, span.to
-	for j := 0; j < blocks.len(); j++ {
+	for j := 0; j < len(blocks); j++ {
 		number := start + uint64(j)
 		if number <= r.head {
 			continue
@@ -273,11 +297,7 @@ func (r *replayer) runChunk(blocks *decodedChunk, span chunkSpan) (bool, error) 
 		if number != r.head+1 {
 			return false, errCacheGap
 		}
-		b, err := blocks.block(r.ctx, j)
-		if err != nil {
-			r.stopped = true
-			return true, nil
-		}
+		b := &blocks[j]
 		if b.err != nil {
 			return false, fmt.Errorf("block %d: %w", number, b.err)
 		}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/gakonst/goempo/internal/tempo/executor"
 	"github.com/gakonst/goempo/internal/types"
+	"github.com/kapetan-io/tiger/assert"
 )
 
 const (
@@ -201,9 +202,29 @@ func readChunkBytes(dir string, start uint64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(zr, chunkBytesMax))
 }
 
+const (
+	chunkPrefetchDepth = 4
+	decodeWorkersMax   = 64
+	decodeWindow       = 64
+)
+
+const _ = uint(chunkBlocks - decodeWorkersMax)
+const _ = uint(chunkBlocks - decodeWindow)
+
+type chunkPool struct {
+	decode chan struct{}
+}
+
+func newChunkPool() *chunkPool {
+	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
+	return &chunkPool{decode: make(chan struct{}, workers)}
+}
+
 type chunkRead struct {
-	blocks *decodedChunk
+	blocks []decodedBlock
 	err    error
+	offset int
+	last   bool
 }
 
 type decodedBlock struct {
@@ -212,46 +233,42 @@ type decodedBlock struct {
 	err     error
 }
 
-type decodedChunk struct {
-	blocks []decodedBlock
-	ready  []chan struct{}
-	wg     sync.WaitGroup
-}
-
-func (c *decodedChunk) len() int {
-	return len(c.blocks)
-}
-
-func (c *decodedChunk) block(ctx context.Context, i int) (*decodedBlock, error) {
-	select {
-	case <-c.ready[i]:
-		return &c.blocks[i], nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (c *decodedChunk) Wait() {
-	c.wg.Wait()
-}
-
 type chunkPrefetch struct {
 	wg  sync.WaitGroup
 	out chan chunkRead
 }
 
-func prefetchChunk(ctx context.Context, dir string, span chunkSpan) *chunkPrefetch {
+func prefetchChunk(ctx context.Context, pool *chunkPool, dir string, span chunkSpan) *chunkPrefetch {
 	p := &chunkPrefetch{out: make(chan chunkRead, 1)}
 	p.wg.Go(func() {
 		raws, err := readChunk(dir, span.start)
-		got := chunkRead{blocks: decodeChunk(raws, span), err: err}
-		select {
-		case p.out <- got:
-		case <-ctx.Done():
+		if err != nil {
+			p.publish(ctx, chunkRead{err: err, last: true})
+			return
 		}
-		got.blocks.Wait()
+		lo := int(min(span.skip, uint64(len(raws))))
+		if lo == len(raws) {
+			p.publish(ctx, chunkRead{offset: lo, last: true})
+			return
+		}
+		for ; lo < len(raws); lo += decodeWindow {
+			hi := min(lo+decodeWindow, len(raws))
+			blocks := decodeBlocks(ctx, pool, raws[lo:hi])
+			if !p.publish(ctx, chunkRead{blocks: blocks, offset: lo, last: hi == len(raws)}) {
+				return
+			}
+		}
 	})
 	return p
+}
+
+func (p *chunkPrefetch) publish(ctx context.Context, got chunkRead) bool {
+	select {
+	case p.out <- got:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (p *chunkPrefetch) take(ctx context.Context) chunkRead {
@@ -267,39 +284,46 @@ func (p *chunkPrefetch) Wait() {
 	p.wg.Wait()
 }
 
-const decodeWorkersMax = 64
-
-const _ = uint(chunkBlocks - decodeWorkersMax)
-
-func decodeChunk(raws [][]byte, span chunkSpan) *decodedChunk {
-	c := &decodedChunk{blocks: make([]decodedBlock, len(raws)), ready: make([]chan struct{}, len(raws))}
-	c.start(raws, span)
-	return c
+func waitPrefetches(ring *[chunkPrefetchDepth]*chunkPrefetch) {
+	for _, p := range ring {
+		if p != nil {
+			p.Wait()
+		}
+	}
 }
 
-func (c *decodedChunk) start(raws [][]byte, span chunkSpan) {
-	for i := range c.ready {
-		c.ready[i] = make(chan struct{})
-	}
-	skip := int(min(span.skip, uint64(len(raws))))
-	for i := range skip {
-		close(c.ready[i])
-	}
-	var next atomic.Int64
-	next.Store(int64(skip))
-	workers := min(max(runtime.GOMAXPROCS(0)-1, 1), decodeWorkersMax)
-	for range workers {
-		c.wg.Go(func() {
-			for range len(raws) {
-				i := int(next.Add(1) - 1)
+func decodeBlocks(ctx context.Context, pool *chunkPool, raws [][]byte) []decodedBlock {
+	blocks := make([]decodedBlock, len(raws))
+	var cursor atomic.Int64
+	var wg sync.WaitGroup
+	for range min(cap(pool.decode), len(raws)) {
+		wg.Go(func() {
+			select {
+			case pool.decode <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() {
+				select {
+				case <-pool.decode:
+				default:
+					assert.Fail("a decoder returns its held token")
+				}
+			}()
+			for range min(len(raws), decodeWindow) {
+				if ctx.Err() != nil {
+					return
+				}
+				i := int(cursor.Add(1)) - 1
 				if i >= len(raws) {
 					return
 				}
-				c.blocks[i] = decodeBlock(raws[i])
-				close(c.ready[i])
+				blocks[i] = decodeBlock(raws[i])
 			}
 		})
 	}
+	wg.Wait()
+	return blocks
 }
 
 func decodeBlock(raw []byte) decodedBlock {

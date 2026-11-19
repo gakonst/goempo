@@ -194,9 +194,19 @@ func (db *DB) commitStorage(o *object, b *storage.Batch) (Hash, error) {
 	t := db.storageTrie(o, baseRoot)
 	before := t.Nodes()
 	keys := sortedHashes(o.changed)
-	for _, k := range keys {
-		if err := db.commitSlot(slotWrite{t: t, o: o, key: k}, b); err != nil {
+	if len(keys) >= trie.BatchMin {
+		mutations := make([]trie.Mutation, len(keys))
+		for i, k := range keys {
+			mutations[i] = db.prepareSlot(o, k, b)
+		}
+		if err := t.ApplyBatch(mutations); err != nil {
 			return Hash{}, err
+		}
+	} else {
+		for _, k := range keys {
+			if err := db.commitSlot(slotWrite{t: t, o: o, key: k}, b); err != nil {
+				return Hash{}, err
+			}
 		}
 	}
 	root := t.Commit(nodeWriter{batch: b, prefix: storageNodePrefix(o.addr)})
@@ -226,6 +236,22 @@ func (db *DB) commitSlot(w slotWrite, b *storage.Batch) error {
 	db.enc.Reset()
 	db.enc.WriteBytes(enc)
 	return w.t.Set(hk[:], db.enc.Encoded())
+}
+
+func (db *DB) prepareSlot(o *object, key Hash, b *storage.Batch) trie.Mutation {
+	v := o.committed[key]
+	mutation := trie.Mutation{Key: db.hasher.Hash(key[:])}
+	sk := slotKeyBytes(o.addr, key)
+	if v.IsZero() {
+		b.Delete(sk)
+		return mutation
+	}
+	enc := encodeSlot(v)
+	b.Put(sk, enc)
+	db.enc.Reset()
+	db.enc.WriteBytes(enc)
+	mutation.Value = bytes.Clone(db.enc.Encoded())
+	return mutation
 }
 
 func sortedAddresses[V any](m map[Address]V) []Address {

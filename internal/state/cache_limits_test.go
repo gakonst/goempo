@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"sync/atomic"
 	"testing"
 
 	goio "github.com/gakonst/goempo/internal/io"
@@ -10,7 +11,7 @@ import (
 
 type cacheReadFS struct {
 	goio.FS
-	reads int
+	reads atomic.Int64
 }
 
 type cacheReadFile struct {
@@ -35,7 +36,7 @@ func (fs *cacheReadFS) Open(name string) (goio.File, error) {
 }
 
 func (file *cacheReadFile) ReadAt(p []byte, off int64) (int, error) {
-	file.owner.reads++
+	file.owner.reads.Add(1)
 	return file.File.ReadAt(p, off)
 }
 
@@ -62,7 +63,7 @@ func TestStorageCacheEvictionActuallyReloadsSavedNodes(t *testing.T) {
 			root, err := st.Commit(1)
 			must(t, err)
 			must(t, db.Flush())
-			fs.reads = 0
+			fs.reads.Store(0)
 			for i := 0; i < 4096; i++ {
 				st.SetStorage(addr, benchSlot(i), u256.FromUint64(uint64(i+1)))
 			}
@@ -71,10 +72,10 @@ func TestStorageCacheEvictionActuallyReloadsSavedNodes(t *testing.T) {
 			if again != root {
 				t.Fatal("cache eviction changed the state root")
 			}
-			if mode.evict != (fs.reads > 0) {
-				t.Fatalf("evict %v, actual persisted node reads %d", mode.evict, fs.reads)
+			if mode.evict != (fs.reads.Load() > 0) {
+				t.Fatalf("evict %v, actual persisted node reads %d", mode.evict, fs.reads.Load())
 			}
-			t.Logf("persisted node reads after cache trim: %d", fs.reads)
+			t.Logf("persisted node reads after cache trim: %d", fs.reads.Load())
 			must(t, db.Close())
 		})
 	}

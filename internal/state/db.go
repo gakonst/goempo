@@ -240,6 +240,21 @@ func (r nodeReader) ReadNode(path []byte) ([]byte, error) {
 	return r.store.Get(appendPath(key, nibbles(path)))
 }
 
+type cursorNodeReader struct {
+	cursor *storage.ReadCursor
+	prefix []byte
+}
+
+func (r nodeReader) ForkReader() trie.NodeReader {
+	return cursorNodeReader{cursor: r.store.ReadCursor(), prefix: r.prefix}
+}
+
+func (r cursorNodeReader) ReadNode(path []byte) ([]byte, error) {
+	key := make([]byte, 0, nodeKeyBytesMax)
+	key = append(key, r.prefix...)
+	return r.cursor.Get(appendPath(key, nibbles(path)))
+}
+
 type nodeWriter struct {
 	batch  *storage.Batch
 	prefix []byte

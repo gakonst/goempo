@@ -328,7 +328,10 @@ type parent struct {
 }
 
 func (t *Trie) Unset(key []byte) error {
-	kn := keyNibbles(key)
+	return t.unsetNibbles(keyNibbles(key))
+}
+
+func (t *Trie) unsetNibbles(kn []byte) error {
 	parents := make([]parent, 0, len(kn)+2)
 	found, err := t.findForDelete(kn, &parents)
 	if err != nil || !found {

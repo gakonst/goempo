@@ -215,8 +215,9 @@ Build each Go revision with
 `go build -trimpath -buildvcs=false -o bin/goempo-dev ./cmd/goempo-dev`. For each sample, copy the same parent state to a fresh datadir
 and run (paths below designate that fresh copy and the recorded chunk directory).
 `busy.rlp` exports the same block range as those chunks. `-diagnose off` disables
-failure diagnostics; `-heal 0` disables state repair; the 100,000-block checkpoint
-interval exceeds this range, so persistence is checked after final close.
+failure diagnostics; `-heal 0` disables state repair; the checkpoint interval is 100,000 blocks, with a checkpoint at block 9,900,000
+inside this range. Checkpoints and final close are included in replay timing;
+persisted state is checked after final close.
 `SHIPPY_REMOTE_BUILD=0` keeps any remote-build wrapper local.
 
 ```sh
@@ -301,3 +302,108 @@ Go/Rust harness and unused by Go; `SHIPPY_REMOTE_BUILD=0` keeps build wrappers
 local. Replay disables diagnostic passes and state healing and uses a checkpoint
 interval of 100,000 blocks; replay checkpoints and process close remain inside
 the measured wall interval.
+
+## Field backend trial (2026-11-19 PST; rejected)
+
+This Busy trial replays recorded mainnet blocks 9,890,000–9,909,999:
+20,000 blocks and 659,246 transactions. It compared the storage-batching build at
+`6fd335aab9dc1501414615819f4b6e139aefb37c` with a local field-arithmetic
+candidate. It used ADX/BMI2 assembly for secp256k1 field multiplication, a
+symmetric square and repeated-square chains. The native AMD EPYC 4585PX
+host supported both instruction sets on all eight pinned CPUs. This candidate
+was not landed: its mean paired Busy wall-time saving was below both the trial's
+5% acceptance bar and the later 2% bar.
+
+Five fresh paired runs per version (A=baseline, B=candidate), ordered
+AB, BA, AB, BA, AB, used CPUs 20–27
+and GOMAXPROCS=8. The baseline mean was 33.382915 seconds
+(95% CI 33.215510–33.550320); candidate mean was 32.784200 seconds
+(32.520679–33.047721). The within-pair saving averaged 1.793963%
+(1.347377–2.240548%), or 0.598715 seconds (0.451331–0.746100).
+Intervals are two-sided Student t, four degrees of freedom. All ten samples were retained. A CPU monitor recorded pinned-core interference
+and validated its accounting for every sample; none required the predeclared
+wall-clock fallback, and none were rerun or dropped.
+
+Each sample used a fresh copy of the same parent state at block 9,889,999.
+Copying and root probes were outside timing; replay checkpoints and process
+close were inside. The exact archived launcher was:
+
+```sh
+cd /home/ubuntu/work/goempo/hill-next-20261119
+PYTHONDONTWRITEBYTECODE=1 python3 -u run_n5_field_stack.py --config N5-FIELD-STACK-CONFIG.json --execute-reviewed
+```
+
+This launcher requires the archived helper scripts and external snapshots.
+The repository CLI equivalent, using a newly built binary and new parent copy
+for each sample, is:
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+The local measured candidate commit was
+`883e32a04d01ec6578084f0c7cec7feab8176e66`; binary SHA256:
+`8fd0a4c2b7474cdb6cb6e1efb327497ec2ab5c78808b736e19d4c25b33bd6366`.
+All 20,000 blocks per sample matched recorded roots, receipts, gas and bloom.
+Parent and terminal persisted flat state reconstructed to the expected roots
+using this repository's trie code, not an independent client or power-loss test.
+Both binaries matched the stored execution outputs for all R1 reference fixtures
+(632 blocks, 860 transactions). Offline build, full verification, race,
+pure-Go fallback and fixed-seed validator/network simulation checks passed. Direct field tests
+also checked the assembly against math/big arithmetic and the portable backend.
+Passing correctness checks does not override the performance threshold.
+
+## Encoding scratch reuse (2026-11-19 PST)
+
+Block-owned RLP encoders and Keccak hashers now reuse scratch storage for sender
+recovery, transaction identifiers and receipt blooms. Mapping-key construction
+reuses a fixed-size preimage. Outputs remain owned by callers; there is no shared
+global scratch or hash-result cache. Transaction execution remains serial.
+
+Busy is the recorded-block replay workload described below. Five paired runs per
+version on the same host, from 11:46 to 11:52 PST,
+compared storage-batching baseline `6fd335aab9dc1501414615819f4b6e139aefb37c`
+with measured candidate `d4be1f2bee56a45d32f4abc725310189f3eecc25`.
+The landed code commit is `75a4669`; it differs from the measured candidate only
+in FRONTIER.md and FRONTIER.jsonl inherited from main. Mean wall time fell from
+34.680117 seconds (95% CI 33.828166–35.532069) to 32.718127 seconds
+(32.189133–33.247121). Mean within-pair saving was 5.642177%
+(4.064635–7.219720%), or 1.961990 seconds (1.387733–2.536247).
+All intervals use two-sided Student t with four degrees of freedom.
+The predeclared acceptance rule was mean paired saving at least 2% and paired
+seconds CI lower bound greater than zero. This candidate passes.
+
+The order was AB, BA, AB, BA, AB, with A=baseline and B=candidate, CPUs 20–27
+and GOMAXPROCS=8 for every row. Each sample started from a fresh copy of the state snapshot at block 9,889,999.
+All ten samples were retained;
+none needed the observational monitor's wall-clock fallback. Copying and root
+probes were outside timing; checkpoints and process close were inside.
+Each row replayed recorded mainnet blocks 9,890,000–9,909,999, containing
+659,246 transactions. Every root, gas total, receipt and bloom matched, with
+healing disabled. Parent and terminal flat state rebuilt to the expected roots
+using this repository's trie code. This is not an independent-client or
+power-loss durability test. Both binaries also matched every stored execution output in the R1 reference
+fixture suite: 632 blocks and 860 transactions.
+
+Exact archived batch command (requires the archived runner and external parent
+snapshot and corpus):
+
+```sh
+cd /home/ubuntu/work/goempo/hill-next-20261119
+PYTHONDONTWRITEBYTECODE=1 python3 -u run_n5_encode_state_2pct.py --config N5-ENCODE-STATE-2PCT-CONFIG.json --execute-reviewed
+```
+
+Repository replay equivalent, with a fresh parent copy and result path each time:
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+
+Go 1.26.10 offline build, full verification, focused race checks, full pure-Go
+fallback tests and fixed-seed consensus simulations passed. Separate tests check
+encoded bytes against RLP/reference fixtures, scratch reuse after mutations,
+retained output ownership and concurrent independent owners. The measured binary
+SHA256 is `ee6d090479c8088785fff2d3e5982ccb2a48ab9250dd3c8a6981a3ad17b665e0`.
+The longer-term goal is twice the speed of the Rust reference node: 13.2 seconds
+against its historical 26.4-second Busy result. There was no new matched Rust
+run, and that historical result has no interval recorded here. The 2% rule
+accepts incremental gains; it does not mean the longer-term target was reached.

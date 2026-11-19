@@ -227,3 +227,77 @@ GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./tempo 
 Rust source pin: `cf561ef16654b5eeea513918826a2950b54c4ade`. Busy RLP SHA256:
 `45c1f8b946f9ca7c9268111bc8848e369a31040fb9028c5b5e76c015c1df23c1`.
 The parent snapshots and corpus are external prerequisites, not included here.
+
+## Batched storage mutations (2026-11-19 PST)
+
+The Busy replay benchmark uses the recorded mainnet range 9,890,000 through 9,909,999: 20,000 blocks,
+659,246 transactions and 31,499,321,696 gas. The baseline is
+`dd777a1aa39daf7af30294f25af8f0a629baffb3`; the candidate is
+`6fd335aab9dc1501414615819f4b6e139aefb37c`. Both ran on the same
+32-logical-CPU Linux host, dev-georgios. The goal is half the Rust reference
+node's historical 26.4-second Busy time: 13.2 seconds. Rust was not rerun here,
+so that target is not a new matched comparison.
+
+At state commit, the candidate groups at least 128 changed storage slots by
+the first nibble of their hashed keys. At least two groups are required. Four
+joined workers update separate trie children with private hashers, encoders
+and read buffers. Transaction execution, flat-state writes, account-trie changes
+and publication of the new committed head remain serial. Small batches or
+readers without an independent-buffer interface use the original serial path.
+
+Five fresh paired runs per version (A=baseline, B=candidate), ordered
+AB, BA, AB, BA, AB, used the same eight logical
+CPUs 20–27 and GOMAXPROCS=8; the four storage workers share that CPU set with
+other Go work. The mean fell from 37.183863 seconds
+(95% CI 36.942038–37.425687) to 33.299777 seconds
+(32.755228–33.844326). Mean within-pair saving was 10.445293%
+(9.062931–11.827655%), or 3.884086 seconds (3.366697–4.401474).
+Intervals use a two-sided Student t distribution with four degrees of freedom.
+All ten once-only wall-time samples were retained. CPU affinity stayed fixed
+for every run. A separate CPU-usage monitor checked for interference; all ten
+records were valid. The predeclared fallback on monitor failure was to retain
+that same wall-time sample, not rerun or discard it.
+
+Every block matched its recorded state root, receipts root, gas and bloom.
+Parent and terminal persisted flat state reconstructed to the expected roots.
+That reconstruction shares this repository's trie code: it is not an independent
+client proof or a power-loss test. The separate R1 fixture suite scores execution outputs against stored reference
+outputs. Both binaries scored 100% over 632 blocks and 860 transactions. Peak resident
+memory was 1755.34 MiB for baseline and 1766.86 MiB for candidate.
+
+Local checks passed with Go 1.26.10, offline vendored dependencies and the
+offline environment documented in AGENTS.md (`GOTOOLCHAIN=local`,
+`GOPROXY=off`, `GOSUMDB=off`, `GOFLAGS='-mod=vendor -p=2'`). The verification
+script runs formatting, vet, all package tests and the Tiger Go static checker:
+
+```sh
+go build ./...
+scripts/verify.sh
+go test -race -count=1 ./internal/trie ./internal/storage ./internal/state
+go test -count=1 -v ./internal/sim
+go build -trimpath -buildvcs=false -o bin/goempo-dev ./cmd/goempo-dev
+```
+
+The consensus simulation is not a storage-batch test. Separate fixed-seed batch
+models check roots, reopen/proofs, rollback/recreation, errors injected at fixed trie paths and
+unchanged persisted head on failures.
+
+Each timed replay used a fresh copy of the parent state at block 9,889,999;
+copying and root probes were outside the wall interval. The recorded block corpus and that parent snapshot are external prerequisites. Exact replay invocation, with a new
+`<fresh-parent-copy>` and `<result.json>` for each arm and pair:
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+
+Baseline binary SHA256:
+`2677c0697d4cd7f6a8c9f1cc3fa42b33e4234bc51737557e523268aa6d36246f`.
+The measured candidate binary SHA256 is
+`6d81cc04d27ac36e45066cccaa8cff0f7aa71d70c5bcdef931f056650c1a5022`.
+Source, binary and input identities were bound before timing; all raw rows
+were frozen before acceptance.
+The 13.2-second target remains unmet. `RAYON_NUM_THREADS` is inherited from the
+Go/Rust harness and unused by Go; `SHIPPY_REMOTE_BUILD=0` keeps build wrappers
+local. Replay disables diagnostic passes and state healing and uses a checkpoint
+interval of 100,000 blocks; replay checkpoints and process close remain inside
+the measured wall interval.

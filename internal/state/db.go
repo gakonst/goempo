@@ -28,11 +28,11 @@ const (
 	cacheSlotsDefault       defaultLimit = 4 << 20
 	accountNodesDefault     defaultLimit = 1 << 20
 	storageTriesDefault     defaultLimit = 1 << 12
-	storageNodesDefault     defaultLimit = 1 << 14
+	storageNodesDefault     defaultLimit = 1 << 18
 	storageTotalDefault     defaultLimit = 1 << 21
 	codeCacheBytesDefault   defaultLimit = 64 << 20
 	trieKeepDepthDefault    defaultLimit = 5
-	storageKeepDepthDefault              = 2
+	storageKeepDepthDefault              = 4
 	cacheLimitMax                        = 1 << 32
 )
 

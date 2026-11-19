@@ -31,7 +31,7 @@ range; each run needs a fresh copy of the saved state at block 9889999. This
 command replays through 9909999 with healing and optional diagnostics disabled:
 
 ```sh
-taskset -c 20-27 env GOMAXPROCS=8 RAYON_NUM_THREADS=8 <baseline-or-candidate-goempo-dev> replay -datadir <fresh-parent-datadir> -dir /home/ubuntu/work/goempo/busy-v3/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <row>/replay.json
+taskset -c 20-27 env GOMAXPROCS=8 RAYON_NUM_THREADS=8 <baseline-or-candidate-goempo-dev> replay -datadir <fresh-parent-datadir> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <row>/replay.json
 ```
 
 Baseline binary SHA256: `fe475c0708d01955b55d245638187edb0923a9e2f2192601b4d61322f1d871ac`.

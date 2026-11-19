@@ -13,6 +13,7 @@ import (
 var ErrRunSealed = errors.New("executor: block run already holds its system transaction")
 
 type BlockRun struct {
+	scratch    *types.EncodingScratch
 	x          *Executor
 	st         State
 	rules      chain.Rules
@@ -34,7 +35,7 @@ func (x *Executor) Begin(st State, header *types.Header, getHash func(number uin
 	blk := blockContext(header, getHash)
 	sys := &systemEnv{config: cfg, block: blk, header: header, rules: rules}
 	preBlock(st, sys)
-	return &BlockRun{x: x, st: st, rules: rules, set: set, cfg: cfg, blk: blk, sys: sys}
+	return &BlockRun{scratch: types.NewEncodingScratch(), x: x, st: st, rules: rules, set: set, cfg: cfg, blk: blk, sys: sys}
 }
 
 func (b *BlockRun) Rules() chain.Rules { return b.rules }
@@ -52,7 +53,7 @@ func (b *BlockRun) Apply(tx *types.Transaction, sender Sender) (TxOutcome, error
 		return TxOutcome{}, ErrTooManyTxs
 	}
 	snap := b.st.Snapshot()
-	env := &TxEnv{State: b.st, Rules: b.rules, Config: b.cfg, Block: b.blk, Tx: tx, Index: len(b.receipts), Sender: &sender}
+	env := &TxEnv{State: b.st, Rules: b.rules, Config: b.cfg, Block: b.blk, Tx: tx, Index: len(b.receipts), Sender: &sender, scratch: b.scratch}
 	out, err := b.applyOne(env)
 	if err != nil {
 		b.st.RevertToSnapshot(snap)
@@ -60,7 +61,7 @@ func (b *BlockRun) Apply(tx *types.Transaction, sender Sender) (TxOutcome, error
 		return TxOutcome{}, err
 	}
 	b.cumulative += out.GasUsed
-	b.receipts = append(b.receipts, receiptOf(tx.Type(), out, b.cumulative))
+	b.receipts = append(b.receipts, receiptWithScratch(tx.Type(), out, b.cumulative, b.scratch))
 	return out, nil
 }
 

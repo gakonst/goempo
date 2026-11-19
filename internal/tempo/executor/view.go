@@ -84,14 +84,32 @@ type signerKeys struct {
 
 func RecoverSender(tx *types.Transaction) Sender {
 	if d, ok := tx.Data.(*types.TempoTx); ok {
-		return recoverTempoSigners(tx, d)
+		return recoverTempoSigners(tx, d, types.NewEncodingScratch())
 	}
 	addr, err := tx.Sender()
 	return Sender{Address: addr, Err: err}
 }
 
-func recoverTempoSigners(tx *types.Transaction, d *types.TempoTx) Sender {
-	key, err := d.Signature.KeyID(tx.SigningHash())
+func RecoverSenders(txs []types.Transaction) []Sender {
+	out := make([]Sender, len(txs))
+	scratch := types.NewEncodingScratch()
+	for i := range txs {
+		tx := &txs[i]
+		if IsSystemTx(tx) {
+			continue
+		}
+		if d, ok := tx.Data.(*types.TempoTx); ok {
+			out[i] = recoverTempoSigners(tx, d, scratch)
+		} else {
+			addr, err := tx.Sender()
+			out[i] = Sender{Address: addr, Err: err}
+		}
+	}
+	return out
+}
+
+func recoverTempoSigners(tx *types.Transaction, d *types.TempoTx, scratch *types.EncodingScratch) Sender {
+	key, err := d.Signature.KeyID(scratch.SigningHash(*tx))
 	if err != nil {
 		return Sender{Err: err}
 	}

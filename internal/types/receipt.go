@@ -98,6 +98,11 @@ func (r *Receipt) decodeFields(list *rlp.Stream) error {
 
 func (r *Receipt) Encode() []byte {
 	e := rlp.NewEncoder(receiptHint)
+	r.encodeTo(e)
+	return e.Encoded()
+}
+
+func (r *Receipt) encodeTo(e *rlp.Encoder) {
 	if r.Type != TxTypeLegacy {
 		e.WriteRaw([]byte{byte(r.Type)})
 	}
@@ -120,11 +125,13 @@ func (r *Receipt) Encode() []byte {
 	}
 	e.ListEnd()
 	e.ListEnd()
-	return e.Encoded()
 }
 
 func (b *Bloom) Add(item []byte) {
-	h := keccak.Sum256(item)
+	b.addHash(keccak.Sum256(item))
+}
+
+func (b *Bloom) addHash(h primitives.Hash) {
 	for i := 0; i < bloomPairs; i++ {
 		bit := (uint(h[2*i])<<8 | uint(h[2*i+1])) & bloomBitMask
 		b[BloomLength-1-bit/8] |= 1 << (bit % 8)

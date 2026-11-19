@@ -66,14 +66,15 @@ type TxOutcome struct {
 }
 
 type TxEnv struct {
-	State  State
-	Rules  chain.Rules
-	Config *evm.Config
-	Block  *evm.BlockContext
-	Tx     *types.Transaction
-	Index  int
-	Sim    *Simulation
-	Sender *Sender
+	scratch *types.EncodingScratch
+	State   State
+	Rules   chain.Rules
+	Config  *evm.Config
+	Block   *evm.BlockContext
+	Tx      *types.Transaction
+	Index   int
+	Sim     *Simulation
+	Sender  *Sender
 }
 
 func (x *Executor) SystemSteps(st State, in Input) error {
@@ -100,9 +101,10 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 		return Result{}, ErrTooManyTxs
 	}
 	receipts := make([]types.Receipt, 0, len(txs))
+	scratch := types.NewEncodingScratch()
 	var cumulative uint64
 	for i := 0; i < len(txs); i++ {
-		env := &TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i}
+		env := &TxEnv{State: st, Rules: rules, Config: cfg, Block: blk, Tx: &txs[i], Index: i, scratch: scratch}
 		if len(in.Senders) == len(txs) {
 			env.Sender = &in.Senders[i]
 		}
@@ -111,7 +113,7 @@ func (x *Executor) Execute(st State, in Input) (Result, error) {
 			return Result{}, fmt.Errorf("tx %d: %w", i, err)
 		}
 		cumulative += out.GasUsed
-		receipts = append(receipts, receiptOf(txs[i].Type(), out, cumulative))
+		receipts = append(receipts, receiptWithScratch(txs[i].Type(), out, cumulative, scratch))
 	}
 	if err := x.committeeCall(st, sys); err != nil {
 		return Result{}, err
@@ -147,7 +149,7 @@ func blockContext(header *types.Header, getHash func(uint64) Hash) *evm.BlockCon
 	}
 }
 
-func receiptOf(kind types.TxType, out TxOutcome, cumulative uint64) types.Receipt {
+func receiptWithScratch(kind types.TxType, out TxOutcome, cumulative uint64, scratch *types.EncodingScratch) types.Receipt {
 	assert.Ok(len(out.Logs) <= txLogsMax, "logs of one transaction are bounded")
 	logs := make([]types.Log, len(out.Logs))
 	for i := 0; i < len(out.Logs); i++ {
@@ -158,7 +160,7 @@ func receiptOf(kind types.TxType, out TxOutcome, cumulative uint64) types.Receip
 		Type:              kind,
 		Success:           out.Success,
 		CumulativeGasUsed: cumulative,
-		Bloom:             types.LogsBloom(logs),
+		Bloom:             scratch.LogsBloom(logs),
 		Logs:              logs,
 	}
 }
@@ -166,8 +168,9 @@ func receiptOf(kind types.TxType, out TxOutcome, cumulative uint64) types.Receip
 func finish(receipts []types.Receipt, gasUsed uint64) Result {
 	encoded := make([][]byte, len(receipts))
 	var bloom types.Bloom
+	scratch := types.NewEncodingScratch()
 	for i := 0; i < len(receipts); i++ {
-		encoded[i] = receipts[i].Encode()
+		encoded[i] = scratch.EncodeReceipt(&receipts[i])
 		bloom.Or(&receipts[i].Bloom)
 	}
 	return Result{GasUsed: gasUsed, Receipts: receipts, ReceiptsRoot: trie.OrderedRoot(encoded), Bloom: bloom}

@@ -331,12 +331,7 @@ func decodeBlock(raw []byte) decodedBlock {
 	if err != nil {
 		return decodedBlock{err: err}
 	}
-	senders := make([]executor.Sender, len(blk.Transactions))
-	for i := range blk.Transactions {
-		if !executor.IsSystemTx(&blk.Transactions[i]) {
-			senders[i] = executor.RecoverSender(&blk.Transactions[i])
-		}
-	}
+	senders := executor.RecoverSenders(blk.Transactions)
 	return decodedBlock{blk: blk, senders: senders}
 }
 

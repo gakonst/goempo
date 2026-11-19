@@ -30,14 +30,14 @@ func toHash(w Word) Hash { return Hash(w.Bytes32()) }
 func toWord(h Hash) Word { return u256.FromBytes32(h) }
 
 func (c *Context) mapKey(key Hash, base slot) slot {
-	var buf [64]byte
+	buf := &c.mapping
 	copy(buf[:32], key[:])
 	copy(buf[32:], base[:])
-	if s, ok := mapKeys.get(&buf); ok {
+	if s, ok := mapKeys.get(buf); ok {
 		return s
 	}
 	s := slot(c.keccak(buf[:]))
-	mapKeys.put(&buf, s)
+	mapKeys.put(buf, s)
 	return s
 }
 

@@ -88,6 +88,7 @@ type Context struct {
 	gasUsed            uint64
 	refund             int64
 	creditMinting      bool
+	mapping            [64]byte
 	hasher             *keccak.Hasher
 }
 

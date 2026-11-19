@@ -33,6 +33,13 @@ type txRun struct {
 	machine    *evm.EVM
 }
 
+func (r *txRun) encodingScratch() *types.EncodingScratch {
+	if r.env.scratch == nil {
+		r.env.scratch = types.NewEncodingScratch()
+	}
+	return r.env.scratch
+}
+
 func feeAmount(gas uint64, price u256.Int) u256.Int {
 	return u256.FromUint64(gas).Mul(price).Add(feeScaleLess).Div(feeScale)
 }
@@ -172,9 +179,11 @@ func (r *txRun) applyNonce() error {
 	v := &r.view
 	st := r.env.State
 	if v.isAA() && isExpiring(v, r.env.Rules) {
-		h := r.env.Tx.Hash()
+		var h Hash
 		if r.env.Rules.AtLeast(hardfork.T1B) {
-			h = r.env.Tx.UniqueID(v.sender)
+			h = r.encodingScratch().UniqueID(*r.env.Tx, v.sender)
+		} else {
+			h = r.encodingScratch().TransactionHash(*r.env.Tx)
 		}
 		return precompiles.CheckAndMarkExpiringNonce(r.ctx, h, v.validBefore)
 	}
@@ -212,7 +221,7 @@ func (r *txRun) chargeFee() error {
 	r.set.Env.FeeToken = token
 	r.set.Env.NonCreditable = nil
 	precompiles.SetTxOrigin(r.ctx, r.view.sender)
-	precompiles.SetChannelOpenContext(r.ctx, r.env.Tx.UniqueID(r.view.sender))
+	precompiles.SetChannelOpenContext(r.ctx, r.encodingScratch().UniqueID(*r.env.Tx, r.view.sender))
 	if err := r.useAccessKey(); err != nil {
 		return err
 	}

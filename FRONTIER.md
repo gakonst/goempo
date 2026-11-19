@@ -2,26 +2,36 @@
 
 ## Storage-trie retention (2026-11-19 PST)
 
-Accepted code `43525c3`: Busy mean **44.6414 → 40.8580 seconds** versus
-`77a9410`, five fresh pairs ordered AB, BA, AB, BA, AB. Mean paired saving
+Goempo's Busy benchmark replays mainnet blocks 9890000–9909999 from a saved parent state.
+Accepted code `43525c3`: mean **44.6414 → 40.8580 seconds** versus
+baseline `77a9410`, five fresh pairs ordered AB, BA, AB, BA, AB.
+A is the baseline build and B the cache-retention candidate; each uses a fresh state copy. Mean paired saving
 **8.4495%**, two-sided Student-t 95% interval **5.6443–11.2547%**;
-paired seconds saving **3.7834 [2.4710, 5.0957]**. Both arms use logical
+paired seconds saving **3.7834**, 95% interval **[2.4710, 5.0957]**. Both arms use logical
 CPUs 20–27 and GOMAXPROCS=8 on the same 32-logical-CPU host, Go 1.26.10.
 No retries or dropped samples; all ten monitor traces valid.
 
-The defaults retain 262144 nodes per storage trie and four levels after trimming,
-instead of 16384 nodes and two levels. The aggregate threshold stays 2097152.
-These are soft trimming thresholds, not hard memory bounds; existing proof
-expansion can be undercounted. Peak RSS increased from 1717.23 to 1777.43 MiB.
+Storage-trie caches avoid loading and decoding the same on-disk nodes again.
+When a cache exceeds its node threshold, trimming discards descendants below a
+retained depth. The per-trie threshold rises from 16384 to 262144 nodes, and the
+retained depth from two to four levels. The aggregate threshold across storage
+tries stays 2097152 nodes. These are soft trimming thresholds, not hard memory
+bounds: proof reads can load nodes without updating the aggregate count. Peak RSS increased from 1717.23 to 1777.43 MiB.
 Every replay checked all 20000 block roots, gas, receipts and bloom, totaling
-659246 transactions and 31499321696 gas. Both R1 scores remained 632/632 blocks,
-860/860 senders and receipts. Persisted parent and terminal flat-state roots match;
-this reconstruction shares this project's trie, not an independent client.
+659246 transactions and 31499321696 gas. The decode correctness milestone, called R1, checks byte-identical block
+re-encoding, transaction senders and receipts. The baseline and candidate both
+passed on the same saved sample of 632 mainnet blocks and 860 transactions. Rebuilding the
+state root from stored account/slot records at the parent and terminal heights
+matched the recorded block headers. This uses this project's trie implementation,
+not an independent client.
 
-Repository: `gakonst/goempo`. Exact replay command for each fresh parent-state copy:
+Repository: `gakonst/goempo`. Use the baseline or candidate binary whose hashes
+are below. The input directory contains recorded raw block chunks for the Busy
+range; each run needs a fresh copy of the saved state at block 9889999. This
+command replays through 9909999 with healing and optional diagnostics disabled:
 
 ```sh
-taskset -c 20-27 env GOMAXPROCS=8 RAYON_NUM_THREADS=8 <bound-goempo-dev> replay -datadir <fresh-parent-datadir> -dir /home/ubuntu/work/goempo/busy-v3/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <row>/replay.json
+taskset -c 20-27 env GOMAXPROCS=8 RAYON_NUM_THREADS=8 <baseline-or-candidate-goempo-dev> replay -datadir <fresh-parent-datadir> -dir /home/ubuntu/work/goempo/busy-v3/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <row>/replay.json
 ```
 
 Baseline binary SHA256: `fe475c0708d01955b55d245638187edb0923a9e2f2192601b4d61322f1d871ac`.
@@ -35,11 +45,50 @@ go test -race -count=1 ./internal/state ./internal/trie
 go test -count=1 -v ./internal/sim
 ```
 
-The separate stack-owned Keccak candidate `b39f9ba` failed acceptance:
+A separate candidate based on the same baseline `77a9410`, using a stack-allocated
+Keccak hashing object (`b39f9ba`), failed acceptance:
 42.8684 → 43.4842 seconds, N=5 pairs, paired saving -0.6159 seconds
 [ -2.6803, 1.4486 ]; it was not retained. Rust was not rerun in these batches.
-The historical Rust point is 26.4 seconds; the 13.2-second goal remains unmet.
+The reference Rust Tempo node has a historical 26.4-second point. The goal is
+twice its throughput, or 13.2 seconds for the same work; that goal remains unmet.
 
+
+## Parallel trie commit (2026-11-19 PST)
+
+A second accepted change, `e154047`, adds bounded parallel hashing to trie commits
+on top of the cache change above. In a fresh five-pair Busy comparison, baseline
+A is cache main `a8c0120` (the same code as `43525c3`, with result documentation)
+and candidate B adds parallel hashing. Their means are
+**39.9298 → 37.5371 seconds**. Mean paired saving is **5.9704%**, Student-t 95%
+interval **[3.4843, 8.4565]%**; paired seconds saving is **2.3927**, 95% interval
+**[1.3442, 3.4412]**. Acceptance requires at least 5% mean paired saving and a
+paired seconds interval entirely above zero. The fixed order is AB, BA, AB, BA,
+AB, with the same logical CPUs 20–27 and GOMAXPROCS=8. No sample was retried or
+removed. This is a separate batch from the cache comparison; do not multiply its
+point estimate by the cache gain to claim a matched cumulative speedup.
+
+For a dirty root branch with at least four dirty children and 128 dirty nodes,
+three joined workers plus the caller hash disjoint child subtrees. Each worker
+owns its encoder, hasher and scratch. The parent is encoded only after all workers
+join; node writes and their order remain serial. Small/nonbranch cases and the
+public Hash operation keep the serial path. This does not permit concurrent
+external operations on one Trie.
+
+All ten Busy runs checked every block's state root, gas, receipts and bloom, plus
+parent/terminal stored-state root reconstruction. All CPU-monitor traces were
+valid. Both builds also passed the separate R1 sample: 632/632 blocks and
+860/860 senders and receipts. Peak RSS was 1775.48 MiB for A and 1760.86 MiB for B. The independent map/RLP model rebuilds Patricia nodes from a plain map rather
+than calling the production trie algorithms. That model, the race detector,
+full local verification and deterministic simulation gates
+passed. The measured candidate was `a3bb5b8`; the landed code and tests are identical,
+with only frontier documentation differing.
+
+Use the exact Busy replay command and fresh saved-state copies above. Baseline
+binary SHA256 is `56aa699a98ea5dfa666ef39bcf69b6ba22b0717d8279170236ac487075fd1b35`;
+candidate SHA256 is `2677c0697d4cd7f6a8c9f1cc3fa42b33e4234bc51737557e523268aa6d36246f`.
+The same build, verify, state/trie race and simulation commands above apply.
+Rust was not rerun, so the historical 26.4-second reference remains unmatched;
+the 13.2-second target is still unmet.
 
 In commands below, <private-mainnet-rpc> is a private mainnet RPC node used for bulk block fetches; https://rpc.tempo.xyz answers the same methods, with rate limits.
 

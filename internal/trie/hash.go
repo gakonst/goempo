@@ -27,7 +27,7 @@ func (t *Trie) Commit(w NodeWriter) primitives.Hash {
 	if t.root == nil {
 		return EmptyRoot
 	}
-	t.computeRefs(t.root)
+	t.computeCommitRefs()
 	if !t.root.saved {
 		t.save(w)
 	}

@@ -73,6 +73,7 @@ type Trie struct {
 	hasher  *keccak.Hasher
 	scratch []nodeVisit
 	free    []*node
+	commit  *commitWorkers
 }
 
 type nodeVisit struct {

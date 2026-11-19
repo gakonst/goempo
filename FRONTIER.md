@@ -407,3 +407,105 @@ The longer-term goal is twice the speed of the Rust reference node: 13.2 seconds
 against its historical 26.4-second Busy result. There was no new matched Rust
 run, and that historical result has no interval recorded here. The 2% rule
 accepts incremental gains; it does not mean the longer-term target was reached.
+
+## Sparse recovery trial (2026-11-19 PST; rejected)
+
+This trial combined width-5 signed sparse-window GLV secp256k1 recovery,
+reused projective-coordinate powers and the earlier ADX/BMI2 field backend.
+The standalone field backend had previously saved only 1.793963% on this
+workload, below the acceptance threshold; this was a new combined trial. The baseline was the encoding-reuse build
+`d4be1f2bee56a45d32f4abc725310189f3eecc25`, whose code equals landed
+`75a466957399bc71fa7060681bcca52f34d2865f`. Candidate
+`d2137f3b20be69f4d65dbd27671ab4a57f0d4553` remains unlanded.
+
+Busy replays recorded mainnet blocks 9,890,000–9,909,999. Five paired runs per
+version (A=baseline, B=candidate; order AB, BA, AB, BA, AB), from 12:03 to 12:09 PST, used the same recorded
+20,000-block corpus, fresh parent copies, CPUs 20–27 and GOMAXPROCS=8.
+Baseline mean was 31.563589 seconds (95% CI 31.024588–32.102589);
+candidate mean was 30.672414 seconds (29.802907–31.541921).
+Mean within-pair saving was 2.802606% (−0.753305–6.358516%), or
+0.891175 seconds (−0.237224–2.019574). Intervals use two-sided Student t,
+four degrees of freedom. Although the mean exceeds 2%, the paired-seconds
+interval crosses zero, so the candidate fails the predeclared rule: mean paired saving at least 2%
+and paired-seconds 95% CI lower bound greater than zero.
+No samples were added, dropped or retried.
+
+All ten samples passed every recorded block root, receipt, gas and bloom
+check, and parent/terminal persisted flat-root checks. Both binaries matched every stored execution output in the repository
+reference-fixture suite (named R1), covering 632 blocks and 860 transactions.
+All 13 local checks passed, including full verification, race, pure-Go fallback,
+fixed-seed consensus simulation and independent arithmetic oracle tests.
+Correctness does not establish a performance gain. The flat-root checks use
+this repository's trie implementation, not an independent client or crash test.
+
+Exact archived batch command (runner, corpus and parent snapshot are external
+prerequisites):
+
+```sh
+cd /home/ubuntu/work/goempo/hill-next-20261119
+PYTHONDONTWRITEBYTECODE=1 python3 -u run_n5_recovery_encode_2pct.py --config N5-RECOVERY-ENCODE-2PCT-CONFIG.json --execute-reviewed
+```
+
+Copying parent state and root probes were outside timing; checkpoints and
+process close were inside. Repository replay equivalent, with fresh parent state
+and result path per sample:
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+
+The candidate binary SHA256 was
+`8f4f6cddf094ec484dc4fb8cdc75265e64bf74ea0b04c33bcb6ab3d2e0750dc1`.
+There was no new matched Rust run. Work moved to the separate state-prefetch
+candidate rather than landing an inconclusive change.
+
+## Batched state-prefetch trial (2026-11-19 PST; rejected)
+
+The candidate prefetched payment, fee and nonce storage using four private
+storage read handles, joined the workers, then merged results into the owning state
+cache. Transaction execution remained serial. The baseline was encoding-reuse
+build (which reuses block-owned encoding buffers) `d4be1f2bee56a45d32f4abc725310189f3eecc25`, whose code equals the main-branch commit
+`75a466957399bc71fa7060681bcca52f34d2865f`. Candidate
+`d20c8329f4fdc1210e4515f590ab97808599c678` remains unlanded.
+
+Five paired runs per version (A=baseline, B=candidate; AB, BA, AB, BA, AB)
+ran from 12:15 to 12:20 PST. Each replayed recorded mainnet blocks
+9,890,000–9,909,999 from a fresh parent copy, pinned to CPUs 20–27 with
+GOMAXPROCS=8. Baseline mean was 32.479930 seconds (95% CI
+31.370961–33.588899); candidate mean was 32.530795 seconds
+(31.303549–33.758042). Mean within-pair saving was −0.184929%
+(−3.891610–3.521752%), or −0.050865 seconds (−1.259096–1.157365).
+The two-sided Student-t intervals use four degrees of freedom. Both acceptance
+conditions failed: mean paired saving at least 2%, and paired-seconds 95% CI
+lower bound above zero. No samples were added, dropped or retried.
+
+All ten runs passed every recorded block root, gas, receipt and bloom check,
+and parent/terminal checkpoint and persisted flat-root checks. Both binaries
+matched the stored reference execution fixtures (R1): 632 blocks and
+860 transactions. All nine local candidate checks passed, including full
+verification, race checks, pure-Go tests and fixed-seed consensus simulation.
+The CPU monitor was valid for all ten rows; no timing fallback was used.
+Correctness passed but performance did not, so no prefetch code was retained.
+
+Exact archived batch command (runner, corpus and parent snapshot are external
+prerequisites):
+
+```sh
+cd /home/ubuntu/work/goempo/hill-next-20261119
+python3 -u run_n5_prefetch_encode_2pct.py --config N5-PREFETCH-ENCODE-2PCT-CONFIG.json --execute-reviewed
+```
+
+Repository replay command, with a fresh parent copy and result path per sample:
+
+```sh
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+ Parent copying and
+root probes were outside timing; checkpoints and process close were inside.
+Candidate binary SHA256:
+`eb0c7b5249f8d9dc0d58b63a829bdc8a371aed24de283de56f09a44a20af5312`.
+
+After timing and reference scoring, a new post-run verifier failed on the baseline and candidate's different local-check receipt field names. A separate corrected verifier checked
+both schemas and all hashes; the original failure was preserved. No replay or
+score was repeated. Flat-root reconstruction uses this repository's trie, not
+an independent client or power-loss test. Rust is the reference node implementation; it was not rerun for this trial.

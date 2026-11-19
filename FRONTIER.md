@@ -1,5 +1,46 @@
 # Frontier
 
+## Storage-trie retention (2026-11-19 PST)
+
+Accepted code `43525c3`: Busy mean **44.6414 → 40.8580 seconds** versus
+`77a9410`, five fresh pairs ordered AB, BA, AB, BA, AB. Mean paired saving
+**8.4495%**, two-sided Student-t 95% interval **5.6443–11.2547%**;
+paired seconds saving **3.7834 [2.4710, 5.0957]**. Both arms use logical
+CPUs 20–27 and GOMAXPROCS=8 on the same 32-logical-CPU host, Go 1.26.10.
+No retries or dropped samples; all ten monitor traces valid.
+
+The defaults retain 262144 nodes per storage trie and four levels after trimming,
+instead of 16384 nodes and two levels. The aggregate threshold stays 2097152.
+These are soft trimming thresholds, not hard memory bounds; existing proof
+expansion can be undercounted. Peak RSS increased from 1717.23 to 1777.43 MiB.
+Every replay checked all 20000 block roots, gas, receipts and bloom, totaling
+659246 transactions and 31499321696 gas. Both R1 scores remained 632/632 blocks,
+860/860 senders and receipts. Persisted parent and terminal flat-state roots match;
+this reconstruction shares this project's trie, not an independent client.
+
+Repository: `gakonst/goempo`. Exact replay command for each fresh parent-state copy:
+
+```sh
+taskset -c 20-27 env GOMAXPROCS=8 RAYON_NUM_THREADS=8 <bound-goempo-dev> replay -datadir <fresh-parent-datadir> -dir /home/ubuntu/work/goempo/busy-v3/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <row>/replay.json
+```
+
+Baseline binary SHA256: `fe475c0708d01955b55d245638187edb0923a9e2f2192601b4d61322f1d871ac`.
+Candidate binary SHA256: `56aa699a98ea5dfa666ef39bcf69b6ba22b0717d8279170236ac487075fd1b35`.
+Local checks passed in the AGENTS.md offline environment:
+
+```sh
+go build ./...
+scripts/verify.sh
+go test -race -count=1 ./internal/state ./internal/trie
+go test -count=1 -v ./internal/sim
+```
+
+The separate stack-owned Keccak candidate `b39f9ba` failed acceptance:
+42.8684 → 43.4842 seconds, N=5 pairs, paired saving -0.6159 seconds
+[ -2.6803, 1.4486 ]; it was not retained. Rust was not rerun in these batches.
+The historical Rust point is 26.4 seconds; the 13.2-second goal remains unmet.
+
+
 In commands below, <private-mainnet-rpc> is a private mainnet RPC node used for bulk block fetches; https://rpc.tempo.xyz answers the same methods, with rate limits.
 
 | Rung | Score | Commit | Date |

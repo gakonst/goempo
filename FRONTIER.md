@@ -509,3 +509,198 @@ After timing and reference scoring, a new post-run verifier failed on the baseli
 both schemas and all hashes; the original failure was preserved. No replay or
 score was repeated. Flat-root reconstruction uses this repository's trie, not
 an independent client or power-loss test. Rust is the reference node implementation; it was not rerun for this trial.
+
+## Goempo Busy replay allocation trials (2026-11-21 HST; neither retained)
+
+Two changes to Goempo, the Go Tempo node, passed correctness but failed the
+acceptance rule: at least 2% mean paired saving and a paired-seconds 95%
+confidence interval above zero. Neither optimization was added to main. Both
+compared against the `main` branch
+`92e996cab6b733c841301c032235eed1ddbec773`, whose node code is byte-identical to
+commit `75a466957399bc71fa7060681bcca52f34d2865f`.
+
+Each trial independently used five fresh baseline runs and five fresh candidate runs, paired in order AB, BA, AB, BA, AB
+(A=baseline, B=candidate). Every run executed recorded mainnet blocks
+9,890,000–9,909,999 from a fresh copy of parent block 9,889,999, pinned to CPUs
+20–27 with GOMAXPROCS=8. Copying and state-root probes were outside timing;
+periodic database checkpoint writes and clean database/process shutdown were
+inside. Caches were warm/uncontrolled,
+without drop_caches. No sample was dropped, added or retried. The per-run CPU diagnostic checked pinned-CPU time against CPU time attributed
+to the benchmark processes for all twenty timed runs (two trials, two versions, five runs). All accounting checks passed;
+none required falling back to the same run's plain pinned wall time.
+
+The acceptance rule was a mean within-pair saving of at least 2%, plus a
+95% confidence interval for the mean paired difference in seconds entirely above zero. All intervals below
+use two-sided Student-t with four degrees of freedom. Per-version intervals
+use that version's five samples; saving intervals use the five paired
+percentages or differences. For each pair, percentage saving is
+100 * (baseline - candidate) / baseline; the reported percentage is the mean of those five percentages, not the ratio
+of the two overall means. Positive saving means the candidate is faster.
+
+### Dense state-slot metadata
+
+The local candidate `6dcab2eaa2d9635ceadcfcac4ab6be24a5c2d255` replaced three
+per-account slot maps with one key-to-index map and dense slot entries. The run started at 23:23:45
+HST and finished its scoring/proof checks at 23:30:00 HST on November 21.
+
+- Baseline mean: 33.135637 s, 95% CI [30.844930, 35.426345].
+- Candidate mean: 32.910920 s, 95% CI [30.261287, 35.560553].
+- Mean paired saving: 0.677180%, CI [-3.381380, 4.735740], or
+  0.224717 s, CI [-1.096626, 1.546061]. Both acceptance conditions failed.
+
+The candidate binary SHA256 was
+`713406f0770a7e743b99a85f08f0bd244305618cb9e178198109c8fec732d519`.
+
+### Owned trie-branch reference arena
+
+The separate local candidate `f1409f10f0093d1c43ebc69478074ae5923ca0ef` grouped
+child-hash byte copies for a Merkle-trie branch into one allocation owned by
+the trie and removed placeholder queue entries for already-hashed children.
+It still copied bytes returned by storage readers, which may reuse their buffers, and did not contain the dense state-slot change. Its run started at 23:32:42 HST and finished proof checks at 23:39:36 HST on November 21.
+
+- Baseline mean: 34.026420 s, 95% CI [31.329148, 36.723691].
+- Candidate mean: 36.243428 s, 95% CI [32.647301, 39.839555].
+- Mean paired saving: -6.689176%, CI [-17.562783, 4.184432], or
+  -2.217008 s, CI [-5.782125, 1.348109]. Both acceptance conditions failed.
+
+The point estimate was slower, but the interval includes zero; this
+is not an established regression. The candidate binary SHA256 was
+`039a19b5004ef95aea79cb08cde0292a6575850acc6bb608241d72cefa238a6f`.
+
+### Correctness and reproduction scope
+
+Both candidates passed local build, full verification, race checks and the
+fixed-seed consensus simulations. Every timed row completed 20,000 blocks,
+659,246 transactions and 31,499,321,696 gas, with automatic state repair disabled (`heal=0`) and matching recorded
+state roots, gas, receipts and blooms. Parent and terminal checkpoints and
+state-root reconstructions from persisted accounts and storage slots passed
+after clean process close. That
+reconstruction uses this repository's trie, not an independent client or a
+power-loss test. Each frozen binary was also scored once after timing against
+the stored reference-fixture suite (R1): 632 blocks and 860 transactions; both
+versions matched every output. The Rust Tempo reference node was not rerun. Neither were generated-transaction
+(`txgen`) workloads with enlarged state. These trials establish no
+current Goempo-to-Rust speed ratio or broader workload improvement.
+
+Archived batch commands, run from the native measurement directory:
+`run_n5_reviewed.py` runs the five pairs and canonical checks;
+`postprocess_reviewed.py` scores reference fixtures and exports evidence;
+`terminal_reviewed.py` checks final hashes and that workers have exited. The
+JSON configs pin inputs, binaries, checks and the acceptance rule.
+
+```sh
+cd /home/ubuntu/work/goempo/hill-20261121-HST
+PYTHONDONTWRITEBYTECODE=1 python3 -B run_n5_reviewed.py --config N5-SLOTS-FINAL.json --execute-reviewed
+PYTHONDONTWRITEBYTECODE=1 python3 -B postprocess_reviewed.py --config N5-SLOTS-FINAL.json --execute-reviewed
+PYTHONDONTWRITEBYTECODE=1 python3 -B terminal_reviewed.py --config N5-SLOTS-FINAL.json
+# Separate fixed trial; not a retry of the state-slot candidate:
+PYTHONDONTWRITEBYTECODE=1 python3 -B run_n5_reviewed.py --config N5-TRIE-FINAL.json --execute-reviewed
+PYTHONDONTWRITEBYTECODE=1 python3 -B postprocess_reviewed.py --config N5-TRIE-FINAL.json --execute-reviewed
+PYTHONDONTWRITEBYTECODE=1 python3 -B terminal_reviewed.py --config N5-TRIE-FINAL.json
+```
+
+The runner, configs, source bundles and recorded inputs are external
+prerequisites, not files shipped in this repository. Config SHA256 pins:
+state-slot `decb2bb7e16785e46d62cadf71fcba74fdbb9f6ee7929c7f695daf94c6e2478e`;
+trie `9d09ac8b916489661e11ff03c7162d1c8f9810e74fad3c2faf589dc84d737f13`.
+Inputs: `/home/ubuntu/goempo-work/bench/gbusy-base` and
+`/home/ubuntu/work/goempo/busy-v5/input-chunks`. Their complete file/hash
+inventories are bound by each config to
+`/home/ubuntu/work/goempo/hill-20261121-HST/profile-main/PREDECLARED.json`.
+Baseline binary SHA256:
+`ee6d090479c8088785fff2d3e5982ccb2a48ab9250dd3c8a6981a3ad17b665e0`.
+The first input directory is the parent-state snapshot; the second holds the
+recorded block chunks. PREDECLARED.json holds their frozen byte inventories.
+The expected terminal root is
+`0x72f42e0085c86cc3b01955b9a6c14092e9c42c0d7d2287330d5d0365ee8eb936`.
+
+Equivalent single-replay command after checking out the selected source
+(bundle required for either unlanded candidate), with a fresh parent copy and
+result path per run. The untimed build uses GOMAXPROCS=4 and at most two parallel Go package builds;
+the measured process uses GOMAXPROCS=8. `SHIPPY_REMOTE_BUILD=0` keeps builds local
+if a Shippy wrapper is installed; it has no effect on the standard Go toolchain. `RAYON_NUM_THREADS` is recorded in the environment but does not
+control Go. Replay diagnosis is off; `-checkpoint 100000` sets the periodic
+checkpoint interval in blocks, in addition to the final clean-close write:
+
+```sh
+export PATH="$HOME/toolchains/go/bin:$PATH" # Go 1.26.10
+export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS='-mod=vendor -p=2' GOMAXPROCS=4 SHIPPY_REMOTE_BUILD=0
+go build -trimpath -buildvcs=false -o bin/goempo-dev ./cmd/goempo-dev
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+
+## Goempo Busy replay fused state access (2026-11-21–22 HST; not retained)
+
+Goempo is the Go Tempo node. Its fused state-access candidate passed correctness
+but did not establish a performance gain. The acceptance rule required at least
+2% mean within-pair saving and a paired-seconds 95% confidence interval entirely
+above zero. It was not added to the `main` branch. This was a fixed five-pair trial, with no retries.
+
+Local source `3bdb470df1b7d1497de595097c802b2e2ed16736` was based on main
+`92e996cab6b733c841301c032235eed1ddbec773`. It reused an already loaded account
+within a single precompile storage-write operation and combined redundant
+warm-slot lookups. It preserved the original/current-value reads, gas charges,
+storage-credit effects, journal and revert order. Other state implementations
+kept the existing fallback path. No commit pipeline or validation rule changed.
+
+The trial began November 21 at 23:58:27 HST; final proof checks finished
+November 22 at 00:05:26 HST. N=5 per version, fixed AB, BA, AB, BA, AB order,
+A=baseline, B=candidate. Each replay process was pinned to CPUs 20–27,
+GOMAXPROCS=8, replaying recorded mainnet blocks 9,890,000–9,909,999 (Busy)
+from a fresh copy of parent block 9,889,999. Parent copying and root probes
+were outside timing; periodic checkpoints and clean database/process close
+were inside. Caches were warm/uncontrolled, without drop_caches. All intervals are two-sided 95% Student-t,
+four degrees of freedom. Positive paired saving means faster.
+
+- Baseline mean: 38.196806 s, CI [23.315739, 53.077873].
+- Candidate mean: 33.853007 s, CI [20.392846, 47.313169].
+- Mean within-pair saving: 8.828457%, CI [-15.448882, 33.105795].
+- Mean paired seconds saved: 4.343798 s, CI [-8.072127, 16.759724].
+
+The percentage point estimate exceeded the 2% threshold, but the paired-seconds
+interval crossed zero. The acceptance rule therefore failed. Later slow samples
+were retained; no row was retried, dropped or added. All ten CPU accounting
+checks were valid, with no timing fallback. Host load was recorded, not used to
+infer the cause of the timing spread. The Rust reference node was not rerun.
+
+All fifteen local candidate checks passed, including full build/verification,
+race checks, fixed-seed consensus simulation, and targeted fast/fallback storage
+gas and enabled-credit/revert tests. Every timed run passed the same canonical
+20,000-block, 659,246-transaction checks, with automatic state repair disabled (`heal=0`). Parent/terminal
+checkpoints and persisted-state root reconstructions passed. Both binaries then
+matched all stored reference fixtures: 632 blocks, 860 transactions. The root
+reconstruction uses the same repository trie, not an independent client or a
+power-loss test. No generated-transaction bloat workload was run.
+
+Exact archived commands, with the external runner, configs, source bundles,
+parent snapshot and block chunks already present:
+
+```sh
+cd /home/ubuntu/work/goempo/hill-20261121-HST
+python3 run_n5_reviewed.py --config N5-STATEOPS-FINAL.json --execute-reviewed
+python3 postprocess_reviewed.py --config N5-STATEOPS-FINAL.json --execute-reviewed
+python3 terminal_reviewed.py --config N5-STATEOPS-FINAL.json
+```
+
+Parent snapshot: `/home/ubuntu/goempo-work/bench/gbusy-base`. Block chunks:
+`/home/ubuntu/work/goempo/busy-v5/input-chunks`. Their complete inventories
+are bound by the config to `profile-main/PREDECLARED.json` in the measurement
+directory. The measured binary was built offline with Go 1.26.10:
+
+```sh
+export PATH="$HOME/toolchains/go/bin:$PATH"
+export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS='-mod=vendor -p=2' GOMAXPROCS=4 SHIPPY_REMOTE_BUILD=0
+go build -trimpath -buildvcs=false -o bin/goempo-dev ./cmd/goempo-dev
+GOMAXPROCS=8 RAYON_NUM_THREADS=8 SHIPPY_REMOTE_BUILD=0 taskset -c 20-27 ./bin/goempo-dev replay -datadir <fresh-parent-copy> -dir /home/ubuntu/work/goempo/busy-v5/input-chunks -to 9909999 -diagnose off -heal 0 -checkpoint 100000 -result <result.json>
+```
+
+Config SHA256:
+`0717f36b04e1ab5af18786388217b78c790488cd8bbe8355f4b638a4529df604`.
+Candidate binary SHA256:
+`009ac804a9960c3963b967f8ac134ec05011847e1836ad3cc290eb80d10e224b`.
+Main's binary SHA256 remains
+`ee6d090479c8088785fff2d3e5982ccb2a48ab9250dd3c8a6981a3ad17b665e0`.
+The exact source checkout used for the candidate was
+`/home/ubuntu/work/goempo/hill-20261121-HST/source-stateops-3bdb470`.
+The terminal proof archive SHA256 is
+`88a1884fa843a89ea6b65f28938d69659815ac55a62ddd15480c33b3c584d686`.
